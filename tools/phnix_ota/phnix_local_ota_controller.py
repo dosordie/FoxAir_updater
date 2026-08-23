@@ -243,7 +243,21 @@ def stop_local_http(adb: AdbClient) -> None:
 
 def remote_status(adb: AdbClient, *, allow_transient_info: bool = False) -> dict:
     status_text = adb.shell(f"cat {REMOTE_STATUS} 2>/dev/null || true")
-    hook = json.loads(status_text) if status_text else {"state": "hook-not-running"}
+    if status_text:
+        try:
+            hook = json.loads(status_text)
+        except json.JSONDecodeError:
+            complete = []
+            for line in status_text.splitlines():
+                try:
+                    complete.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            if not complete:
+                raise
+            hook = complete[-1]
+    else:
+        hook = {"state": "hook-not-running"}
     raw_info = adb.read_file(REMOTE_INFO)
     if allow_transient_info and len(raw_info) != 220:
         info = {"transient": True, "length_bytes": len(raw_info), "crc_ok": False}
@@ -420,11 +434,6 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     both on the controller and inside the modem helper.
     """
     simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
-    if not simulated and args.execute:
-        raise OtaError(
-            "live same-version start is disabled: the verified parser trigger "
-            "still requires a deterministic non-cloud execution point"
-        )
     expected_confirm = "VM-SAME-VERSION-ONLY" if simulated else "PHNIX-C350-SAME-V33"
     if not args.execute:
         checks = preflight(adb, args.firmware, require_helper=not simulated)

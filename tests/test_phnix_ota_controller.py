@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock
 
 from tools.phnix_ota.phnix_local_ota_controller import (
     EXPECTED_MD5,
@@ -11,6 +12,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     pre_c5a8_proof_ok,
     same_version_proof_ok,
     validate_logger_checklist,
+    remote_status,
 )
 
 
@@ -117,6 +119,12 @@ class OtaInfoTests(unittest.TestCase):
             self.assertFalse(same_version_proof_ok(broken))
         broken = dict(proof, c36e_status=1)
         self.assertFalse(same_version_proof_ok(broken))
+
+    def test_status_reader_uses_last_complete_json_record(self):
+        adb = Mock()
+        adb.shell.return_value = '{"phase":"old"}\n{"phase":"new"}'
+        adb.read_file.return_value = bytes(self.make_info())
+        self.assertEqual(remote_status(adb)["hook"]["phase"], "new")
 
 
 if __name__ == "__main__":

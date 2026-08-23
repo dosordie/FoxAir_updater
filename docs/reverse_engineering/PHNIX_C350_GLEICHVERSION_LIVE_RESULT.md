@@ -68,5 +68,50 @@ Schutz-Halt griffen, anschließend wurden Debugger, Netzsperren und pausierte
 Supervisoren entfernt. Dienst, Cloudverbindung und der ursprüngliche
 OTA_INFO-Hash wurden jeweils verifiziert.
 
-Der Liveaufruf bleibt deshalb softwareseitig gesperrt, bis ein deterministischer
-nicht von einer Cloudnachricht abhängiger Parser-Einsprung nachgewiesen ist.
+Der Liveaufruf wurde deshalb zunächst softwareseitig gesperrt, bis ein
+deterministischer, nicht von einer Cloudnachricht abhängiger Parser-Einsprung
+nachgewiesen war.
+
+Die anschließende Offline-Disassemblierung identifizierte `0x1FE40` im
+permanenten MQTT-Yield-Loop als solchen Punkt. Nach erfolgreicher
+MQTT-Initialisierung durchläuft `aliMqtt_handle_thread` dort fortlaufend
+`IOT_MQTT_Yield(..., 200)` und springt anschließend zurück. Der frühere Punkt
+`0x1FDAC` gehört dagegen nur zum einmaligen Übergang nach `ali_mqtt_init`.
+
+## Erfolgreicher Ein-Kommando-Lauf
+
+Nach Umstellung auf eine lineare GDB-Sequenz wurde der Launcher am selben Tag
+um 20:35 Uhr Ortszeit erfolgreich ausgeführt. Die lineare Sequenz lautet:
+
+```text
+Halt 0x1FE40
+→ UART-Leerlauf und Board-Schritt 12 prüfen
+→ ota_code_handle mit lokalem 0033 aufrufen
+→ Halt an set_sev_code_and_ver / C350
+→ Halt an board_is_allow_upg_handle / C36E
+→ Status 0 und Gerätekennung 0063 prüfen
+→ Persistenzdateien bytegleich restaurieren
+→ Debugger lösen und Originalzustand freigeben
+```
+
+Der passive Mitschnitt `warmlink_capture_2026-08-23_004` enthält:
+
+| Ortszeit | Adresse | Länge | Ergebnis |
+|---|---:|---:|---|
+| 20:35:53 | `C350` | 23 Byte | Angebot, CRC gültig |
+| 20:35:53 | `C350` | 8 Byte | Schreib-ACK, CRC gültig |
+| 20:35:54 | `C36E` | 13 Byte | Statusantwort, CRC gültig |
+
+Im vollständigen Mitschnitt dieses Laufs kommen `C357` und `C5A8` jeweils
+nullmal vor. Der Launcher bestätigte `C36E Status 0`, Gerätekennung `0063` und
+die bytegleiche Wiederherstellung. Danach wurden unabhängig geprüft:
+
+- `phnixIot4G` läuft und `TracerPid` ist 0;
+- MQTT/Cloud ist wieder verbunden;
+- keine 1883-Sperrregel ist aktiv;
+- beide `helloworld`-Supervisoren laufen;
+- `phnixIot_device_OTA_INFO` ist 220 Byte groß und besitzt wieder SHA-256
+  `2a8f2207089b2a99f390ede4d1e7170e2f1fda135e4c1dd59ad4383194b5c4a4`.
+
+Damit ist der abgesicherte Gleichversionstest erstmals vollständig über den
+später vorgesehenen Ein-Kommando-Launcher reproduziert.

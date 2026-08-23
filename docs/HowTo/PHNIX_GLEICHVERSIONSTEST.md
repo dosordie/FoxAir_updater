@@ -64,16 +64,14 @@ Der erfolgreiche Abschluss enthält:
 
 ## Später vom Raspberry Pi aus
 
-**Aktueller Stand: Der Liveaufruf ist im Controller und im Modem-Helfer
-gesperrt.** Der untersuchte Debugger-Einsprung wartet auf einen neuen Aufruf des
-Cloud-Handlers und ist deshalb kein deterministischer lokaler Startmechanismus.
-Bei den Versuchen vom 23. August 2026 löste das Zeitlimit jeweils vor C350 aus;
-es wurde kein Busframe gesendet und der Originalzustand wurde wiederhergestellt.
-
-Der folgende Aufruf beschreibt nur die geplante spätere Bedienoberfläche. Er
-wird erst nach einem reproduzierbaren, nicht von einer Cloudnachricht
-abhängigen Parser-Einsprung freigeschaltet. Der passive Logger muss dann bereits
-laufen.
+Der Liveaufruf verwendet den regelmäßig ausgeführten MQTT-Yield-Loop bei
+`0x1FE40` als Parser-Trampolin. Dieser Punkt wird unabhängig von einer neu
+eintreffenden Cloudnachricht erreicht. Die Cloud wird vor dem Einsprung
+gesperrt; am Haltepunkt werden UART-Leerlauf und Board-Schritt 12 erneut
+geprüft. Das GDB-Skript arbeitet linear und wartet nacheinander auf Yield-Loop,
+C350 und C36E. Es setzt keine im Hintergrund weiterlaufenden Breakpoint-Befehle
+ein.
+Der passive Logger muss bereits laufen.
 
 ```bash
 python3 phnix_local_ota_controller.py \
