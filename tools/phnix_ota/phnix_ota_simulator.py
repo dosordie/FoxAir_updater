@@ -476,6 +476,8 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, (b"0\n" if state.get("running") else b"1\n")
     if command.startswith("test -f /tmp/phnix_ota_hook/transfer-started"):
         return 0, b"1\n"
+    if command.startswith("test -f /tmp/phnix_ota_hook/injection-started"):
+        return 0, b"1\n"
     if command.startswith("iptables -S OUTPUT"):
         state = json.loads((sim_home() / "runtime.json").read_text(encoding="utf-8"))
         return 0, (b"-A OUTPUT -o sim0 -p tcp --dport 1883 -j DROP\n" if state.get("cloud_blocked") else b"")

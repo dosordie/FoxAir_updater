@@ -49,6 +49,7 @@ REMOTE_HANDSHAKE_TRACE = "/tmp/phnix_handshake_trace.json"
 REMOTE_HOOK_STATE = "/tmp/phnix_ota_hook"
 REMOTE_RUN_ACTIVE = f"{REMOTE_HOOK_STATE}/run.active"
 REMOTE_TRANSFER_STARTED = f"{REMOTE_HOOK_STATE}/transfer-started"
+REMOTE_INJECTION_STARTED = f"{REMOTE_HOOK_STATE}/injection-started"
 DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
 
 OUTPUT_MODE = "auto"
@@ -292,6 +293,7 @@ def original_runtime_status(adb: AdbClient) -> dict:
         "debugger_pids": adb.shell("pidof gdbserver gdb || true"),
         "run_active": adb.shell(f"test -f {REMOTE_RUN_ACTIVE}; echo $?") == "0",
         "transfer_started": adb.shell(f"test -f {REMOTE_TRANSFER_STARTED}; echo $?") == "0",
+        "injection_started": adb.shell(f"test -f {REMOTE_INJECTION_STARTED}; echo $?") == "0",
         "cloud_guards": adb.shell(
             "iptables -S OUTPUT 2>/dev/null | grep -- '--dport 1883' || true; "
             "iptables -S INPUT 2>/dev/null | grep -- '--sport 1883' || true"
@@ -313,7 +315,11 @@ def original_runtime_status(adb: AdbClient) -> dict:
         "service_untraced": "TracerPid:\t0" in service_state or "TracerPid: 0" in service_state,
         "service_not_stopped": "T (stopped)" not in service_state,
         "no_debugger": not result["debugger_pids"],
-        "no_local_ota": not result["run_active"] and not result["transfer_started"],
+        "no_local_ota": (
+            not result["run_active"]
+            and not result["injection_started"]
+            and not result["transfer_started"]
+        ),
         "no_cloud_guard": not result["cloud_guards"],
         "cloud_connected": "ESTABLISHED" in result["mqtt_connection"],
         "watchdogs_running": len(watchdogs.splitlines()) >= 2,

@@ -184,6 +184,9 @@ class OtaInfoTests(unittest.TestCase):
         self.assertIn("*(unsigned int *)0x930dc != 0", full)
         self.assertIn("*(unsigned char *)0x98a94 != 12", full)
         self.assertIn("shell touch $TRANSFER_STARTED", full)
+        self.assertIn("shell touch $INJECTION_STARTED", full)
+        self.assertIn(r"if \$pc != 0x1c4bc", full)
+        self.assertIn(r"if \$pc != 0x1ba04", full)
         self.assertIn("break *0x1ba04", full)
         self.assertIn("\"phase\":\"same-version\"", full)
 
@@ -193,6 +196,13 @@ class OtaInfoTests(unittest.TestCase):
         with self.assertRaises(OtaError):
             restore_original_runtime(adb)
         adb.shell.assert_called_once()
+
+    def test_injected_restore_kills_old_service_without_resuming_it(self):
+        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        restore = hook.split("restore_original_hook() {", 1)[1].split("attach_test() {", 1)[0]
+        injected = restore.split('if test "$INJECTED" = 1; then', 1)[1].split("\n    fi", 1)[0]
+        self.assertIn('kill -KILL "$OLD_PID"', injected)
+        self.assertNotIn('kill -CONT "$OLD_PID"', injected)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ WATCHDOG_PIDS=$STATE_DIR/watchdogs.pids
 RUN_ACTIVE=$STATE_DIR/run.active
 SAFE_TO_CLEAN=$STATE_DIR/safe-to-clean
 TRANSFER_STARTED=$STATE_DIR/transfer-started
+INJECTION_STARTED=$STATE_DIR/injection-started
 STATE_BACKUP=$STATE_DIR/original-state
 DEFAULT_STATUS=/tmp/phnix_ota_status.json
 
@@ -102,7 +103,7 @@ cleanup_original_state() {
     test -n "$PID" && kill -CONT "$PID" 2>/dev/null || true
     resume_watchdogs
     remove_cloud_guard
-    rm -f "$HELPER_PID" "$GDB_PID" "$GDBSERVER_PID" "$RUN_ACTIVE" "$SAFE_TO_CLEAN" "$TRANSFER_STARTED"
+    rm -f "$HELPER_PID" "$GDB_PID" "$GDBSERVER_PID" "$RUN_ACTIVE" "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED"
 }
 
 cleanup() {
@@ -138,15 +139,42 @@ restore_original_hook() {
     fi
     ACTIVE=0
     test -f "$RUN_ACTIVE" && ACTIVE=1
+    INJECTED=0
+    test -f "$INJECTION_STARTED" && INJECTED=1
     if test "$ACTIVE" = 1 && test -f "$STATE_BACKUP/OTA_INFO"; then
         restore_persistent_state
     else
         touch "$SAFE_TO_CLEAN"
     fi
+    if test "$INJECTED" = 1; then
+        # A parser call already in flight would continue after SIGCONT and can
+        # emit a delayed C350. Terminate that process and let the original
+        # watchdog start a fresh, unmodified instance instead.
+        OLD_PID=$(service_pid || true)
+        # SIGKILL is deliberate here. SIGTERM/SIGCONT could let the traced
+        # thread execute the pending parser call before it handles TERM.
+        # SIGKILL cannot be caught and therefore cannot emit a delayed C350.
+        test -n "$OLD_PID" && kill -KILL "$OLD_PID" 2>/dev/null || true
+        test -f "$GDB_PID" && kill -INT "$(cat "$GDB_PID")" 2>/dev/null || true
+        test -f "$GDBSERVER_PID" && kill -TERM "$(cat "$GDBSERVER_PID")" 2>/dev/null || true
+    fi
     if test -f "$HELPER_PID"; then
         OLD_HELPER=$(cat "$HELPER_PID")
         test "$OLD_HELPER" != "$$" && kill -TERM "$OLD_HELPER" 2>/dev/null || true
         sleep 1
+    fi
+    if test "$INJECTED" = 1; then
+        resume_watchdogs
+        remove_cloud_guard
+        NEW_PID=
+        COUNT=0
+        while test "$COUNT" -lt 20; do
+            NEW_PID=$(service_pid || true)
+            test -n "$NEW_PID" && test "$NEW_PID" != "$OLD_PID" && break
+            COUNT=$((COUNT + 1))
+            sleep 1
+        done
+        test -n "$NEW_PID" && test "$NEW_PID" != "$OLD_PID" || fail "original service did not restart after injected restore"
     fi
     cleanup_original_state
     printf '{"phase":"original-restored","terminal":true,"recovery_required":false}\n' > "$STATUS"
@@ -630,49 +658,16 @@ handle SIGFPE nostop noprint pass
 file /data/phnixIot4G
 target remote 127.0.0.1:12345
 set \$launcher_armed = 1
-set \$injection_state = 0
 set \$local_ota_active = 0
 set \$terminal_pending = 0
 
 break *0x1fe40
-commands 1
-  silent
-  if \$injection_state == 0
-    if *(unsigned int *)0x930dc != 0 || *(unsigned char *)0x98a94 != 12
-      set \$launcher_armed = 0
-      shell echo '{"phase":"precondition-rejected","terminal":true,"armed":false,"active":false,"recovery_required":false}' > $STATUS
-      shell touch $SAFE_TO_CLEAN
-      detach
-      quit
-    else
-      set \$injection_state = 1
-      set \$return_pc = \$pc
-      set {char[512]} 0x94ab4 = "$ESCAPED"
-      shell echo '{"phase":"parser-injection","terminal":false,"armed":true,"active":false}' > $STATUS
-      set \$r0 = 0x94ab4
-      set \$lr = \$return_pc
-      set \$pc = 0x19958
-    end
-  else
-    if \$injection_state == 1
-      set \$injection_state = 2
-      if *(unsigned char *)0x98a94 == 1
-        set \$local_ota_active = 1
-        disable 1
-        shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true}' > $STATUS
-      else
-        shell $0 _restore-state --status $STATUS
-        shell echo '{"phase":"parser-rejected","terminal":true,"armed":false,"active":false}' > $STATUS
-        detach
-        quit
-      end
-    end
-  end
-  continue
-end
-
+break *0x1c4bc
+break *0x1ba04
+break *0x1cea0
+break *0x1c7cc
 break *0x1d2f8
-commands 2
+commands 6
   silent
   if \$launcher_armed == 1 && \$r0 == 7
     set \$r0 = 11
@@ -680,17 +675,6 @@ commands 2
   continue
 end
 
-break *0x1c4bc
-commands 3
-  silent
-  if \$local_ota_active == 1
-    disable 3
-    shell echo '{"phase":"c350","terminal":false}' > $STATUS
-  end
-  continue
-end
-
-break *0x1cea0
 commands 4
   silent
   if \$local_ota_active == 1
@@ -700,7 +684,6 @@ commands 4
   continue
 end
 
-break *0x1c7cc
 commands 5
   silent
   if \$local_ota_active == 1
@@ -712,7 +695,7 @@ commands 5
 end
 
 break *0x18d04
-commands 6
+commands 7
   silent
   if \$local_ota_active == 1
     set \$r0 = 0
@@ -722,7 +705,7 @@ commands 6
 end
 
 break *0x191c0
-commands 7
+commands 8
   silent
   if \$local_ota_active == 1
     set \$terminal_pending = 1
@@ -734,7 +717,7 @@ commands 7
 end
 
 break *0x19264
-commands 8
+commands 9
   silent
   if \$local_ota_active == 1
     set \$terminal_pending = 2
@@ -746,7 +729,7 @@ commands 8
 end
 
 break *0x1da3c
-commands 9
+commands 10
   silent
   if \$local_ota_active == 1 && \$terminal_pending == 1 && *(unsigned char *)0x98a94 == 12
     set \$local_ota_active = 0
@@ -760,7 +743,7 @@ commands 9
 end
 
 break *0x1d748
-commands 10
+commands 11
   silent
   if \$local_ota_active == 1 && \$terminal_pending == 2 && *(unsigned char *)0x98a94 == 12
     set \$local_ota_active = 0
@@ -773,20 +756,63 @@ commands 10
   continue
 end
 
-break *0x1ba04
-commands 11
+shell echo '{"phase":"waiting-for-yield-loop","terminal":false}' > $STATUS
+continue
+printf "PHNIX yield pc=0x%x uart=%u step=%u\n", \$pc, *(unsigned int *)0x930dc, *(unsigned char *)0x98a94
+if \$pc != 0x1fe40 || *(unsigned int *)0x930dc != 0 || *(unsigned char *)0x98a94 != 12
+  shell echo '{"phase":"precondition-rejected","terminal":true,"armed":false,"active":false,"recovery_required":false}' > $STATUS
+  shell touch $SAFE_TO_CLEAN
+  detach
+  quit
+end
+disable 1
+set \$return_pc = \$pc
+set {char[512]} 0x94ab4 = "$ESCAPED"
+shell touch $INJECTION_STARTED
+shell echo '{"phase":"parser-injection","terminal":false,"armed":true,"active":false}' > $STATUS
+set \$r0 = 0x94ab4
+set \$lr = \$return_pc
+set \$pc = 0x19958
+continue
+printf "PHNIX post-parser pc=0x%x\n", \$pc
+if \$pc != 0x1c4bc
+  shell echo '{"phase":"parser-rejected","terminal":true,"armed":false,"active":false}' > $STATUS
+  shell $0 _restore-state --status $STATUS
+  detach
+  quit
+end
+shell echo '{"phase":"c350","terminal":false}' > $STATUS
+disable 2
+continue
+printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\n", \$pc, *(unsigned char *)(\$r0+1), *(unsigned char *)(\$r0+3)
+if \$pc != 0x1ba04 || *(unsigned char *)(\$r0+1) != 0x63
+  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false}' > $STATUS
+  shell $0 _restore-state --status $STATUS
+  detach
+  quit
+end
+if *(unsigned char *)(\$r0+3) == 0
+  set \$launcher_armed = 0
+  shell $0 _restore-state --status $STATUS
+  shell echo '{"phase":"same-version","terminal":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
+  detach
+  quit
+end
+if *(unsigned char *)(\$r0+3) != 1
+  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false}' > $STATUS
+  shell $0 _restore-state --status $STATUS
+  detach
+  quit
+end
+set \$local_ota_active = 1
+shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c36e_status":1}' > $STATUS
+commands 3
   silent
-  if \$launcher_armed == 1 && *(unsigned char *)(\$r0+1) == 0x63 && *(unsigned char *)(\$r0+3) == 0
-    set \$local_ota_active = 0
-    set \$launcher_armed = 0
-    shell $0 _restore-state --status $STATUS
-    shell echo '{"phase":"same-version","terminal":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
-    detach
-    quit
+  if \$local_ota_active == 1
+    printf "PHNIX later-c36e status=%u\n", *(unsigned char *)(\$r0+3)
   end
   continue
 end
-
 continue
 EOF
 }
@@ -799,7 +825,7 @@ run_hook() {
     command -v iptables >/dev/null 2>&1 || fail "iptables missing; cloud cannot be isolated"
     mkdir -p "$STATE_DIR"
     backup_persistent_state
-    rm -f "$SAFE_TO_CLEAN" "$TRANSFER_STARTED"
+    rm -f "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED"
     touch "$RUN_ACTIVE"
     echo $$ > "$HELPER_PID"
     trap cleanup EXIT INT TERM

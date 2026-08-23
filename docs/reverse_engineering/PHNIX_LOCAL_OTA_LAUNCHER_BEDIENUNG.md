@@ -279,6 +279,13 @@ hat, legt er einen `transfer-started`-Marker an. Dann verweigert
 `--restore original` jeden Eingriff. Ab diesem Zeitpunkt bleibt ausschließlich
 der Originaldienst für Abschluss oder Fehlerbehandlung zuständig.
 
+Wurde der OTA-Parser bereits aufgerufen, aber C5A8 noch nicht erreicht, setzt
+der Helfer zusätzlich `injection-started`. Eine Wiederherstellung darf den
+angehaltenen Prozess dann nicht einfach fortsetzen, weil sonst ein begonnenes
+C350 verzögert gesendet werden könnte. Stattdessen werden Persistenz und Guards
+wiederhergestellt und der Originaldienst kontrolliert durch eine frische,
+unveränderte Prozessinstanz ersetzt.
+
 ## 10. Laborartefakte wieder entfernen
 
 Nur nach einem sicheren terminalen Zustand oder wenn kein aktiver OTA gestartet
