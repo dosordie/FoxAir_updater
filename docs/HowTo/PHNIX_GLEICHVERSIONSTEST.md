@@ -64,8 +64,16 @@ Der erfolgreiche Abschluss enthält:
 
 ## Später vom Raspberry Pi aus
 
-Der Liveaufruf wird erst nach erneuter ausdrücklicher Freigabe verwendet. Der
-passive Logger muss bereits laufen.
+**Aktueller Stand: Der Liveaufruf ist im Controller und im Modem-Helfer
+gesperrt.** Der untersuchte Debugger-Einsprung wartet auf einen neuen Aufruf des
+Cloud-Handlers und ist deshalb kein deterministischer lokaler Startmechanismus.
+Bei den Versuchen vom 23. August 2026 löste das Zeitlimit jeweils vor C350 aus;
+es wurde kein Busframe gesendet und der Originalzustand wurde wiederhergestellt.
+
+Der folgende Aufruf beschreibt nur die geplante spätere Bedienoberfläche. Er
+wird erst nach einem reproduzierbaren, nicht von einer Cloudnachricht
+abhängigen Parser-Einsprung freigeschaltet. Der passive Logger muss dann bereits
+laufen.
 
 ```bash
 python3 phnix_local_ota_controller.py \
@@ -87,4 +95,3 @@ Bei `guarded-hold` darf der Anwender nicht selbst Prozesse fortsetzen oder
 Schutzregeln entfernen. Zuerst werden Status, Zustandsdateien und Loggerdaten
 ausgewertet. Der Launcher lässt den Originaldienst in diesem Fall absichtlich
 nicht unkontrolliert weiterlaufen.
-

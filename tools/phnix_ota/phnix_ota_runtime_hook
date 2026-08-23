@@ -260,6 +260,8 @@ commands 1
       set \$injection_state = 1
       set \$return_pc = \$pc
       set {char[512]} 0x94ab4 = "$ESCAPED"
+      shell iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
+      shell iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
       shell echo '{"phase":"c350-parser-injection","terminal":false,"quiet_hits":5}' > $STATUS
       set \$r0 = 0x94ab4
       set \$lr = \$return_pc
@@ -359,6 +361,7 @@ c350_probe_hook() {
     test "$LOGGER_CONFIRM" = PASSIVE-LOGGER-RUNNING || fail "passive logger confirmation mismatch"
     test -r "$COMMAND" || fail "C350 command missing"
     verify
+    command -v iptables >/dev/null 2>&1 || fail "iptables missing; cloud cannot be isolated"
     PID=$(service_pid)
     test "$(awk '/^TracerPid:/ {print $2}' /proc/$PID/status)" = 0 || fail "service is already traced"
     test "$(dd if=/data/phnixIot_device_OTA_INFO bs=1 skip=212 count=4 2>/dev/null | od -An -tu4 | tr -d ' ')" = 0 || fail "persistent OTA offset is not zero"
@@ -370,8 +373,6 @@ c350_probe_hook() {
     echo $$ > "$HELPER_PID"
     trap cleanup EXIT INT TERM
     watchdog_pids > "$WATCHDOG_PIDS"
-    iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
-    iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
     while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
     make_c350_probe_gdb_script
     printf '{"phase":"c350-probe-attaching","terminal":false}\n' > "$STATUS"
@@ -833,7 +834,7 @@ case "$ACTION" in
     cancel-breakpoint-test) cancel_breakpoint_test ;;
     c350-breakpoint-test) c350_breakpoint_test ;;
     cancel-probe) cancel_probe_hook ;;
-    c350-probe) c350_probe_hook ;;
+    c350-probe) echo "ERROR: live C350 probe disabled pending deterministic non-cloud parser trigger" >&2; exit 2 ;;
     _restore-state) restore_persistent_state ;;
     cancel-probe-resume) cancel_probe_resume_hook ;;
     run) run_hook ;;

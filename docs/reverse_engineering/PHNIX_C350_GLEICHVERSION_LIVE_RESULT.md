@@ -58,3 +58,15 @@ Jeder weitere Launcher muss deshalb vor `0033` sichern, den kurzzeitig leeren
 Zustand als bekannten Übergang behandeln und den Originalzustand vor dem
 Freigeben des Dienstes bytegenau verifizieren.
 
+## Launcher-Folgeversuche am 23. August 2026
+
+Der anschließend gebaute Ein-Kommando-Launcher wurde zweimal fail-closed
+erprobt. Der erste Lauf erkannte einen alten terminalen Statusdatensatz; der
+zweite wartete auf einen Cloud-Handler, der ohne neue Cloudnachricht nicht
+aufgerufen wurde. In beiden Fällen wurde kein C350 ausgelöst. Zeitlimit und
+Schutz-Halt griffen, anschließend wurden Debugger, Netzsperren und pausierte
+Supervisoren entfernt. Dienst, Cloudverbindung und der ursprüngliche
+OTA_INFO-Hash wurden jeweils verifiziert.
+
+Der Liveaufruf bleibt deshalb softwareseitig gesperrt, bis ein deterministischer
+nicht von einer Cloudnachricht abhängiger Parser-Einsprung nachgewiesen ist.

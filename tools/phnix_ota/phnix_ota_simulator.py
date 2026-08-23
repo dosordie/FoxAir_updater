@@ -468,6 +468,9 @@ def shell(command: str) -> tuple[int, bytes]:
     if command.startswith("cat /tmp/phnix_ota_status.json"):
         path = root_path("/tmp/phnix_ota_status.json")
         return 0, path.read_bytes() if path.exists() else b""
+    if command == "rm -f /tmp/phnix_ota_status.json":
+        root_path("/tmp/phnix_ota_status.json").unlink(missing_ok=True)
+        return 0, b""
     if command.startswith("cat /tmp/phnix_handshake_trace.json"):
         path = root_path("/tmp/phnix_handshake_trace.json")
         return 0, path.read_bytes() if path.exists() else b""

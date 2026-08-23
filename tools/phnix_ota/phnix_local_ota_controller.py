@@ -420,6 +420,11 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     both on the controller and inside the modem helper.
     """
     simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
+    if not simulated and args.execute:
+        raise OtaError(
+            "live same-version start is disabled: the verified parser trigger "
+            "still requires a deterministic non-cloud execution point"
+        )
     expected_confirm = "VM-SAME-VERSION-ONLY" if simulated else "PHNIX-C350-SAME-V33"
     if not args.execute:
         checks = preflight(adb, args.firmware, require_helper=not simulated)
@@ -453,6 +458,9 @@ def run_same_version_test(args, adb: AdbClient) -> None:
         f"--live-confirm {expected_confirm} --logger-confirm "
         f"{args.logger_confirm or 'SIMULATOR'}"
     )
+    # Never interpret a terminal record from an earlier diagnostic as the
+    # result of the run that is about to start.
+    adb.shell(f"rm -f {REMOTE_STATUS}")
     helper = adb.popen_shell(helper_command)
     deadline = time.monotonic() + args.timeout
     safe_terminal = False
