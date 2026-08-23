@@ -2,7 +2,7 @@
 
 Stand: 23. August 2026
 
-Repository: `dosordie/FoxAir_Control`
+Repository: `dosordie/FoxAir_updater`
 
 Diese Datei fasst den aktuellen, korrigierten Arbeitsstand der LTE-/Mainboard-OTA-Analyse zusammen. Frühere Annahmen einer Mainboard-Linkbasis `0x08080000` und eines zwingend separaten Phase-A-IAP-Images sind überholt.
 

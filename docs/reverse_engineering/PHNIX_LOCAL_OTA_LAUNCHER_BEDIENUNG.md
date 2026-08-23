@@ -146,7 +146,37 @@ Dann gelten folgende Regeln:
 `stop --force` ist nur ein manueller Notausgang. Er beweist keinen sicheren
 Cancel und darf deshalb nicht Bestandteil eines automatischen Ablaufs sein.
 
-## 8. Status lesen
+## 8. Cancel-/Recovery-Kommando
+
+Der Controller besitzt jetzt eine mehrstufig geprüfte Cancel-Schnittstelle.
+Ein lesender Trockenlauf ist:
+
+```sh
+python3 phnix_local_ota_controller.py cancel
+```
+
+Im VM-Simulator kann der vollständige Vertrag ausgeführt werden:
+
+```sh
+python3 phnix_local_ota_controller.py \
+  --adb ./phnix-sim-adb \
+  cancel --execute --confirm CANCEL-PHNIX-OTA
+```
+
+Sicheres Aufräumen erfolgt ausschließlich, wenn gemeinsam bestätigt sind:
+
+- C36A wurde tatsächlich gesendet;
+- C36C meldet Status 1;
+- `cancel_pending` ist gelöscht;
+- der Fehlerreport-/Recoverypfad erreicht Board-Step 12;
+- Normalbetrieb wurde bestätigt.
+
+C36C Status 1 allein reicht ausdrücklich nicht. Der reale LTE-Runtime-Helfer
+weist `cancel` derzeit absichtlich zurück, bis die notwendigen Breakpoints am
+Originaldienst praktisch validiert sind. Damit ist das Kommando momentan nur
+im VM-Simulator aktiv ausführbar.
+
+## 9. Status lesen
 
 ```sh
 python3 phnix_local_ota_controller.py status
@@ -155,7 +185,7 @@ python3 phnix_local_ota_controller.py status
 Während C5A8 zählt nur der CRC-validierte persistente OTA_INFO-Offset als
 bestätigter Fortschritt.
 
-## 9. Laborartefakte wieder entfernen
+## 10. Laborartefakte wieder entfernen
 
 Nur nach einem sicheren terminalen Zustand oder wenn kein aktiver OTA gestartet
 wurde:

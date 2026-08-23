@@ -129,6 +129,37 @@ Bei allen nichtterminalen Fehlern muss der Launcher in `guarded-hold` enden.
 `parser-rejected` ist dagegen ein sicherer terminaler Zustand und wird sauber
 aufgeräumt.
 
+### Cancel-/Recovery-Szenarien
+
+Nach einem provozierten `guarded-hold` wird ein Cancel-Szenario ausgewählt:
+
+```sh
+phnix-ota-sim cancel-scenario success
+```
+
+Verfügbar sind:
+
+| Szenario | Erwartung |
+|---|---|
+| `success` | C36A, C36C Status 1, Step 10 und terminaler Step 12 |
+| `retry-success` | zweiter C36A-Versuch führt zum sicheren Abschluss |
+| `no-response` | kein C36C; `guarded-hold` bleibt bestehen |
+| `rejected` | C36C Status 0; `guarded-hold` bleibt bestehen |
+| `wrong-ssid` | Antwort gehört nicht zur Sitzung; Hold bleibt bestehen |
+| `c36c-only` | Status 1 ohne terminalen Step 12; Hold bleibt bestehen |
+
+Ausführung:
+
+```sh
+./phnix_local_ota_controller.py \
+  --adb ./phnix-sim-adb \
+  cancel --execute --confirm CANCEL-PHNIX-OTA
+```
+
+Die Cancel-Simulation ist ein Testvertrag. Sie ist kein Beweis, dass der reale
+Modem-Helfer bereits sicher senden kann; dieser verweigert Live-Cancel weiterhin
+absichtlich.
+
 ## Gesamte Testmatrix
 
 ```sh
@@ -141,7 +172,8 @@ phnix-ota-sim start --scenario success
 phnix-ota-sim stop
 ```
 
-Am 2026-08-23 bestanden alle zehn Szenarien. Die Simulation deckte dabei zwei
+Die Matrix umfasst zehn Update- sowie sechs Cancel-/Recovery-Szenarien. Die
+Simulation deckte dabei zwei
 Zeitfehler im Launcher auf, die anschließend korrigiert wurden:
 
 - Der C5A8-Fortschritts-Timer wird nun erst beim Eintritt in C5A8 gestartet.

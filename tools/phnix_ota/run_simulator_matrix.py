@@ -22,6 +22,14 @@ EXPECTED = {
     "helper-exit": (1, True),
     "success-without-step12": (1, True),
 }
+CANCEL_EXPECTED = {
+    "success": (0, False),
+    "retry-success": (0, False),
+    "no-response": (1, True),
+    "rejected": (1, True),
+    "wrong-ssid": (1, True),
+    "c36c-only": (1, True),
+}
 
 
 def run(command: list[str], timeout: float = 15) -> subprocess.CompletedProcess[str]:
@@ -56,6 +64,37 @@ def main() -> int:
         passed = completed.returncode == expected_rc and status.get("held") is expected_hold
         results.append({
             "scenario": scenario,
+            "returncode": completed.returncode,
+            "held": status.get("held"),
+            "passed": passed,
+        })
+        print(json.dumps(results[-1]), flush=True)
+
+    for scenario, (expected_rc, expected_hold) in CANCEL_EXPECTED.items():
+        run([str(args.sim), "scenario", "crc-error"])
+        run([str(args.sim), "cancel-scenario", scenario])
+        with tempfile.TemporaryDirectory(prefix=f"phnix-cancel-{scenario}-") as state_dir:
+            prepare = run([
+                str(args.controller), "--adb", str(args.adb), "run",
+                "--firmware", str(args.firmware), "--execute",
+                "--state-dir", state_dir, "--poll-interval", "0.05",
+                "--start-timeout", "3", "--handshake-timeout", "3",
+                "--block-timeout", "1",
+            ])
+            completed = run([
+                str(args.controller), "--adb", str(args.adb), "cancel",
+                "--execute", "--confirm", "CANCEL-PHNIX-OTA",
+                "--poll-interval", "0.05", "--timeout", "1",
+            ])
+        status_result = run([str(args.sim), "status"])
+        status = json.loads(status_result.stdout)
+        passed = (
+            prepare.returncode == 1
+            and completed.returncode == expected_rc
+            and status.get("held") is expected_hold
+        )
+        results.append({
+            "scenario": f"cancel-{scenario}",
             "returncode": completed.returncode,
             "held": status.get("held"),
             "passed": passed,

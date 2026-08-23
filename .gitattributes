@@ -1,0 +1,6 @@
+*.py text eol=lf
+*.sh text eol=lf
+tools/phnix_ota/phnix-ota-sim text eol=lf
+tools/phnix_ota/phnix-sim-adb text eol=lf
+tools/phnix_ota/phnix_ota_runtime_hook text eol=lf
+*.md text eol=lf

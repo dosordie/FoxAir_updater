@@ -382,6 +382,7 @@ case "$ACTION" in
     breakpoint-test) breakpoint_test ;;
     run) run_hook ;;
     hold) hold_hook ;;
+    cancel) echo "ERROR: live cancel is disabled until C36A/C36C runtime hooks are validated" >&2; exit 2 ;;
     stop) stop_hook ;;
-    *) echo "usage: $0 verify|attach-test|breakpoint-test|run|hold|stop [options]" >&2; exit 2 ;;
+    *) echo "usage: $0 verify|attach-test|breakpoint-test|run|hold|cancel|stop [options]" >&2; exit 2 ;;
 esac

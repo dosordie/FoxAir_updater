@@ -3,6 +3,7 @@ import unittest
 from tools.phnix_ota.phnix_local_ota_controller import (
     EXPECTED_MD5,
     EXPECTED_SIZE,
+    cancel_proof_ok,
     command_payload,
     crc16_x25,
     parse_ota_info,
@@ -39,6 +40,26 @@ class OtaInfoTests(unittest.TestCase):
         payload = command_payload("http://127.0.0.1:8081/phnixIot_device_OTA.bin")
         self.assertEqual(payload["code"], "0033")
         self.assertEqual(payload["param"]["softwareVer"], "V3.3")
+
+    def test_cancel_requires_complete_terminal_proof(self):
+        proof = {
+            "phase": "cancelled",
+            "terminal": True,
+            "c36a_sent": True,
+            "c36c_status": 1,
+            "cancel_pending": False,
+            "board_ota_step": 12,
+            "normal_operation_verified": True,
+        }
+        self.assertTrue(cancel_proof_ok(proof))
+        for field in ("c36a_sent", "cancel_pending", "normal_operation_verified"):
+            broken = dict(proof)
+            broken.pop(field)
+            self.assertFalse(cancel_proof_ok(broken))
+        for field in ("c36c_status", "board_ota_step"):
+            broken = dict(proof)
+            broken[field] = 0
+            self.assertFalse(cancel_proof_ok(broken))
 
 
 if __name__ == "__main__":

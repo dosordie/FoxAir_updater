@@ -12,12 +12,21 @@ import argparse
 import hashlib
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+# Keep the laboratory script directly executable before it becomes an
+# installed package.  Repository checkout and VM deployment both place the
+# shared package at one of these two roots.
+for candidate in (Path(__file__).resolve().parents[2], Path.cwd()):
+    if (candidate / "updater/common/adb_transport.py").is_file():
+        sys.path.insert(0, str(candidate))
+        break
+
+from updater.common import AdbClient, TransportError
 
 
 EXPECTED_SIZE = 287_598
@@ -89,31 +98,6 @@ def parse_ota_info(raw: bytes) -> OtaInfo:
     )
 
 
-class Adb:
-    def __init__(self, executable: str, serial: str | None):
-        self.base = [executable]
-        if serial:
-            self.base += ["-s", serial]
-
-    def run(self, *args: str, binary: bool = False, check: bool = True):
-        completed = subprocess.run(
-            [*self.base, *args], capture_output=True,
-            text=not binary, check=False,
-        )
-        if check and completed.returncode != 0:
-            stderr = completed.stderr if not binary else completed.stderr.decode(errors="replace")
-            raise OtaError(f"adb {' '.join(args)} failed: {stderr.strip()}")
-        return completed.stdout
-
-    def shell(self, command: str, check: bool = True) -> str:
-        return self.run("shell", command, check=check).strip()
-
-    def read_file(self, remote: str) -> bytes:
-        # The modem's older adbd closes `exec-out`; on a Linux Pi, shell/cat
-        # still preserves the binary stream byte-for-byte.
-        return self.run("shell", "cat", remote, binary=True)
-
-
 def file_md5(path: Path) -> str:
     digest = hashlib.md5()
     with path.open("rb") as stream:
@@ -142,7 +126,7 @@ def print_event(event: str, **fields) -> None:
     print(json.dumps(record, ensure_ascii=False), flush=True)
 
 
-def preflight(adb: Adb, firmware: Path, require_helper: bool) -> dict:
+def preflight(adb: AdbClient, firmware: Path, require_helper: bool) -> dict:
     checks: dict[str, object] = {}
     if not firmware.is_file():
         raise OtaError(f"firmware not found: {firmware}")
@@ -210,7 +194,7 @@ def preflight(adb: Adb, firmware: Path, require_helper: bool) -> dict:
     return checks
 
 
-def save_remote_state(adb: Adb, state_dir: Path) -> None:
+def save_remote_state(adb: AdbClient, state_dir: Path) -> None:
     state_dir.mkdir(parents=True, exist_ok=False)
     (state_dir / "phnixIot_device_OTA_INFO").write_bytes(adb.read_file(REMOTE_INFO))
     (state_dir / "phnixIot_device_statisic").write_bytes(adb.read_file(REMOTE_STATISTICS))
@@ -221,9 +205,9 @@ def save_remote_state(adb: Adb, state_dir: Path) -> None:
     (state_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def stage_firmware(adb: Adb, firmware: Path) -> None:
+def stage_firmware(adb: AdbClient, firmware: Path) -> None:
     adb.shell(f"mkdir -p {REMOTE_STAGE_DIR}")
-    adb.run("push", str(firmware), REMOTE_FIRMWARE)
+    adb.push(firmware, REMOTE_FIRMWARE)
     remote_md5 = adb.shell(f"md5sum {REMOTE_FIRMWARE} | awk '{{print $1}}'").upper()
     if remote_md5 != EXPECTED_MD5:
         raise OtaError(f"staged modem firmware MD5 mismatch: {remote_md5}")
@@ -240,7 +224,7 @@ def stage_firmware(adb: Adb, firmware: Path) -> None:
     print_event("firmware-staged", remote=REMOTE_FIRMWARE, url=DEFAULT_FIRMWARE_URL)
 
 
-def stop_local_http(adb: Adb) -> None:
+def stop_local_http(adb: AdbClient) -> None:
     adb.shell(
         f"test -f {REMOTE_HTTP_PID} && kill $(cat {REMOTE_HTTP_PID}) 2>/dev/null || true; "
         f"rm -f {REMOTE_HTTP_PID}",
@@ -248,14 +232,26 @@ def stop_local_http(adb: Adb) -> None:
     )
 
 
-def remote_status(adb: Adb) -> dict:
+def remote_status(adb: AdbClient) -> dict:
     status_text = adb.shell(f"cat {REMOTE_STATUS} 2>/dev/null || true")
     hook = json.loads(status_text) if status_text else {"state": "hook-not-running"}
     info = asdict(parse_ota_info(adb.read_file(REMOTE_INFO)))
     return {"hook": hook, "ota_info": info}
 
 
-def run_update(args, adb: Adb) -> None:
+def cancel_proof_ok(hook: dict) -> bool:
+    return (
+        hook.get("phase") == "cancelled"
+        and hook.get("terminal") is True
+        and hook.get("c36a_sent") is True
+        and hook.get("c36c_status") == 1
+        and hook.get("cancel_pending") is False
+        and hook.get("board_ota_step") == 12
+        and hook.get("normal_operation_verified") is True
+    )
+
+
+def run_update(args, adb: AdbClient) -> None:
     # A dry-run must remain useful before the build-specific modem helper exists.
     checks = preflight(adb, args.firmware, require_helper=args.execute)
     print_event("preflight", **checks)
@@ -274,7 +270,7 @@ def run_update(args, adb: Adb) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         command_file = Path(temp_dir) / "ota-command.json"
         command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        adb.run("push", str(command_file), REMOTE_COMMAND)
+        adb.push(command_file, REMOTE_COMMAND)
 
     helper_command = (
         f"{REMOTE_HELPER} run --build-id {EXPECTED_BUILD_ID} "
@@ -282,7 +278,7 @@ def run_update(args, adb: Adb) -> None:
         "--allow-publish 0023,0053,0083"
     )
     print_event("hook-start", allowed_publish=["0023", "0053", "0083"])
-    helper = subprocess.Popen([*adb.base, "shell", helper_command])
+    helper = adb.popen_shell(helper_command)
 
     phase_started = time.monotonic()
     previous_phase = None
@@ -383,6 +379,63 @@ def run_update(args, adb: Adb) -> None:
             print_event("manual-recovery-required", status=REMOTE_STATUS)
 
 
+def cancel_update(args, adb: AdbClient) -> None:
+    """Request a guarded cancel and require the complete terminal proof.
+
+    The VM helper implements this contract.  The real build-specific helper
+    intentionally refuses it until the live C36A/C36C breakpoints have been
+    validated.  Therefore exposing this command does not silently enable a
+    physical cancel path.
+    """
+    initial = remote_status(adb)
+    hook = initial["hook"]
+    print_event("cancel-preflight", **initial)
+    if hook.get("phase") != "guarded-hold" or hook.get("recovery_required") is not True:
+        raise OtaError("cancel requires an active guarded-hold state")
+    if not args.execute:
+        print_event("cancel-dry-run", message="No cancel request was sent")
+        return
+    if args.confirm != "CANCEL-PHNIX-OTA":
+        raise OtaError("live cancel confirmation must be CANCEL-PHNIX-OTA")
+
+    command = f"{REMOTE_HELPER} cancel --status {REMOTE_STATUS}"
+    helper = adb.popen_shell(command)
+    started = time.monotonic()
+    safe_terminal = False
+    helper_exit_seen_at = None
+    try:
+        while True:
+            status = remote_status(adb)
+            hook = status["hook"]
+            print_event("cancel-status", **status)
+            phase = hook.get("phase")
+            if phase == "cancelled" and hook.get("terminal") is True:
+                if not cancel_proof_ok(hook):
+                    raise OtaError("cancel terminal state is missing required recovery proof")
+                safe_terminal = True
+                print_event("cancel-complete", proof=hook)
+                return
+            if helper.poll() is not None:
+                if helper_exit_seen_at is None:
+                    helper_exit_seen_at = time.monotonic()
+                if time.monotonic() - helper_exit_seen_at < 1.0:
+                    time.sleep(args.poll_interval)
+                    continue
+                raise OtaError(f"cancel helper exited before a safe terminal state: {helper.returncode}")
+            if time.monotonic() - started > args.timeout:
+                raise OtaError(f"cancel watchdog expired in {phase or 'unknown'}")
+            time.sleep(args.poll_interval)
+    except BaseException:
+        adb.shell(f"{REMOTE_HELPER} hold --status {REMOTE_STATUS}", check=False)
+        print_event("guarded-hold", message="Cancel was not fully proven; guards remain active")
+        raise
+    finally:
+        if safe_terminal:
+            adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
+            stop_local_http(adb)
+            print_event("cancel-cleanup-complete")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--adb", default=shutil.which("adb") or "adb")
@@ -394,6 +447,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("preflight", parents=[common])
     sub.add_parser("status")
+    cancel = sub.add_parser("cancel")
+    cancel.add_argument("--execute", action="store_true")
+    cancel.add_argument("--confirm")
+    cancel.add_argument("--poll-interval", type=float, default=0.5)
+    cancel.add_argument("--timeout", type=float, default=25.0)
     run = sub.add_parser("run", parents=[common])
     run.add_argument("--firmware-url", default=DEFAULT_FIRMWARE_URL)
     run.add_argument("--execute", action="store_true")
@@ -407,7 +465,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    adb = Adb(args.adb, args.serial)
+    adb = AdbClient(args.adb, args.serial)
     try:
         if args.command == "preflight":
             result = preflight(adb, args.firmware, require_helper=False)
@@ -416,9 +474,12 @@ def main() -> int:
         if args.command == "status":
             print(json.dumps(remote_status(adb), indent=2, ensure_ascii=False))
             return 0
+        if args.command == "cancel":
+            cancel_update(args, adb)
+            return 0
         run_update(args, adb)
         return 0
-    except (OtaError, OSError, json.JSONDecodeError) as error:
+    except (OtaError, TransportError, OSError, json.JSONDecodeError) as error:
         print_event("error", message=str(error))
         return 1
 

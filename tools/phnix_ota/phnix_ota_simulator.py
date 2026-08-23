@@ -22,6 +22,10 @@ SCENARIOS = {
     "offset-backwards", "offset-overflow", "stall-c350", "stall-c5a8",
     "helper-exit", "success-without-step12",
 }
+CANCEL_SCENARIOS = {
+    "success", "retry-success", "no-response", "rejected",
+    "wrong-ssid", "c36c-only",
+}
 
 
 def sim_home() -> Path:
@@ -70,7 +74,7 @@ def config() -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
-def reset_state(scenario: str) -> None:
+def reset_state(scenario: str, cancel_scenario: str = "success") -> None:
     home = sim_home()
     root = home / "root"
     if root.exists():
@@ -81,26 +85,30 @@ def reset_state(scenario: str) -> None:
     root_path("/data/phnixIot_device_statisic").write_bytes(bytes(256))
     root_path("/data/phnixIot_device_OTA_INFO").write_bytes(make_ota_info())
     root_path("/data/phnix_ota_runtime_hook").write_text("simulated runtime hook\n", encoding="utf-8")
-    write_json(home / "config.json", {"scenario": scenario})
+    write_json(home / "config.json", {
+        "scenario": scenario, "cancel_scenario": cancel_scenario,
+    })
     write_json(home / "runtime.json", {
         "running": False, "httpd": False, "held": False,
         "cloud_blocked": False, "watchdogs_paused": False,
+        "recovery_running": False,
     })
     root_path("/tmp/phnix_ota_status.json").unlink(missing_ok=True)
 
 
 def terminate_helper() -> None:
-    pid_file = root_path("/tmp/phnix_ota_sim_helper.pid")
-    if not pid_file.exists():
-        return
-    try:
-        pid = int(pid_file.read_text().strip())
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-        if b"phnix_ota_simulator.py" in cmdline:
-            os.kill(pid, 15)
-    except (OSError, ValueError):
-        pass
-    pid_file.unlink(missing_ok=True)
+    for name in ("phnix_ota_sim_helper.pid", "phnix_ota_sim_cancel.pid"):
+        pid_file = root_path(f"/tmp/{name}")
+        if not pid_file.exists():
+            continue
+        try:
+            pid = int(pid_file.read_text().strip())
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+            if b"phnix_ota_simulator.py" in cmdline:
+                os.kill(pid, 15)
+        except (OSError, ValueError):
+            pass
+        pid_file.unlink(missing_ok=True)
 
 
 def require_started() -> None:
@@ -114,10 +122,14 @@ def admin(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     start = sub.add_parser("start")
     start.add_argument("--scenario", choices=sorted(SCENARIOS), default="success")
+    start.add_argument("--cancel-scenario", choices=sorted(CANCEL_SCENARIOS), default="success")
     reset = sub.add_parser("reset")
     reset.add_argument("--scenario", choices=sorted(SCENARIOS), default="success")
+    reset.add_argument("--cancel-scenario", choices=sorted(CANCEL_SCENARIOS), default="success")
     scenario = sub.add_parser("scenario")
     scenario.add_argument("name", choices=sorted(SCENARIOS))
+    cancel_scenario = sub.add_parser("cancel-scenario")
+    cancel_scenario.add_argument("name", choices=sorted(CANCEL_SCENARIOS))
     sub.add_parser("stop")
     sub.add_parser("status")
     args = parser.parse_args(argv)
@@ -126,12 +138,12 @@ def admin(argv: list[str]) -> int:
     home.mkdir(parents=True, exist_ok=True)
     if args.command == "start":
         terminate_helper()
-        reset_state(args.scenario)
+        reset_state(args.scenario, args.cancel_scenario)
         (home / "started").touch()
     elif args.command == "reset":
         was_started = (home / "started").exists()
         terminate_helper()
-        reset_state(args.scenario)
+        reset_state(args.scenario, args.cancel_scenario)
         if was_started:
             (home / "started").touch()
     elif args.command == "scenario":
@@ -139,8 +151,15 @@ def admin(argv: list[str]) -> int:
             print("Simulator is stopped; use start first", file=sys.stderr)
             return 1
         terminate_helper()
-        reset_state(args.name)
+        reset_state(args.name, config().get("cancel_scenario", "success"))
         (home / "started").touch()
+    elif args.command == "cancel-scenario":
+        if not (home / "started").exists():
+            print("Simulator is stopped; use start first", file=sys.stderr)
+            return 1
+        current = config()
+        current["cancel_scenario"] = args.name
+        write_json(home / "config.json", current)
     elif args.command == "stop":
         terminate_helper()
         (home / "started").unlink(missing_ok=True)
@@ -148,11 +167,13 @@ def admin(argv: list[str]) -> int:
         if runtime.exists():
             state = json.loads(runtime.read_text(encoding="utf-8"))
             state.update(running=False, httpd=False, held=False,
-                         cloud_blocked=False, watchdogs_paused=False)
+                         cloud_blocked=False, watchdogs_paused=False,
+                         recovery_running=False)
             write_json(runtime, state)
     state = {
         "started": (home / "started").exists(),
         "scenario": config().get("scenario"),
+        "cancel_scenario": config().get("cancel_scenario"),
         "home": str(home),
     }
     runtime = home / "runtime.json"
@@ -248,6 +269,58 @@ def wait_for_hold(pid_file: Path) -> int:
             return 0
 
 
+def cancel_run() -> int:
+    scenario = config().get("cancel_scenario", "success")
+    pid_file = root_path("/tmp/phnix_ota_sim_cancel.pid")
+    pid_file.write_text(str(os.getpid()))
+    runtime_state(running=True, held=False, cloud_blocked=True,
+                  watchdogs_paused=True, recovery_running=True)
+    set_status("cancel-requested", False, c36a_sent=True, attempt=1,
+               recovery_required=True)
+    if scenario == "no-response":
+        return wait_for_cancel_hold(pid_file)
+    time.sleep(0.2)
+    if scenario == "retry-success":
+        set_status("cancel-retry", False, c36a_sent=True, attempt=2,
+                   recovery_required=True)
+        time.sleep(0.2)
+    if scenario == "rejected":
+        set_status("cancel-rejected", False, c36a_sent=True, c36c_status=0,
+                   recovery_required=True)
+        return wait_for_cancel_hold(pid_file)
+    if scenario == "wrong-ssid":
+        set_status("cancel-wrong-ssid", False, c36a_sent=True, c36c_status=1,
+                   ssid_match=False, recovery_required=True)
+        return wait_for_cancel_hold(pid_file)
+    set_status("cancel-confirmed", False, c36a_sent=True, c36c_status=1,
+               ssid_match=True, cancel_pending=False, board_ota_step=7,
+               recovery_required=True)
+    if scenario == "c36c-only":
+        return wait_for_cancel_hold(pid_file)
+    time.sleep(0.2)
+    set_status("cancel-report", False, c36a_sent=True, c36c_status=1,
+               cancel_pending=False, board_ota_step=10,
+               recovery_required=True)
+    time.sleep(0.2)
+    update_info(0, 0)
+    set_status("cancelled", True, c36a_sent=True, c36c_status=1,
+               ssid_match=True, cancel_pending=False, board_ota_step=12,
+               normal_operation_verified=True, recovery_required=False)
+    runtime_state(running=False, held=False, recovery_running=False)
+    pid_file.unlink(missing_ok=True)
+    return 0
+
+
+def wait_for_cancel_hold(pid_file: Path) -> int:
+    while True:
+        time.sleep(0.1)
+        state = json.loads((sim_home() / "runtime.json").read_text(encoding="utf-8"))
+        if state.get("held"):
+            runtime_state(running=False, recovery_running=False)
+            pid_file.unlink(missing_ok=True)
+            return 0
+
+
 def shell(command: str) -> tuple[int, bytes]:
     if command.startswith("cat ") and " " not in command[4:]:
         path = root_path(command[4:])
@@ -288,6 +361,8 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, path.read_bytes() if path.exists() else b""
     if command.startswith("/data/phnix_ota_runtime_hook run "):
         return helper_run(), b""
+    if command.startswith("/data/phnix_ota_runtime_hook cancel "):
+        return cancel_run(), b""
     if command.startswith("/data/phnix_ota_runtime_hook hold "):
         runtime_state(held=True, running=False)
         set_status("guarded-hold", False, recovery_required=True)

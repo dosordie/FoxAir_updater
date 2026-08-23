@@ -9,19 +9,20 @@ This repository intentionally separates firmware-related work from [`FoxAir_Cont
 ```text
 FoxAir_updater/
 ├─ docs/
-│  ├─ mainboard/            # Mainboard firmware analysis (e.g. V3.3, IAP, flash/recovery)
-│  ├─ ota/                  # OTA protocol, state machine, transfer and safety analysis
-│  └─ modem/                # PHNIX LTE modem firmware/runtime reverse engineering
+│  ├─ reverse_engineering/  # Mainboard, OTA and LTE modem analysis
+│  └─ HowTo/                # Operator-facing procedures
 ├─ firmware_images/
 │  ├─ mainboard/            # Original/read-out mainboard firmware images
 │  ├─ modem/                # LTE modem firmware images / OTA payloads
 │  └─ display/              # HMI/DGUS/display firmware images where relevant
-├─ tools/
-│  ├─ common/               # Platform-independent updater/protocol code
-│  ├─ linux/                # Linux/Raspberry Pi updater and lab tooling
-│  └─ windows/              # Windows updater/launcher tooling
+├─ updater/
+│  ├─ common/               # Shared Python transport/core used by every host OS
+│  ├─ linux/                # Linux/Raspberry Pi integration
+│  └─ windows/              # Windows design; no Windows application yet
+├─ tools/phnix_ota/         # Current guarded launcher, runtime hook and VM simulator
+├─ devtools/                # Direct RS485 sender, board simulator and offline lab
 ├─ tests/                   # Simulator, protocol and regression tests
-└─ samples/                 # Captures, frame examples and sanitized test material
+└─ tests/                   # Protocol, controller and simulator regression tests
 ```
 
 ## Firmware images
@@ -39,7 +40,19 @@ Do not overwrite known-good originals. Modified/test images should use clearly d
 
 ## Platform split
 
-The updater should keep protocol/firmware logic in `tools/common/` wherever possible. Windows- and Linux-specific launchers, serial-port discovery, driver/setup instructions and packaging belong in their respective `tools/windows/` and `tools/linux/` directories.
+The updater keeps host-independent transport and protocol logic in
+`updater/common/`. Linux/Raspberry-Pi integration belongs in `updater/linux/`.
+The future Windows frontend belongs in `updater/windows/` and will reuse the
+same common Python code with a selected or bundled `adb.exe`.
+
+The currently executable guarded laboratory launcher remains in
+`tools/phnix_ota/` until its interfaces and live recovery path are stable.
+
+## Current safety boundary
+
+The VM simulator supports the complete cancel/recovery contract for regression
+testing. The real LTE runtime helper deliberately rejects live cancel until the
+C36A/C36C and terminal Step-12 hooks have been validated on the real build.
 
 ## Scope
 

@@ -21,7 +21,7 @@ Auf Proxmox ist eine eigene Bridge ohne physischen Uplink/Gateway fuer den kompl
 Auf einer frisch installierten Debian-VM:
 
 ```bash
-wget https://raw.githubusercontent.com/dosordie/FoxAir_Control/main/devtools/phnix_ota_lab/install.sh
+wget https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/devtools/phnix_ota_lab/install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
@@ -29,7 +29,7 @@ sudo ./install.sh
 Alternativ als `root`:
 
 ```bash
-wget https://raw.githubusercontent.com/dosordie/FoxAir_Control/main/devtools/phnix_ota_lab/install.sh
+wget https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/devtools/phnix_ota_lab/install.sh
 chmod +x install.sh
 ./install.sh
 ```

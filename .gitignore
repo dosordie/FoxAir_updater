@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Local OTA state and logs
+phnix-ota-state/
+*.log
+*.pcap
+*.pcapng
+
+# Device/runtime dumps and credentials
+*.zip
+*.tar
+*.tar.gz
+*.img
+*.dump
+rootfs/
+DeviceSecret*
+device_secret*
+
+# Firmware binaries are local unless their redistribution is explicitly cleared
+firmware_images/**/*.bin
+firmware_images/**/*.hex
+firmware_images/**/*.fw
+!firmware_images/**/.gitkeep
+!firmware_images/**/README.md
+!firmware_images/**/metadata.json
