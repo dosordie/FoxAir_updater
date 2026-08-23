@@ -76,3 +76,7 @@ Bestätigt ist ausschließlich der frühe Cancel- und Rückkehrpfad. Der Test
 belegt weder die Sicherheit noch die Funktionsfähigkeit von C350, C357, C5A8,
 Firmware-Promotion oder Boot/Recovery. Ein echter Firmwaretransfer bleibt eine
 separate, ausdrücklich freizugebende Risikostufe.
+
+Hinweise zur Auswertung passiver Mitschnitte, zur Benennung des
+ProductKey-Bereichs 200–215 und zu allen OTA-relevanten Registern stehen in
+[`PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md).

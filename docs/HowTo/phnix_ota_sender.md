@@ -1,5 +1,9 @@
 # Kontrollierter PHNIX-Mainboard-OTA-Sender
 
+Für passive Buslogger und die vollständige Benennung der Startup-/OTA-Register
+siehe
+[`PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md).
+
 Stand: 23. August 2026
 
 [`devtools/phnix_ota_sender.py`](../../devtools/phnix_ota_sender.py) bildet die
