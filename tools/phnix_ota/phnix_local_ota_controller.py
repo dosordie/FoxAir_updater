@@ -39,6 +39,7 @@ REMOTE_CACHE = "/cache/phnixIot_device_OTA"
 REMOTE_INFO = "/data/phnixIot_device_OTA_INFO"
 REMOTE_STATISTICS = "/data/phnixIot_device_statisic"
 REMOTE_HELPER = "/data/phnix_ota_runtime_hook"
+REMOTE_HELPER_STAGE = "/data/.phnix_ota_runtime_hook.new"
 REMOTE_STAGE_DIR = "/data/phnix_local_ota"
 REMOTE_FIRMWARE = f"{REMOTE_STAGE_DIR}/phnixIot_device_OTA.bin"
 REMOTE_COMMAND = f"{REMOTE_STAGE_DIR}/ota-command.json"
@@ -201,6 +202,9 @@ def _human_event(event: str, fields: dict) -> None:
         "preflight": (GREEN, "[OK] Vorpruefung erfolgreich"),
         "state-backed-up": (GREEN, "[OK] Sicherheitskopie des Ausgangszustands erstellt"),
         "firmware-staged": (GREEN, "[OK] Firmware auf das LTE-Modem kopiert"),
+        "helper-local-verified": (GREEN, "[OK] Lokaler Update-Helfer geprueft"),
+        "helper-installed": (GREEN, "[OK] Update-Helfer sicher auf das LTE-Modem kopiert"),
+        "helper-removed": (GREEN, "[OK] Update-Helfer vom LTE-Modem entfernt"),
         "hook-start": (CYAN, "[..] Update gestartet"),
         "same-version-complete": (GREEN, "[OK] Gleichversionstest erfolgreich beendet - keine Firmware geschrieben"),
         "complete": (GREEN, "[OK] Firmware-Uebertragung und Mainboard-Abschluss erfolgreich"),
@@ -246,12 +250,14 @@ def verify_original_runtime(adb: AdbClient) -> dict:
         "mqtt_connection": adb.shell(
             "netstat -nt 2>/dev/null | awk '$4 ~ /:1883$/ || $5 ~ /:1883$/ {print}'"
         ),
+        "runtime_helper_absent": adb.shell(f"test -e {REMOTE_HELPER}; echo $?") != "0",
     }
     result["ok"] = bool(
         result["service_pid"]
         and result["service_sha256"] == EXPECTED_SERVICE_SHA256
         and len(str(result["watchdog_pids"]).splitlines()) >= 2
         and result["mqtt_connection"]
+        and result["runtime_helper_absent"]
     )
     return result
 
@@ -305,6 +311,7 @@ def original_runtime_status(adb: AdbClient) -> dict:
         "http_active": http_pid_active or bool(http_listener),
         "http_listener": http_listener,
         "local_ota_artifacts": local_artifacts,
+        "runtime_helper_present": adb.shell(f"test -e {REMOTE_HELPER}; echo $?") == "0",
         "ota_info": asdict(parse_ota_info(adb.read_file(REMOTE_INFO))),
         "ota_info_sha256": adb.shell(f"sha256sum {REMOTE_INFO} | awk '{{print $1}}'"),
         "statistics_sha256": adb.shell(f"sha256sum {REMOTE_STATISTICS} | awk '{{print $1}}'"),
@@ -325,6 +332,7 @@ def original_runtime_status(adb: AdbClient) -> dict:
         "watchdogs_running": len(watchdogs.splitlines()) >= 2,
         "http_stopped": not result["http_active"],
         "staging_clean": not result["local_ota_artifacts"],
+        "helper_absent": not result["runtime_helper_present"],
         "ota_info_valid": result["ota_info"]["crc_ok"],
     }
     result["checks"] = checks
@@ -348,6 +356,7 @@ def show_original_status(result: dict) -> None:
         "watchdogs_running": "Originale Ueberwachungsdienste laufen",
         "http_stopped": "Lokaler Firmware-Webserver ist beendet",
         "staging_clean": "Lokale Firmware-Zwischendateien sind entfernt",
+        "helper_absent": "Temporärer Update-Helfer ist entfernt",
         "ota_info_valid": "OTA-Statusdatei ist gueltig",
     }
     for key, label in labels.items():
@@ -358,7 +367,68 @@ def show_original_status(result: dict) -> None:
                  GREEN if result["original_ok"] else RED), flush=True)
 
 
-def restore_original_runtime(adb: AdbClient) -> dict:
+def validate_local_runtime_helper(path: Path) -> str:
+    if not path.is_file():
+        raise OtaError(f"local runtime helper not found: {path}")
+    raw = path.read_bytes()
+    if not raw.startswith(b"#!/bin/sh\n"):
+        raise OtaError("local runtime helper has no valid /bin/sh header")
+    required = (
+        EXPECTED_BUILD_ID.encode(),
+        EXPECTED_SERVICE_SHA256.lower().encode(),
+        b"make_gdb_script()",
+    )
+    if any(marker not in raw for marker in required):
+        raise OtaError("local runtime helper does not match the verified service build")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def install_runtime_helper(adb: AdbClient, local_helper: Path, *, allow_active: bool = False) -> str:
+    local_hash = validate_local_runtime_helper(local_helper)
+    print_event("helper-local-verified", path=str(local_helper), sha256=local_hash)
+    if not allow_active:
+        active = any(
+            adb.shell(f"test -f {marker}; echo $?") == "0"
+            for marker in (REMOTE_RUN_ACTIVE, REMOTE_INJECTION_STARTED, REMOTE_TRANSFER_STARTED)
+        )
+        if active:
+            raise OtaError("a local OTA state is active; refusing to replace its runtime helper")
+    adb.shell(f"rm -f {REMOTE_HELPER_STAGE}")
+    activated = False
+    try:
+        adb.push(local_helper, REMOTE_HELPER_STAGE)
+        staged_hash = adb.shell(
+            f"sha256sum {REMOTE_HELPER_STAGE} | awk '{{print $1}}'"
+        ).lower()
+        if staged_hash != local_hash:
+            raise OtaError(f"staged runtime helper SHA256 mismatch: {staged_hash}")
+        adb.shell(f"chmod 755 {REMOTE_HELPER_STAGE}")
+        if adb.shell(f"test -x {REMOTE_HELPER_STAGE}; echo $?") != "0":
+            raise OtaError("staged runtime helper is not executable")
+        adb.shell(f"mv -f {REMOTE_HELPER_STAGE} {REMOTE_HELPER}")
+        activated = True
+        remote_hash = adb.shell(
+            f"sha256sum {REMOTE_HELPER} | awk '{{print $1}}'"
+        ).lower()
+        if remote_hash != local_hash:
+            raise OtaError(f"installed runtime helper SHA256 mismatch: {remote_hash}")
+    except BaseException:
+        adb.shell(f"rm -f {REMOTE_HELPER_STAGE}", check=False)
+        if activated:
+            adb.shell(f"rm -f {REMOTE_HELPER}", check=False)
+        raise
+    print_event("helper-installed", remote=REMOTE_HELPER, sha256=local_hash)
+    return local_hash
+
+
+def remove_runtime_helper(adb: AdbClient) -> None:
+    adb.shell(f"rm -f {REMOTE_HELPER} {REMOTE_HELPER_STAGE}")
+    if adb.shell(f"test -e {REMOTE_HELPER}; echo $?") == "0":
+        raise OtaError("runtime helper could not be removed from the LTE modem")
+    print_event("helper-removed", remote=REMOTE_HELPER)
+
+
+def restore_original_runtime(adb: AdbClient, local_helper: Path) -> dict:
     # Do not parse OTA_INFO here: the original 0033 handler legitimately
     # truncates it before C350 completes, which is exactly when restore is
     # needed after a pre-transfer guarded hold.
@@ -367,8 +437,24 @@ def restore_original_runtime(adb: AdbClient) -> dict:
         raise OtaError(
             "firmware blocks have started; automatic restore is locked and the original service remains authoritative"
         )
+    helper_present = adb.shell(f"test -x {REMOTE_HELPER}; echo $?") == "0"
+    if not helper_present:
+        install_runtime_helper(adb, local_helper, allow_active=True)
+    else:
+        local_hash = validate_local_runtime_helper(local_helper)
+        remote_hash = adb.shell(
+            f"sha256sum {REMOTE_HELPER} | awk '{{print $1}}'"
+        ).lower()
+        if remote_hash != local_hash:
+            active = any(
+                adb.shell(f"test -f {marker}; echo $?") == "0"
+                for marker in (REMOTE_RUN_ACTIVE, REMOTE_INJECTION_STARTED)
+            )
+            if active:
+                raise OtaError("active recovery helper differs from the local verified helper; refusing replacement")
+            install_runtime_helper(adb, local_helper)
     adb.shell(f"{REMOTE_HELPER} restore-original --status {REMOTE_STATUS}")
-    remove_local_ota_artifacts(adb)
+    remove_local_ota_artifacts(adb, remove_helper=True)
     deadline = time.monotonic() + 15
     after = None
     while time.monotonic() < deadline:
@@ -517,12 +603,14 @@ def stop_local_http(adb: AdbClient) -> None:
     )
 
 
-def remove_local_ota_artifacts(adb: AdbClient) -> None:
+def remove_local_ota_artifacts(adb: AdbClient, *, remove_helper: bool = False) -> None:
     stop_local_http(adb)
     adb.shell(
         f"rm -rf {REMOTE_STAGE_DIR} {REMOTE_HOOK_STATE}; "
         f"rm -f {REMOTE_STATUS} {REMOTE_HANDSHAKE_TRACE} {REMOTE_HTTP_PID}"
     )
+    if remove_helper:
+        remove_runtime_helper(adb)
 
 
 def remote_status(adb: AdbClient, *, allow_transient_info: bool = False) -> dict:
@@ -720,7 +808,8 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
     expected_confirm = "VM-SAME-VERSION-ONLY" if simulated else "PHNIX-C350-SAME-V33"
     if not args.execute:
-        checks = preflight(adb, args.firmware, require_helper=not simulated, manifest=args.firmware_manifest)
+        checks = preflight(adb, args.firmware, require_helper=False, manifest=args.firmware_manifest)
+        checks["local_helper_sha256"] = validate_local_runtime_helper(args.runtime_helper)
         print_event("same-version-dry-run", simulated=simulated, **checks)
         return
     if args.confirm != expected_confirm:
@@ -728,22 +817,27 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     if not simulated and args.logger_confirm != "PASSIVE-LOGGER-RUNNING":
         raise OtaError("live test requires --logger-confirm PASSIVE-LOGGER-RUNNING")
 
-    checks = preflight(adb, args.firmware, require_helper=True, manifest=args.firmware_manifest)
+    checks = preflight(adb, args.firmware, require_helper=False, manifest=args.firmware_manifest)
     print_event("preflight", **checks)
     if not checks["ok"]:
         raise OtaError("preflight failed: " + "; ".join(checks["failures"]))
+    install_runtime_helper(adb, args.runtime_helper)
 
-    state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
-    save_remote_state(adb, state_dir)
-    original_info = (state_dir / "phnixIot_device_OTA_INFO").read_bytes()
-    original_statistics = (state_dir / "phnixIot_device_statisic").read_bytes()
-    print_event("state-backed-up", directory=str(state_dir))
-    stage_firmware(adb, args.firmware, args.firmware_manifest)
-    payload = command_payload(DEFAULT_FIRMWARE_URL, args.firmware_manifest)
-    with tempfile.TemporaryDirectory() as temp_dir:
-        command_file = Path(temp_dir) / "ota-command.json"
-        command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        adb.push(command_file, REMOTE_COMMAND)
+    try:
+        state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
+        save_remote_state(adb, state_dir)
+        original_info = (state_dir / "phnixIot_device_OTA_INFO").read_bytes()
+        original_statistics = (state_dir / "phnixIot_device_statisic").read_bytes()
+        print_event("state-backed-up", directory=str(state_dir))
+        stage_firmware(adb, args.firmware, args.firmware_manifest)
+        payload = command_payload(DEFAULT_FIRMWARE_URL, args.firmware_manifest)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            command_file = Path(temp_dir) / "ota-command.json"
+            command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+            adb.push(command_file, REMOTE_COMMAND)
+    except BaseException:
+        remove_local_ota_artifacts(adb, remove_helper=True)
+        raise
 
     action = "same-version-probe" if simulated else "c350-probe"
     helper_command = (
@@ -791,7 +885,7 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     finally:
         if safe_terminal:
             adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
-            remove_local_ota_artifacts(adb)
+            remove_local_ota_artifacts(adb, remove_helper=True)
             print_event("original-state-released")
             runtime = verify_original_runtime(adb)
             if not runtime["ok"]:
@@ -801,7 +895,8 @@ def run_same_version_test(args, adb: AdbClient) -> None:
 
 def run_update(args, adb: AdbClient) -> None:
     # A dry-run must remain useful before the build-specific modem helper exists.
-    checks = preflight(adb, args.firmware, require_helper=args.execute, manifest=args.firmware_manifest)
+    checks = preflight(adb, args.firmware, require_helper=False, manifest=args.firmware_manifest)
+    checks["local_helper_sha256"] = validate_local_runtime_helper(args.runtime_helper)
     print_event("preflight", **checks)
     if not checks["ok"]:
         raise OtaError("preflight failed: " + "; ".join(checks["failures"]))
@@ -813,17 +908,22 @@ def run_update(args, adb: AdbClient) -> None:
     expected_confirm = "VM-FULL-UPDATE" if simulated else "PHNIX-FULL-UPDATE"
     if args.confirm != expected_confirm:
         raise OtaError(f"confirmation must be {expected_confirm}")
+    install_runtime_helper(adb, args.runtime_helper)
 
-    state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
-    save_remote_state(adb, state_dir)
-    print_event("state-backed-up", directory=str(state_dir))
-    stage_firmware(adb, args.firmware, args.firmware_manifest)
+    try:
+        state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
+        save_remote_state(adb, state_dir)
+        print_event("state-backed-up", directory=str(state_dir))
+        stage_firmware(adb, args.firmware, args.firmware_manifest)
 
-    payload = command_payload(args.firmware_url, args.firmware_manifest)
-    with tempfile.TemporaryDirectory() as temp_dir:
-        command_file = Path(temp_dir) / "ota-command.json"
-        command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        adb.push(command_file, REMOTE_COMMAND)
+        payload = command_payload(args.firmware_url, args.firmware_manifest)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            command_file = Path(temp_dir) / "ota-command.json"
+            command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+            adb.push(command_file, REMOTE_COMMAND)
+    except BaseException:
+        remove_local_ota_artifacts(adb, remove_helper=True)
+        raise
 
     helper_command = (
         f"{REMOTE_HELPER} run --build-id {EXPECTED_BUILD_ID} "
@@ -921,7 +1021,7 @@ def run_update(args, adb: AdbClient) -> None:
             except subprocess.TimeoutExpired:
                 print_event("warning", message="runtime helper did not exit within 10 seconds")
         if safe_terminal:
-            remove_local_ota_artifacts(adb)
+            remove_local_ota_artifacts(adb, remove_helper=True)
             print_event("hook-stopped")
             runtime = verify_original_runtime(adb)
             if not runtime["ok"]:
@@ -984,7 +1084,7 @@ def cancel_update(args, adb: AdbClient) -> None:
     finally:
         if safe_terminal:
             adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
-            remove_local_ota_artifacts(adb)
+            remove_local_ota_artifacts(adb, remove_helper=True)
             print_event("cancel-cleanup-complete")
 
 
@@ -992,6 +1092,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--adb", default=shutil.which("adb") or "adb")
     parser.add_argument("--serial")
+    parser.add_argument(
+        "--runtime-helper", type=Path,
+        default=Path(__file__).resolve().with_name("phnix_ota_runtime_hook"),
+        help="local build-specific helper; copied temporarily to the LTE modem",
+    )
     parser.add_argument("--output", choices=("auto", "human", "json"), default="auto",
                         help="auto uses friendly output on a terminal and JSON when redirected")
     parser.add_argument("--no-color", action="store_true")
@@ -1085,7 +1190,7 @@ def main() -> int:
             show_original_status(result)
             return 0 if result["original_ok"] else 1
         if args.command == "run" and args.restore == "original":
-            result = restore_original_runtime(adb)
+            result = restore_original_runtime(adb, args.runtime_helper)
             show_original_status(result)
             return 0
         if args.command == "run" and getattr(args, "manifest", None) is None:

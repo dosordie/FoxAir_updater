@@ -188,6 +188,13 @@ Zeitfehler im Launcher auf, die anschließend korrigiert wurden:
 - Nach dem Ende des Runtime-Helfers wird ein unmittelbar zuvor geschriebener
   terminaler Status innerhalb einer kurzen Nachlesefrist noch akzeptiert.
 
+Seit der automatischen Helferverwaltung prüft die Matrix zusätzlich dessen
+Lebenszyklus: Nach jedem sicheren terminalen Update- oder Cancelzustand muss
+`/data/phnix_ota_runtime_hook` fehlen. Bei Guarded Hold muss die Datei dagegen
+erhalten bleiben. Ein zusätzlicher Restore-Test startet bewusst ohne Helfer,
+verlangt automatische Installation mit SHA-256-Prüfung und bestätigt dessen
+erneute Entfernung nach dem wiederhergestellten Originalzustand.
+
 ## Grenze der Simulation
 
 Der Simulator prüft Hostablauf, Kopieren, Zustandsüberwachung, Timeouts und

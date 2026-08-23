@@ -49,12 +49,23 @@ Größe: 287598 Byte
 MD5:   CEB6A4BF386FF644E23E410023E74673
 ```
 
-## 2. Runtime-Helfer vorübergehend installieren
+## 2. Runtime-Helfer wird automatisch verwaltet
 
-```sh
-adb push phnix_ota_runtime_hook /data/phnix_ota_runtime_hook
-adb shell chmod 755 /data/phnix_ota_runtime_hook
-```
+Der Benutzer muss den Runtime-Helfer nicht mehr manuell installieren. Bei
+`run --execute` und beim Gleichversionstest führt der Controller automatisch
+folgende Schritte aus:
+
+1. lokale Datei und Buildbindung prüfen;
+2. als `/data/.phnix_ota_runtime_hook.new` übertragen;
+3. SHA-256 vor der Aktivierung vergleichen;
+4. Rechte auf `755` setzen;
+5. die bisherige Datei atomar durch `/data/phnix_ota_runtime_hook` ersetzen;
+6. den SHA-256 der aktiven Kopie erneut vergleichen;
+7. nach einem sicher bestätigten Ende wieder vollständig löschen.
+
+Standardmäßig muss `phnix_ota_runtime_hook` neben dem Python-Controller liegen.
+Ein späteres Programmpaket oder Windows-Frontend kann mit
+`--runtime-helper DATEI` einen anderen gebündelten Pfad angeben.
 
 Der Helfer akzeptiert ausschließlich den verifizierten Originaldienst mit:
 
@@ -127,20 +138,22 @@ kommen direkt vom Originaldienst und Launcher.
 
 Der Ablauf:
 
-1. sichert OTA_INFO und Statistik auf dem Pi;
-2. kopiert die geprüfte Firmware per USB auf das Modem;
-3. stellt sie lokal über `127.0.0.1:8081` bereit;
-4. blockiert MQTT auf `rmnet_data0`, Port 1883;
-5. pausiert beide `helloworld`-Watchdogs;
-6. verwendet `gdbserver`, der alle 13 Threads erkennt;
-7. erlaubt während `launcher_armed` nur den Run-Step-Override `7 -> 11`;
-8. aktiviert die Publish-Stubs erst nach akzeptiertem Original-`0033`;
-9. bestätigt lokal ausschließlich `0023`, `0053` und `0083`;
-10. zeigt den vom Originaldienst gemeldeten Fortschritt rein beobachtend an;
-11. beendet den Hook erst nach dem echten terminalen Übergang auf
+1. prüft, installiert und verifiziert den Runtime-Helfer;
+2. sichert OTA_INFO und Statistik auf dem Pi;
+3. kopiert die geprüfte Firmware per USB auf das Modem;
+4. stellt sie lokal über `127.0.0.1:8081` bereit;
+5. blockiert MQTT auf `rmnet_data0`, Port 1883;
+6. pausiert beide `helloworld`-Watchdogs;
+7. verwendet `gdbserver`, der alle 13 Threads erkennt;
+8. erlaubt während `launcher_armed` nur den Run-Step-Override `7 -> 11`;
+9. aktiviert die Publish-Stubs erst nach akzeptiertem Original-`0033`;
+10. bestätigt lokal ausschließlich `0023`, `0053` und `0083`;
+11. zeigt den vom Originaldienst gemeldeten Fortschritt rein beobachtend an;
+12. beendet den Hook erst nach dem echten terminalen Übergang auf
     `board_ota_step == 12`;
-12. prüft danach erneut Originaldienst, dessen SHA-256, beide Watchdogs und die
-    MQTT-Cloudverbindung.
+13. löscht Helfer, Firmwareablage und temporäre Zustandsdateien;
+14. prüft danach erneut Originaldienst, dessen SHA-256, beide Watchdogs und die
+    MQTT-Cloudverbindung sowie das Fehlen des Runtime-Helfers.
 
 ## Konsolenausgabe
 
@@ -156,6 +169,8 @@ Beispiel eines erfolgreichen simulierten Vollupdates:
 
 ```text
 [OK] Vorpruefung erfolgreich
+[OK] Lokaler Update-Helfer geprueft
+[OK] Update-Helfer sicher auf das LTE-Modem kopiert
 [OK] Sicherheitskopie des Ausgangszustands erstellt
 [OK] Firmware auf das LTE-Modem kopiert
 [..] Update gestartet
@@ -164,6 +179,7 @@ Beispiel eines erfolgreichen simulierten Vollupdates:
 [..] Fortschritt:  50 % (143.799 / 287.598 Byte)
 [..] Fortschritt: 100 % (287.598 / 287.598 Byte)
 [OK] Firmware-Update erfolgreich abgeschlossen
+[OK] Update-Helfer vom LTE-Modem entfernt
 [OK] Originaldienst, Ueberwachung und Cloud-Verbindung laufen
 ```
 
@@ -203,6 +219,9 @@ Dann gelten folgende Regeln:
 - Zustand von Mainboard, OTA_INFO und Bus auswerten;
 - einen bestätigten Cancel `C36A -> C36C Status 1` oder einen anderen bewusst
   gewählten Recoveryweg durchführen.
+
+In Guarded Hold bleibt der Runtime-Helfer absichtlich auf dem Modem. Ein
+vorzeitiges Löschen würde den diagnostizierbaren Recoveryzustand beschädigen.
 
 `stop --force` ist nur ein manueller Notausgang. Er beweist keinen sicheren
 Cancel und darf deshalb nicht Bestandteil eines automatischen Ablaufs sein.
@@ -271,8 +290,11 @@ python3 phnix_local_ota_controller.py --adb adb run --restore original
 
 Der Befehl beendet übrig gebliebene Debugger/Helfer, setzt einen nur lokal
 vorbereiteten Persistenzzustand zurück, entfernt Cloudguards, setzt Dienst und
-Watchdogs fort und beendet den lokalen Webserver. Danach wird automatisch der
-vollständige Originalzustands-Check ausgeführt.
+Watchdogs fort und beendet den lokalen Webserver. Abschließend löscht er auch
+`/data/phnix_ota_runtime_hook` und eine eventuell unvollständige `.new`-Datei.
+Fehlt der Helfer bereits, wird zunächst die lokal mitgelieferte und geprüfte
+Version für die Wiederherstellung installiert und danach ebenfalls gelöscht.
+Danach wird automatisch der vollständige Originalzustands-Check ausgeführt.
 
 Sicherheitsgrenze: Sobald der Helfer den ersten C5A8-Firmwareblock beobachtet
 hat, legt er einen `transfer-started`-Marker an. Dann verweigert

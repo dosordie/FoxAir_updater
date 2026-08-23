@@ -194,7 +194,7 @@ class OtaInfoTests(unittest.TestCase):
         adb = Mock()
         adb.shell.return_value = "0"
         with self.assertRaises(OtaError):
-            restore_original_runtime(adb)
+            restore_original_runtime(adb, Path("tools/phnix_ota/phnix_ota_runtime_hook"))
         adb.shell.assert_called_once()
 
     def test_injected_restore_kills_old_service_without_resuming_it(self):
@@ -203,6 +203,12 @@ class OtaInfoTests(unittest.TestCase):
         injected = restore.split('if test "$INJECTED" = 1; then', 1)[1].split("\n    fi", 1)[0]
         self.assertIn('kill -KILL "$OLD_PID"', injected)
         self.assertNotIn('kill -CONT "$OLD_PID"', injected)
+
+    def test_bundled_runtime_helper_matches_verified_build(self):
+        digest = controller.validate_local_runtime_helper(
+            Path("tools/phnix_ota/phnix_ota_runtime_hook")
+        )
+        self.assertEqual(len(digest), 64)
 
 
 if __name__ == "__main__":

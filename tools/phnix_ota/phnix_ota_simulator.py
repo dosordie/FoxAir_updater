@@ -205,6 +205,7 @@ def admin(argv: list[str]) -> int:
         "handshake_scenario": config().get("handshake_scenario"),
         "same_version_scenario": config().get("same_version_scenario"),
         "home": str(home),
+        "runtime_helper_present": root_path("/data/phnix_ota_runtime_hook").exists(),
     }
     runtime = home / "runtime.json"
     if runtime.exists():
@@ -458,6 +459,16 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, b"/data/phnixIot4G\n"
     if command.startswith("sha256sum /data/phnixIot4G"):
         return 0, (EXPECTED_SERVICE_SHA256 + "\n").encode()
+    if command.startswith("sha256sum /data/phnix_ota_runtime_hook"):
+        path = root_path("/data/phnix_ota_runtime_hook")
+        if not path.exists():
+            return 1, b""
+        return 0, (hashlib.sha256(path.read_bytes()).hexdigest() + "\n").encode()
+    if command.startswith("sha256sum /data/.phnix_ota_runtime_hook.new"):
+        path = root_path("/data/.phnix_ota_runtime_hook.new")
+        if not path.exists():
+            return 1, b""
+        return 0, (hashlib.sha256(path.read_bytes()).hexdigest() + "\n").encode()
     if command.startswith("ps | awk"):
         return 0, b"4001\n4002\n"
     if command == "test -x /usr/bin/gdb; echo $?":
@@ -478,6 +489,8 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, b"1\n"
     if command.startswith("test -f /tmp/phnix_ota_hook/injection-started"):
         return 0, b"1\n"
+    if command == "test -e /data/phnix_ota_runtime_hook; echo $?":
+        return 0, (b"0\n" if root_path("/data/phnix_ota_runtime_hook").exists() else b"1\n")
     if command.startswith("iptables -S OUTPUT"):
         state = json.loads((sim_home() / "runtime.json").read_text(encoding="utf-8"))
         return 0, (b"-A OUTPUT -o sim0 -p tcp --dport 1883 -j DROP\n" if state.get("cloud_blocked") else b"")
@@ -496,8 +509,14 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, (digest + "\n").encode()
     if command.startswith("df -k"):
         return 0, b"Filesystem 1K-blocks Used Available Use% Mounted on\nsim 1048576 1 1048575 1% /data\n"
-    if command.startswith("test -r /data/phnixIot_device_") or command.startswith("test -x /data/phnix_ota_runtime_hook"):
+    if command.startswith("test -r /data/phnixIot_device_"):
         return 0, b"0\n"
+    if command in {
+        "test -x /data/phnix_ota_runtime_hook; echo $?",
+        "test -x /data/.phnix_ota_runtime_hook.new; echo $?",
+    }:
+        remote = command.split()[2].rstrip(";")
+        return 0, (b"0\n" if root_path(remote).exists() else b"1\n")
     if command == "test -f /data/.phnix_ota_simulator; echo $?":
         return 0, b"0\n"
     if command.startswith("mkdir -p /data/phnix_local_ota"):
@@ -518,6 +537,18 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, path.read_bytes() if path.exists() else b""
     if command == "rm -f /tmp/phnix_ota_status.json":
         root_path("/tmp/phnix_ota_status.json").unlink(missing_ok=True)
+        return 0, b""
+    if command == "rm -f /data/.phnix_ota_runtime_hook.new":
+        root_path("/data/.phnix_ota_runtime_hook.new").unlink(missing_ok=True)
+        return 0, b""
+    if command == "chmod 755 /data/.phnix_ota_runtime_hook.new":
+        return (0, b"") if root_path("/data/.phnix_ota_runtime_hook.new").exists() else (1, b"")
+    if command == "mv -f /data/.phnix_ota_runtime_hook.new /data/phnix_ota_runtime_hook":
+        root_path("/data/.phnix_ota_runtime_hook.new").replace(root_path("/data/phnix_ota_runtime_hook"))
+        return 0, b""
+    if command == "rm -f /data/phnix_ota_runtime_hook /data/.phnix_ota_runtime_hook.new":
+        root_path("/data/phnix_ota_runtime_hook").unlink(missing_ok=True)
+        root_path("/data/.phnix_ota_runtime_hook.new").unlink(missing_ok=True)
         return 0, b""
     if command.startswith("cat /tmp/phnix_handshake_trace.json"):
         path = root_path("/tmp/phnix_handshake_trace.json")

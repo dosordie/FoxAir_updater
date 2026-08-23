@@ -72,11 +72,17 @@ def main() -> int:
             ])
         status_result = run([str(args.sim), "status"])
         status = json.loads(status_result.stdout)
-        passed = completed.returncode == expected_rc and status.get("held") is expected_hold
+        expected_helper = expected_hold
+        passed = (
+            completed.returncode == expected_rc
+            and status.get("held") is expected_hold
+            and status.get("runtime_helper_present") is expected_helper
+        )
         results.append({
             "scenario": scenario,
             "returncode": completed.returncode,
             "held": status.get("held"),
+            "runtime_helper_present": status.get("runtime_helper_present"),
             "passed": passed,
         })
         print(json.dumps(results[-1]), flush=True)
@@ -104,14 +110,40 @@ def main() -> int:
             prepare.returncode == 1
             and completed.returncode == expected_rc
             and status.get("held") is expected_hold
+            and status.get("runtime_helper_present") is expected_hold
         )
         results.append({
             "scenario": f"cancel-{scenario}",
             "returncode": completed.returncode,
             "held": status.get("held"),
+            "runtime_helper_present": status.get("runtime_helper_present"),
             "passed": passed,
         })
         print(json.dumps(results[-1]), flush=True)
+
+    # Recovery must also work when the temporary helper is already absent:
+    # install the verified local copy, restore, then remove it again.
+    run([str(args.sim), "scenario", "success"])
+    run([str(args.adb), "shell", "rm -f /data/phnix_ota_runtime_hook /data/.phnix_ota_runtime_hook.new"])
+    completed = run([
+        str(args.controller), "--adb", str(args.adb),
+        "run", "--restore", "original",
+    ])
+    status_result = run([str(args.sim), "status"])
+    status = json.loads(status_result.stdout)
+    passed = (
+        completed.returncode == 0
+        and status.get("held") is False
+        and status.get("runtime_helper_present") is False
+    )
+    results.append({
+        "scenario": "restore-with-helper-absent",
+        "returncode": completed.returncode,
+        "held": status.get("held"),
+        "runtime_helper_present": status.get("runtime_helper_present"),
+        "passed": passed,
+    })
+    print(json.dumps(results[-1]), flush=True)
 
     for scenario, (expected_rc, expected_hold) in HANDSHAKE_EXPECTED.items():
         run([str(args.sim), "scenario", "success"])
