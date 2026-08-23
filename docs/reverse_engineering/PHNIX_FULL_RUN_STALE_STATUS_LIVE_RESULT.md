@@ -38,3 +38,20 @@ früheren Laufs als Ergebnis des neuen Laufs interpretiert werden.
 Ein VM-Regressionstest legt vor dem Start absichtlich
 `{"phase":"stopped","terminal":true}` ab und verlangt anschließend trotzdem
 den vollständigen simulierten Ablauf bis 100 Prozent und Board-Step 12.
+
+## Zweiter Liveversuch und neue Sperre
+
+Nach Korrektur der Statusdatei erreichte der Vollupdate-Helfer nur die
+Attach-Phase. Sein alter Einsprung `0x1FDAC` wurde nicht erreicht; der
+Start-Watchdog wechselte deshalb vor jeder Parserinjektion in Guarded Hold. Der
+Buslogger bestätigte erneut null OTA-Frames. Dienst, Debugger, Cloudguards,
+Watchdogs und Persistenz wurden kontrolliert in den Originalzustand versetzt.
+
+`0x1FDAC` ist nur der einmalige Übergang nach der MQTT-Initialisierung. Der
+erfolgreiche Gleichversionstest verwendet dagegen den zyklisch erreichbaren
+MQTT-Yield-Punkt `0x1FE40` mit UART-Leerlauf- und Board-Step-12-Prüfung.
+
+Bis der Vollupdate-Helfer auf diesen bewährten linearen Startpfad migriert und
+offline sowie auf der VM erneut geprüft ist, verweigert der Controller reale
+`run --execute`-Aufrufe ausdrücklich. Simulator-Vollupdates und der begrenzte
+Gleichversionstest bleiben verfügbar.

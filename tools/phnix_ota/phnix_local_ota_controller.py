@@ -659,6 +659,11 @@ def run_update(args, adb: AdbClient) -> None:
         return
 
     simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
+    if not simulated:
+        raise OtaError(
+            "live full update is temporarily locked: runtime injection must be "
+            "migrated from one-shot 0x1FDAC to the proven 0x1FE40 yield-loop path"
+        )
     expected_confirm = "VM-FULL-UPDATE" if simulated else "PHNIX-FULL-UPDATE"
     if args.confirm != expected_confirm:
         raise OtaError(f"confirmation must be {expected_confirm}")
