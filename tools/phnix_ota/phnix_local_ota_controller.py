@@ -48,6 +48,15 @@ REMOTE_SIM_MARKER = "/data/.phnix_ota_simulator"
 REMOTE_HANDSHAKE_TRACE = "/tmp/phnix_handshake_trace.json"
 DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
 
+OUTPUT_MODE = "auto"
+COLOR_ENABLED = True
+_LAST_HUMAN_PHASE: str | None = None
+GREEN = "\033[1;32m"
+YELLOW = "\033[1;33m"
+RED = "\033[1;31m"
+CYAN = "\033[1;36m"
+RESET = "\033[0m"
+
 
 class OtaError(RuntimeError):
     pass
@@ -126,9 +135,90 @@ def cancel_payload() -> dict:
     return {"cmd": "CMD_OTA", "code": "0073"}
 
 
+def _human_output() -> bool:
+    return OUTPUT_MODE == "human" or (OUTPUT_MODE == "auto" and sys.stdout.isatty())
+
+
+def _paint(text: str, color: str) -> str:
+    return f"{color}{text}{RESET}" if COLOR_ENABLED and sys.stdout.isatty() else text
+
+
+def _human_event(event: str, fields: dict) -> None:
+    """Render reassuring milestones while JSON stays available for machines."""
+    global _LAST_HUMAN_PHASE
+    if event in {"same-version-status", "status"}:
+        hook = fields.get("hook", {})
+        phase = hook.get("phase") if isinstance(hook, dict) else None
+        if not phase or phase == _LAST_HUMAN_PHASE:
+            return
+        _LAST_HUMAN_PHASE = phase
+        labels = {
+            "verified": "Sicherheitspruefungen bestanden",
+            "attaching": "Originaldienst wird kontrolliert vorbereitet",
+            "waiting-for-yield-loop": "Warte auf einen sicheren Sendepunkt",
+            "c350-probe-attaching": "Warte auf einen sicheren Sendepunkt",
+            "parser-injection": "Updateauftrag wurde gestartet",
+            "accepted": "Originaldienst hat den Updateauftrag angenommen",
+            "c350-sent": "Firmwareangebot wurde an das Mainboard gesendet",
+            "c350": "Mainboard prueft das Firmwareangebot",
+            "c357": "Firmware wird zum Mainboard uebertragen",
+            "c5a8": "Firmware wird auf dem Mainboard verarbeitet",
+            "success-report": "Mainboard meldet erfolgreichen Abschluss",
+            "success": "Firmware-Update erfolgreich abgeschlossen",
+            "c350-same-version": "Gleiche Firmware erkannt - sichere Beendigung",
+        }
+        label = labels.get(phase)
+        if label:
+            good = phase in {"verified", "accepted", "success", "c350-same-version"}
+            print(_paint(f"[OK] {label}" if good else f"[..] {label}", GREEN if good else CYAN), flush=True)
+        return
+    messages = {
+        "preflight": (GREEN, "[OK] Vorpruefung erfolgreich"),
+        "state-backed-up": (GREEN, "[OK] Sicherheitskopie des Ausgangszustands erstellt"),
+        "firmware-staged": (GREEN, "[OK] Firmware auf das LTE-Modem kopiert"),
+        "hook-start": (CYAN, "[..] Update gestartet"),
+        "same-version-complete": (GREEN, "[OK] Gleichversionstest erfolgreich beendet - keine Firmware geschrieben"),
+        "complete": (GREEN, "[OK] Firmware-Uebertragung und Mainboard-Abschluss erfolgreich"),
+        "original-state-released": (GREEN, "[OK] LTE-Modem wieder im Originalzustand"),
+        "services-restored": (GREEN, "[OK] Originaldienst, Ueberwachung und Cloud-Verbindung laufen"),
+        "hook-stopped": (GREEN, "[OK] Update-Helfer sauber beendet"),
+        "dry-run-complete": (GREEN, "[OK] Trockenlauf beendet - nichts wurde veraendert"),
+        "warning": (YELLOW, f"[WARNUNG] {fields.get('message', 'Pruefung erforderlich')}"),
+        "guarded-hold": (RED, "[FEHLER] Update sicher angehalten - keine weiteren Befehle ausfuehren"),
+        "manual-recovery-required": (RED, "[FEHLER] Manueller Wiederherstellungsschritt erforderlich"),
+        "error": (RED, f"[FEHLER] {fields.get('message', 'Unbekannter Fehler')}"),
+    }
+    item = messages.get(event)
+    if item:
+        print(_paint(item[1], item[0]), flush=True)
+
+
 def print_event(event: str, **fields) -> None:
     record = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "event": event, **fields}
-    print(json.dumps(record, ensure_ascii=False), flush=True)
+    if _human_output():
+        _human_event(event, fields)
+    else:
+        print(json.dumps(record, ensure_ascii=False), flush=True)
+
+
+def verify_original_runtime(adb: AdbClient) -> dict:
+    result = {
+        "service_pid": adb.shell("pidof phnixIot4G || true"),
+        "service_sha256": adb.shell(
+            f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'"
+        ).upper(),
+        "watchdog_pids": adb.shell("ps | awk '$4 == \"{helloworld}\" {print $1}'"),
+        "mqtt_connection": adb.shell(
+            "netstat -nt 2>/dev/null | awk '$4 ~ /:1883$/ || $5 ~ /:1883$/ {print}'"
+        ),
+    }
+    result["ok"] = bool(
+        result["service_pid"]
+        and result["service_sha256"] == EXPECTED_SERVICE_SHA256
+        and len(str(result["watchdog_pids"]).splitlines()) >= 2
+        and result["mqtt_connection"]
+    )
+    return result
 
 
 def preflight(adb: AdbClient, firmware: Path, require_helper: bool,
@@ -509,6 +599,10 @@ def run_same_version_test(args, adb: AdbClient) -> None:
             adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
             stop_local_http(adb)
             print_event("original-state-released")
+            runtime = verify_original_runtime(adb)
+            if not runtime["ok"]:
+                raise OtaError(f"original LTE runtime was not fully restored: {runtime}")
+            print_event("services-restored", **runtime)
 
 
 def run_update(args, adb: AdbClient) -> None:
@@ -520,6 +614,13 @@ def run_update(args, adb: AdbClient) -> None:
     if not args.execute:
         print_event("dry-run-complete", message="No modem or bus state was changed")
         return
+
+    simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
+    expected_confirm = "VM-FULL-UPDATE" if simulated else "PHNIX-FULL-UPDATE"
+    if args.confirm != expected_confirm:
+        raise OtaError(f"confirmation must be {expected_confirm}")
+    if not simulated and args.logger_confirm != "PASSIVE-LOGGER-RUNNING":
+        raise OtaError("live full update requires --logger-confirm PASSIVE-LOGGER-RUNNING")
 
     state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
     save_remote_state(adb, state_dir)
@@ -585,7 +686,7 @@ def run_update(args, adb: AdbClient) -> None:
                     and info["offset"] >= 0
                 )
                 if not metadata_ok:
-                    raise OtaError("persisted OTA metadata is not valid for FW3.3 before C5A8")
+                    raise OtaError("persisted OTA metadata does not match the manifest before C5A8")
             if hook.get("terminal") is True:
                 safe_terminal = phase in {"success", "failed", "parser-rejected"}
                 if phase == "success":
@@ -635,6 +736,10 @@ def run_update(args, adb: AdbClient) -> None:
         if safe_terminal:
             stop_local_http(adb)
             print_event("hook-stopped")
+            runtime = verify_original_runtime(adb)
+            if not runtime["ok"]:
+                raise OtaError(f"original LTE runtime was not fully restored: {runtime}")
+            print_event("services-restored", **runtime)
         elif guarded_hold:
             print_event("manual-recovery-required", status=REMOTE_STATUS)
 
@@ -700,6 +805,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--adb", default=shutil.which("adb") or "adb")
     parser.add_argument("--serial")
+    parser.add_argument("--output", choices=("auto", "human", "json"), default="auto",
+                        help="auto uses friendly output on a terminal and JSON when redirected")
+    parser.add_argument("--no-color", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
@@ -729,6 +837,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", parents=[common])
     run.add_argument("--firmware-url", default=DEFAULT_FIRMWARE_URL)
     run.add_argument("--execute", action="store_true")
+    run.add_argument("--confirm")
+    run.add_argument("--logger-confirm")
     run.add_argument("--state-dir", type=Path, default=Path("phnix-ota-state"))
     run.add_argument("--poll-interval", type=float, default=2.0)
     run.add_argument("--start-timeout", type=float, default=60.0)
@@ -738,7 +848,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    global OUTPUT_MODE, COLOR_ENABLED
     args = build_parser().parse_args()
+    OUTPUT_MODE = args.output
+    COLOR_ENABLED = not args.no_color
     try:
         if hasattr(args, "manifest"):
             args.firmware_manifest = FirmwareManifest.load(args.manifest)
@@ -747,7 +860,13 @@ def main() -> int:
         adb = AdbClient(args.adb, args.serial)
         if args.command == "preflight":
             result = preflight(adb, args.firmware, require_helper=False, manifest=args.firmware_manifest)
-            print(json.dumps(result, indent=2, ensure_ascii=False))
+            if _human_output():
+                if result["ok"]:
+                    print_event("preflight", **result)
+                else:
+                    print_event("error", message="Vorpruefung fehlgeschlagen: " + "; ".join(result["failures"]))
+            else:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if result["ok"] else 1
         if args.command == "status":
             print(json.dumps(remote_status(adb), indent=2, ensure_ascii=False))

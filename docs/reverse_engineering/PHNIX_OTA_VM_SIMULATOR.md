@@ -65,7 +65,8 @@ cd /home/lte/phnix-ota-lab
 ./phnix_local_ota_controller.py \
   --adb ./phnix-sim-adb \
   preflight \
-  --firmware phnixIot_device_OTA.bin
+  --manifest FW3.3.json \
+  --firmware FW3.3.bin
 ```
 
 ## Vollständiger virtueller Updateablauf
@@ -77,8 +78,10 @@ phnix-ota-sim reset --scenario success
 ./phnix_local_ota_controller.py \
   --adb ./phnix-sim-adb \
   run \
-  --firmware phnixIot_device_OTA.bin \
-  --execute
+  --manifest FW3.3.json \
+  --firmware FW3.3.bin \
+  --execute \
+  --confirm VM-FULL-UPDATE
 ```
 
 Der Launcher führt dabei wirklich seine normalen Hostschritte aus:
@@ -167,12 +170,14 @@ cd /home/lte/phnix-ota-lab
 phnix-ota-sim start --scenario success
 
 ./run_simulator_matrix.py \
-  --firmware phnixIot_device_OTA.bin
+  --firmware FW3.3.bin \
+  --manifest FW3.3.json
 
 phnix-ota-sim stop
 ```
 
-Die Matrix umfasst zehn Update- sowie sechs Cancel-/Recovery-Szenarien. Die
+Die Matrix umfasst zehn Update-, sechs Cancel-/Recovery- und sechs
+Handshake-Szenarien. Die
 Simulation deckte dabei zwei
 Zeitfehler im Launcher auf, die anschließend korrigiert wurden:
 

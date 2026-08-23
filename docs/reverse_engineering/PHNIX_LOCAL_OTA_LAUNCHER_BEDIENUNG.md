@@ -38,7 +38,8 @@ Auf dem Pi müssen folgende Dateien liegen:
 ```text
 phnix_local_ota_controller.py
 phnix_ota_runtime_hook
-phnixIot_device_OTA.bin
+FW3.3.bin
+FW3.3.json
 ```
 
 Die erwartete Firmware besitzt:
@@ -65,7 +66,8 @@ SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 ## 3. Nur lesende Vorprüfung
 
 ```sh
-python3 phnix_local_ota_controller.py preflight --firmware phnixIot_device_OTA.bin
+python3 phnix_local_ota_controller.py preflight \
+  --manifest FW3.3.json --firmware FW3.3.bin
 ```
 
 Erwartetes Ergebnis:
@@ -99,7 +101,8 @@ Diese Tests injizieren kein `0033` und senden keine OTA-Frames.
 ## 5. Kompletter Trockenlauf
 
 ```sh
-python3 phnix_local_ota_controller.py run --firmware phnixIot_device_OTA.bin
+python3 phnix_local_ota_controller.py run \
+  --manifest FW3.3.json --firmware FW3.3.bin
 ```
 
 Ohne `--execute` werden weder Modem- noch Buszustand verändert.
@@ -108,9 +111,18 @@ Ohne `--execute` werden weder Modem- noch Buszustand verändert.
 
 ```sh
 python3 phnix_local_ota_controller.py run \
-  --firmware phnixIot_device_OTA.bin \
-  --execute
+  --manifest FW3.4.json \
+  --firmware FW3.4.bin \
+  --execute \
+  --confirm PHNIX-FULL-UPDATE \
+  --logger-confirm PASSIVE-LOGGER-RUNNING
 ```
+
+Der Vollupdate-Aufruf ist absichtlich doppelt bestätigt. Er darf erst mit einer
+analysierten, zum Mainboard passenden neuen Firmware und nach einer eigenen
+Live-Freigabe verwendet werden. Der Gleichversionstest benutzt weiterhin das
+separate Kommando `same-version-test` und kann dadurch nicht versehentlich in
+einen vollständigen Transfer übergehen.
 
 Der Ablauf:
 
@@ -125,7 +137,42 @@ Der Ablauf:
 9. bestätigt lokal ausschließlich `0023`, `0053` und `0083`;
 10. überwacht CRC, Metadaten, Offset und Phasenzeit;
 11. beendet den Hook erst nach dem echten terminalen Übergang auf
-    `board_ota_step == 12`.
+    `board_ota_step == 12`;
+12. prüft danach erneut Originaldienst, dessen SHA-256, beide Watchdogs und die
+    MQTT-Cloudverbindung.
+
+## Konsolenausgabe
+
+An einem normalen Terminal zeigt der Launcher standardmäßig eine kurze,
+farbige Benutzeransicht:
+
+- grün: erfolgreich geprüfte Meilensteine und sicherer Abschluss;
+- cyan: laufende Updatephase;
+- gelb: Warnung, die geprüft werden muss;
+- rot: Fehler, Guarded Hold oder notwendige manuelle Wiederherstellung.
+
+Beispiel eines erfolgreichen simulierten Vollupdates:
+
+```text
+[OK] Vorpruefung erfolgreich
+[OK] Sicherheitskopie des Ausgangszustands erstellt
+[OK] Firmware auf das LTE-Modem kopiert
+[..] Update gestartet
+[..] Firmware wird zum Mainboard uebertragen
+[..] Firmware wird auf dem Mainboard verarbeitet
+[OK] Firmware-Update erfolgreich abgeschlossen
+[OK] Originaldienst, Ueberwachung und Cloud-Verbindung laufen
+```
+
+Für Protokolldateien oder Softwareintegration bleibt die vollständige
+JSON-Ausgabe erhalten:
+
+```sh
+python3 phnix_local_ota_controller.py --output json ...
+```
+
+Farben lassen sich mit `--no-color` abschalten. `--output human` erzwingt die
+kurze Ansicht auch bei umgeleiteter Ausgabe.
 
 ## 7. Guarded Hold
 

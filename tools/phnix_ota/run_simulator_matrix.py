@@ -64,6 +64,7 @@ def main() -> int:
             completed = run([
                 str(args.controller), "--adb", str(args.adb), "run",
                 "--manifest", str(args.manifest), "--firmware", str(args.firmware), "--execute",
+                "--confirm", "VM-FULL-UPDATE",
                 "--state-dir", state_dir, "--poll-interval", "0.05",
                 "--start-timeout", "3", "--handshake-timeout", "3",
                 "--block-timeout", "1",
@@ -86,6 +87,7 @@ def main() -> int:
             prepare = run([
                 str(args.controller), "--adb", str(args.adb), "run",
                 "--manifest", str(args.manifest), "--firmware", str(args.firmware), "--execute",
+                "--confirm", "VM-FULL-UPDATE",
                 "--state-dir", state_dir, "--poll-interval", "0.05",
                 "--start-timeout", "3", "--handshake-timeout", "3",
                 "--block-timeout", "1",
