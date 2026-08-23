@@ -1,6 +1,6 @@
 # Mainboard-Firmware V3.3 – Reverse-Engineering-Erkenntnisse
 
-Stand: 22. August 2026
+Stand: 23. August 2026
 
 Diese Datei dokumentiert die statische Reverse-Engineering-Analyse der PHNIX-/FoxAir-Mainboard-Firmware `82400644 / V3.3`.
 
@@ -14,6 +14,8 @@ Sie ist bewusst von der allgemeinen Registertabelle und der DWIN-/DGUS-Displaydo
 
 Die Firmware wird ausschließlich statisch analysiert und nicht verändert.
 
+> **Adresskorrektur:** Die V3.3-BIN ist für `0x08050000` gelinkt. Frühere Analysen mit angenommener Basis `0x08080000` lagen bei aus dem Dateioffset berechneten Codeadressen systematisch `+0x30000` zu hoch. Die Funktionsadressen in dieser Datei sind auf die korrekte Basis umgestellt. RAM-, Peripheral- und tatsächlich im Code verwendete Flash-Zieladressen sind davon nicht betroffen.
+
 ---
 
 # 1. Untersuchte Firmware
@@ -24,13 +26,13 @@ Firmwareversion:          V3.3
 Dateigröße:               287598 Byte
 MD5:                      CEB6A4BF386FF644E23E410023E74673
 SHA-256:                  6C635D8E9A1E7246EA492B81ACFF5B748E85CC86C0FE0DEF35C2F0A597E4389A
-Imagebasis:               0x08080000
+Imagebasis:               0x08050000
 Initial Stack Pointer:    0x2000EB90
 Reset Vector:             0x080927D1
 Reset Handler Thumb:      0x080927D0
 ```
 
-Bei Dateioffset `0x42780`, VA `0x080C2780`, steht:
+Bei Dateioffset `0x42780`, VA `0x08092780`, steht:
 
 ```text
 824006440033
@@ -38,7 +40,7 @@ Bei Dateioffset `0x42780`, VA `0x080C2780`, steht:
 
 Die Aufteilung `82400644` + `0033` passt zur realen Gerätekennung und zu den im Code gesetzten Versionswerten.
 
-**Bewertung: bestätigt** für String und Konstanten; die vollständige interne Bildung der Produktkennung ist noch offen.
+**Bewertung: bestätigt** für String, Linkbasis und Konstanten; die vollständige interne Bildung der Produktkennung ist noch offen.
 
 ---
 
@@ -46,11 +48,11 @@ Die Aufteilung `82400644` + `0033` passt zur realen Gerätekennung und zu den im
 
 | Dateioffset | VA | Funktion | Bewertung |
 |---:|---:|---|---|
-| `0x0094E` | `0x0808094E` | Modbus-CRC | bestätigt |
-| `0x03F62` | `0x08083F62` | FC03-Antwortaufbau | bestätigt |
-| `0x04040` | `0x08084040` | FC06-Antwortaufbau | bestätigt |
-| `0x040D4` | `0x080840D4` | FC10-Antwortaufbau | bestätigt |
-| `0x164C8` | `0x080964C8` | zentraler Modbus-Request-Dispatcher | bestätigt |
+| `0x0094E` | `0x0805094E` | Modbus-CRC | bestätigt |
+| `0x03F62` | `0x08053F62` | FC03-Antwortaufbau | bestätigt |
+| `0x04040` | `0x08054040` | FC06-Antwortaufbau | bestätigt |
+| `0x040D4` | `0x080540D4` | FC10-Antwortaufbau | bestätigt |
+| `0x164C8` | `0x080664C8` | zentraler Modbus-Request-Dispatcher | bestätigt |
 
 Der Hauptdispatcher behandelt FC03, FC06 und FC10. Für FC04 wurde dort kein eigener Pfad gefunden.
 
@@ -125,7 +127,7 @@ Die Werte sind **bestätigt**. Die Rolle des zweiten Abbilds ist **sehr wahrsche
 
 # 4. Lastausgangsbitfeld Register 2019
 
-Builder ungefähr ab VA `0x080A1504`; internes Ausgangswort `0x200164C0`.
+Builder ungefähr ab VA `0x08071504`; internes Ausgangswort `0x200164C0`.
 
 | Bit | Funktion | Quelle | Bewertung |
 |---:|---|---|---|
@@ -239,7 +241,7 @@ Die Funktionsnamen der bekannten C-Parameter wurden mit der Registertabelle gege
 
 ## 5.5 Harte obere und dynamische untere Frequenzgrenze
 
-In der normalen Frequenzregelung um `0x080A552C` wird der berechnete Sollwert zuerst auf C03 begrenzt:
+In der normalen Frequenzregelung um `0x0807552C` wird der berechnete Sollwert zuerst auf C03 begrenzt:
 
 ```text
 wenn Soll > C03:
@@ -268,7 +270,7 @@ C03 = obere Grundgrenze
 
 ## 5.6 Dynamische Mindestfrequenz Heizen: C02 ↔ C10
 
-Die Routine um VA `0x080A398E` initialisiert `0x20016F83` zunächst mit C02.
+Die Routine um VA `0x0807398E` initialisiert `0x20016F83` zunächst mit C02.
 
 Für den Heizpfad werden die Temperaturgrenzen benutzt:
 
@@ -277,7 +279,7 @@ Für den Heizpfad werden die Temperaturgrenzen benutzt:
 | 1167 | R29 | Low AT Water Temp Limit ON |
 | 1168 | R30 | Low AT Water Temp Limit OFF |
 
-Der aktuelle, über Helper `0x080B799C` gelieferte Temperaturwert wird damit verglichen:
+Der aktuelle, über Helper `0x0808799C` gelieferte Temperaturwert wird damit verglichen:
 
 ```text
 Temperatur >= R29
@@ -290,11 +292,11 @@ R30 < Temperatur < R29
     → lineare Interpolation zwischen C10 und C02
 ```
 
-**Bewertung: bestätigt** für Datenfluss und Interpolation. Welcher physische Temperaturkanal hinter `0x080B799C` liegt, ist noch offen.
+**Bewertung: bestätigt** für Datenfluss und Interpolation. Welcher physische Temperaturkanal hinter `0x0808799C` liegt, ist noch offen.
 
 ## 5.7 Dynamische Mindestfrequenz Kühlen: C05
 
-Im alternativen Pfad um `0x080A3AF6` wird ebenfalls zunächst C02 geladen. Bei einem Helper-Rohwert unter `-49` wird C05 verwendet und anschließend sichergestellt, dass der resultierende Wert nicht unter C02 liegt.
+Im alternativen Pfad um `0x08073AF6` wird ebenfalls zunächst C02 geladen. Bei einem Helper-Rohwert unter `-49` wird C05 verwendet und anschließend sichergestellt, dass der resultierende Wert nicht unter C02 liegt.
 
 ```text
 sehr niedriger Temperaturwert
@@ -305,7 +307,7 @@ Der Rohgrenzwert `-49` ist **bestätigt**. Eine Interpretation als etwa `-4,9 °
 
 ## 5.8 C11-Derating
 
-Die Funktion `0x080B30C0`, aufgerufen aus dem normalen Frequenzpfad, verwendet C03 und C11, zerlegt Frequenzen ab 30 Hz in 6-Hz-Bänder und baut daraus eine temperaturabhängige Begrenzungs-/Bandlogik.
+Die Funktion `0x080830C0`, aufgerufen aus dem normalen Frequenzpfad, verwendet C03 und C11, zerlegt Frequenzen ab 30 Hz in 6-Hz-Bänder und baut daraus eine temperaturabhängige Begrenzungs-/Bandlogik.
 
 **Bestätigt:** C11 fließt in eine temperaturabhängige Kompressor-Frequenzbegrenzung ein.
 
@@ -321,7 +323,7 @@ Ausgang:
 PE15 → Register 2019 Bit 11
 ```
 
-Automatische Steuerung ungefähr ab VA `0x080A2A32`.
+Automatische Steuerung ungefähr ab VA `0x08072A32`.
 
 ## Temperaturhysterese
 
@@ -349,7 +351,7 @@ A34 wird als Vorheizzeit verwendet:
 A34 × 120 interne Zyklen
 ```
 
-Während der Vorheizzeit ist `0x20016F95 = 1`. Die zentrale Startfreigabe um `0x0808E8FC` verweigert bei gesetztem Flag die Freigabe.
+Während der Vorheizzeit ist `0x20016F95 = 1`. Die zentrale Startfreigabe um `0x0805E8FC` verweigert bei gesetztem Flag die Freigabe.
 
 Damit ist **bestätigt**, dass A34 eine echte Startverriegelung erzeugt. Bei `A34=0` entfällt die zusätzliche Vorheizwartezeit; die temperaturabhängige PE15-Heizung bleibt davon unabhängig.
 
@@ -437,7 +439,7 @@ und vergleicht dies mit der Einlasswassertemperatur, die auch Register 2045 erze
 
 ## State 3 – Recovery
 
-Um VA `0x080932BC` wird:
+Um VA `0x080632BC` wird:
 
 ```text
 0x20016E0F Bit 3 = 0
@@ -459,7 +461,7 @@ Nur zur Vollständigkeit; SG ist nicht mehr Hauptfokus der Analyse.
 0x20016948 +2 → 2133
 ```
 
-State-Machine ungefähr VA `0x080B1BC0`; reguläre States 1–4, zusätzlich interner State 5. Register 1334–1340 werden direkt verwendet.
+State-Machine ungefähr VA `0x08081BC0`; reguläre States 1–4, zusätzlich interner State 5. Register 1334–1340 werden direkt verwendet.
 
 ---
 
@@ -490,7 +492,7 @@ Weitere aktive Kandidaten:
 
 # 10. Verstecktes internes Registerfenster 8001–8090
 
-Dispatcher ungefähr VA `0x08097548`.
+Dispatcher ungefähr VA `0x08067548`.
 
 ```text
 Slave/Unit 0x63 = 99
@@ -519,7 +521,7 @@ Spiegelungen:
 | 2157 | 8007 |
 | 2158 | 8008 |
 
-Internes Register 8006 besitzt eine Änderungserkennung mit 150-Zyklen-Timer. Zentrale Verarbeitung ungefähr `0x080B8E5C–0x080B94FC`.
+Internes Register 8006 besitzt eine Änderungserkennung mit 150-Zyklen-Timer. Zentrale Verarbeitung ungefähr `0x08088E5C–0x080894FC`.
 
 Die Funktion des Subsystems bleibt **offen**. Eine optionale Erweiterungsfunktion ist nur **Hypothese**.
 
@@ -570,7 +572,7 @@ Die Logik ist **bestätigt**. Aus P09 in Tagen ergibt sich für den periodischen
 
 ## 11.3 Zwei bislang undokumentierte Parameter: Register 1432 / 1433
 
-Die Hauptparameterkopie bei VA `0x0809A970`/`0x0809A97E` liest:
+Die Hauptparameterkopie bei VA `0x0806A970`/`0x0806A97E` liest:
 
 ```text
 Mirror +0x746 → 0x20016278+0
@@ -604,8 +606,8 @@ Schreibrechte, Min/Max und Default dieser beiden Register werden noch separat au
 Helper:
 
 ```text
-0x080B7930 → Register 2045 Einlasswassertemperatur
-0x080B7966 → Register 2046 Auslasswassertemperatur
+0x08087930 → Register 2045 Einlasswassertemperatur
+0x08087966 → Register 2046 Auslasswassertemperatur
 ```
 
 Die automatische Pumpenregelung bildet daraus abhängig vom Betriebsmodus das korrekte Vorzeichen von ΔT und speichert den aktuellen ΔT-Wert in ihrer internen Pumpenstruktur.
@@ -614,7 +616,7 @@ Damit ist **bestätigt**, dass die automatische Pumpendrehzahl nach Wasser-ΔT g
 
 ## 11.5 Aktivierung erst nach A40 × 1,2
 
-Die Pumpenfunktion um `0x080B4474` bildet aus A40 exakt:
+Die Pumpenfunktion um `0x08084474` bildet aus A40 exakt:
 
 ```text
 A40 × 1,2
@@ -759,7 +761,7 @@ Am Ende der Routine:
 compare = (100 - Pumpenwert) × 10
 ```
 
-und Aufruf von `0x080BA918` mit:
+und Aufruf von `0x0808A918` mit:
 
 ```text
 Timer = 0x40000C00 = TIM5
@@ -781,7 +783,7 @@ Der konkrete GPIO-Pin von TIM5_CH2 wurde noch nicht bis zur AFIO-Konfiguration z
 
 ## 11.13 Weitere Temperaturhysterese im Pumpenpfad
 
-Der noch nicht physikalisch benannte Helper `0x080B799C` steuert zusätzlich ein Pumpenflag mit Rohschwellen:
+Der noch nicht physikalisch benannte Helper `0x0808799C` steuert zusätzlich ein Pumpenflag mit Rohschwellen:
 
 ```text
 < 200 → Flag setzen
@@ -792,26 +794,263 @@ Das entspricht sehr wahrscheinlich einer 20,0/22,0-°C-Hysterese, die physikalis
 
 ---
 
-# 12. Aktuell offene Hauptziele
+# 12. EEV-Hauptventil – Manual, Auto und Smart
+
+> In der Parameterliste heißt das Ventil **EEV (Electronic Expansion Valve)**. `E01=1` heißt offiziell **Auto**. Wenn im praktischen Sprachgebrauch von „Normal“ gegenüber „Smart“ gesprochen wird, ist damit hier der Auto-Modus gemeint.
+
+## 12.1 Parameter und Live-Struktur
+
+Die EEV-Parameter liegen zusammenhängend ab:
+
+```text
+0x200169E4
+```
+
+Bestätigte Zuordnung:
+
+| Register | Parameter | Live-Offset | Funktion / Default laut deutscher Registertabelle |
+|---:|---|---:|---|
+| 1131 | E01 | `+0x00` | EEV-Anpassungsmodus: `0=Manuell, 1=Auto, 2=Smart`; Default 1 |
+| 1132 | E02 | `+0x02` | Ziel-Superheat Heizen; Default 5,0 °C |
+| 1133 | E03 | `+0x04` | EEV-Anfangsschritte Heizen; Default 350 |
+| 1137 | E07 | `+0x06` | EEV Mindestschritte; Default 100 |
+| 1138 | E08 | `+0x08` | EEV-Anfangsschritte Kühlen; Default 200 |
+| 1139 | E09 | `+0x0A` | EVI-EEV-Modus: nur `0=Manuell, 1=Auto` |
+| 1140 | E10 | `+0x0C` | EVI-EEV Anfangsschritte; Default 350 |
+| 1143 | E13 | `+0x0E` | EVI Ziel-Überhitzung; Default 3,0 °C |
+| 1144 | E14 | `+0x10` | EVI Mindestschritte; Default 100 |
+| 1147 | E17 | `+0x12` | EEV-Schritte beim Abtauen; Default 480 |
+| 1148 | E18 | `+0x14` | Ziel-Superheat Kühlen; Default 3,0 °C |
+| 1149 | E19 | `+0x16` | **EEV-Anpassungsbereich im Smart-Modus**; Default 20 %, Bereich 0…300 % |
+
+Die Initialisierungsroutine um `0x080521AC` schreibt diese Defaults ebenfalls in die Live-Struktur. Hinter E19 folgen noch drei bislang nicht offiziell benannte Werte mit Defaults 180/200/150.
+
+Der zentrale EEV-Regler befindet sich ungefähr im Bereich:
+
+```text
+0x08059980 … 0x0805B1F4
+```
+
+Der resultierende Haupt-EEV-Sollwert liegt in der Struktur:
+
+```text
+0x20016AC4 + 0x02
+```
+
+und wird in den normalen Pfaden spätestens auf 480 Schritte begrenzt. E07 wirkt als gemeinsame Mindestöffnung, daneben existieren weitere betriebszustands- und temperaturabhängige Schutzbegrenzungen.
+
+**Bewertung: bestätigt.**
+
+## 12.2 Manuell – E01 = 0
+
+Die Modusabfrage ist unter anderem bei `0x08059A1C` und `0x08059B36` direkt sichtbar.
+
+Für `E01 == 0` wird die normale geschlossene Überhitzungsregelung übersprungen. Als Grund-/Festwert wird abhängig vom Betriebsfall verwendet:
+
+```text
+Heizen  → E03, EEV-Anfangsschritte Heizen
+Kühlen  → E08, EEV-Anfangsschritte Kühlen
+```
+
+Das bedeutet nicht, dass das Ventil unter allen Umständen völlig unverändert bleibt: Abtauung, Schutzfunktionen, spezielle Betriebszustände und harte Grenzen können weiterhin eingreifen.
+
+**Bewertung: bestätigt.**
+
+## 12.3 Auto / „Normal“ – E01 = 1
+
+`E01=1` läuft durch die normale automatische, rückgekoppelte EEV-Regelung.
+
+Der Regler verwendet als Überhitzungs-Sollwerte:
+
+```text
+Heizen → E02
+Kühlen → E18
+```
+
+und verändert den EEV-Sollwert anhand des internen Überhitzungs-/Fehlerzustands. Im Reglerblock sind diskrete Korrekturen von unter anderem:
+
+```text
+±2, ±4, ±6, ±8 Schritte
+```
+
+nachweisbar. Welche Korrektur angewendet wird, hängt von internen Fehler-/Bandzuständen ab.
+
+Anschließend greifen die gemeinsamen Grenzen, insbesondere:
+
+```text
+EEV >= E07
+EEV <= 480
+```
+
+sowie zusätzliche Schutz- und Betriebszustandsgrenzen.
+
+Der entscheidende Unterschied zu Smart:
+
+> **Im Auto-Modus gibt es kein E19-Prozentfenster um einen Smart-Arbeitspunkt.** Die Überhitzungsregelung kann den Ventilwert innerhalb des normalen zulässigen Bereichs frei nachführen.
+
+Damit ist Auto der klassische geschlossene Superheat-Regler.
+
+**Bewertung: bestätigt.**
+
+## 12.4 Smart – E01 = 2
+
+Nur bei `E01 == 2` wird ein zusätzlicher Smart-Block betreten. Die erste klare Modusweiche liegt um:
+
+```text
+0x0805A4DA … 0x0805A4E2
+```
+
+```text
+E01 != 2 → Smart-Arbeitspunktberechnung überspringen
+E01 == 2 → Smart-Arbeitspunkt berechnen
+```
+
+Wichtig:
+
+> **Smart ersetzt die normale Überhitzungsregelung nicht.** Der normale Auto-Regler berechnet weiterhin einen EEV-Sollwert. Smart ergänzt einen dynamischen Grund-/Arbeitspunkt und begrenzt anschließend, wie weit die normale Regelung davon abweichen darf.
+
+### Dynamischer Smart-Grundwert
+
+Der Smart-Pfad erzeugt einen dynamischen Referenzwert und speichert ihn unter anderem bei:
+
+```text
+0x20016F4E
+```
+
+Der gleiche Wert wird beim Aufbau des Smart-Arbeitspunkts auch in den EEV-Zielpfad übernommen.
+
+Abhängig von einem internen Smart-Zustand werden auf einen tabellarisch ausgewählten Grundwert folgende Faktoren angewendet:
+
+```text
+State 0 → × 1,2
+State 1 → × 1,0
+State 2 → × 0,9
+State 3 → × 0,8
+```
+
+Die Faktoren sind als Fließkommakonstanten im Binary direkt nachweisbar. Die genaue physikalische Benennung der vier Smart-Zustände bzw. der zugrunde liegenden Tabelle ist noch offen; funktional handelt es sich um eine zustandsabhängige Vorsteuerung des EEV-Arbeitspunkts.
+
+**Mathematik: bestätigt. Physikalische Bedeutung der vier Zustände: noch offen.**
+
+## 12.5 E19 ist das zulässige Smart-Fenster
+
+Der zweite entscheidende Smart-only-Block beginnt um:
+
+```text
+0x0805ADFA
+```
+
+Auch dort wird ausdrücklich geprüft:
+
+```text
+E01 == 2
+```
+
+Nur dann wird E19 (`0x200169E4+0x16`) verwendet.
+
+Die Firmware berechnet byte-/arithmetisch eindeutig:
+
+```text
+untere Grenze = Smart_Referenz × (1 - E19 / 100)
+obere Grenze  = Smart_Referenz × (1 + E19 / 100)
+```
+
+Die untere Berechnung beginnt ungefähr bei `0x0805AE26`, die obere bei `0x0805AF02`.
+
+Danach wird der zuvor von der normalen Regelung berechnete Ventilwert auf dieses Fenster begrenzt:
+
+```text
+target = clamp(Auto_Target, lower, upper)
+```
+
+Mit dem Default:
+
+```text
+E19 = 20 %
+```
+
+ergibt sich:
+
+```text
+untere Grenze = 0,8 × Smart_Referenz
+obere Grenze  = 1,2 × Smart_Referenz
+```
+
+Beispiel bei einem dynamischen Smart-Grundwert von 300 Schritten:
+
+```text
+Smart-Fenster = 240 … 360 Schritte
+```
+
+Die gemeinsamen Grenzen wie E07 und maximal 480 Schritte wirken zusätzlich. Praktisch ist die endgültige zulässige Öffnung daher der Schnitt aus Smart-Fenster und allen normalen Schutz-/Hardwaregrenzen.
+
+**Bewertung: bestätigt.**
+
+## 12.6 Auto vs. Smart – funktionaler Unterschied
+
+Zusammengefasst:
+
+```text
+AUTO / „NORMAL“ (E01=1)
+    Überhitzungs-Sollwert E02/E18
+        ↓
+    geschlossene Superheat-Regelung
+        ↓
+    Schrittweise EEV-Korrektur
+        ↓
+    E07 / 480 / Schutzgrenzen
+
+SMART (E01=2)
+    zustandsabhängige Vorsteuerung
+        ↓
+    dynamischer Smart-Grundwert
+        ↓
+    normale Superheat-Regelung läuft weiterhin
+        ↓
+    Begrenzung auf Smart-Grundwert ± E19 %
+        ↓
+    E07 / 480 / Schutzgrenzen
+```
+
+Damit ist Smart am besten als Kombination aus **Vorsteuerung + normaler Rückkopplungsregelung mit begrenztem Korrekturfenster** zu beschreiben.
+
+Die wahrscheinliche Regelungsabsicht ist, das Ventil bereits last-/zustandsabhängig in die Nähe eines erwarteten Arbeitspunkts zu bringen und die Superheat-Regelung nur noch innerhalb eines definierten Korridors nachregeln zu lassen. Das kann größere Ventilausschläge vermeiden und den Arbeitspunkt stabilisieren. Diese regelungstechnische Absicht ist **sehr wahrscheinlich**; die tatsächliche Mathematik des Arbeitspunkts und des E19-Fensters ist **bestätigt**.
+
+Ein praktischer Nebeneffekt ist ebenfalls aus der Mathematik ableitbar: Ist der Smart-Grundwert für einen konkreten Betriebspunkt ungünstig, kann Smart die normale Überhitzungsregelung daran hindern, so weit zu öffnen oder zu schließen wie sie es im Auto-Modus tun würde. Wie relevant das an der realen Anlage ist, muss durch Vergleichslogs Auto/Smart beurteilt werden.
+
+## 12.7 EVI-EEV ist davon getrennt
+
+E09 steuert das separate EVI-/Economizer-EEV und kennt laut Registerdefinition nur:
+
+```text
+0 = Manuell
+1 = Auto
+```
+
+Ein Smart-Modus ist für EVI nicht definiert. E01/E19 und die hier beschriebene Smart-Logik beziehen sich auf das Haupt-EEV.
+
+---
+
+# 13. Aktuell offene Hauptziele
 
 1. verbleibende Writer und Limitquellen von Register 2071 vollständig benennen
 2. C11-Derating-Tabelle mit allen Temperaturstützpunkten rekonstruieren
 3. Inverter-Run-/Mode-Wörter im FC10-Paket ab 1999 vollständig benennen
 4. Register 1432/1433 aus der Parameter-Validierung: Min/Max/Default/RW extrahieren
 5. PWM-Pin von TIM5_CH2 bis zur GPIO-/AFIO-Konfiguration verfolgen
-6. Helper `0x080B799C` physikalisch eindeutig einem Sensor zuordnen
+6. Helper `0x0808799C` physikalisch eindeutig einem Sensor zuordnen
 7. verstecktes Subsystem 8001–8090 identifizieren
 8. Register 2137/2138 und 2140–2143 benennen
 9. 2146 Bit für Bit auf Ausstattungs-/Capability-Funktionen zurückführen
 10. 2151–2158 vollständig entschlüsseln
 11. Lüfterregelung über 2074/2075 und 2019 Bit 2 rekonstruieren
-12. EEV-/Überhitzungsregelung rekonstruieren
+12. Smart-EEV: physikalische Bedeutung der vier Arbeitspunktzustände und der verwendeten Referenztabelle benennen
 13. Öl-Rückführungszustandsmaschine identifizieren
 14. Service-/Engineering-Bereiche 5001–5180, 6001–6090, 8801–8820 sowie 60000/60010 auflösen
 
 ---
 
-# 13. Arbeitsprinzip
+# 14. Arbeitsprinzip
 
 Neue Register werden möglichst über die vollständige Provenance-Kette dokumentiert:
 
