@@ -46,6 +46,9 @@ REMOTE_STATUS = "/tmp/phnix_ota_status.json"
 REMOTE_HTTP_PID = "/tmp/phnix_ota_httpd.pid"
 REMOTE_SIM_MARKER = "/data/.phnix_ota_simulator"
 REMOTE_HANDSHAKE_TRACE = "/tmp/phnix_handshake_trace.json"
+REMOTE_HOOK_STATE = "/tmp/phnix_ota_hook"
+REMOTE_RUN_ACTIVE = f"{REMOTE_HOOK_STATE}/run.active"
+REMOTE_TRANSFER_STARTED = f"{REMOTE_HOOK_STATE}/transfer-started"
 DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
 
 OUTPUT_MODE = "auto"
@@ -251,6 +254,110 @@ def verify_original_runtime(adb: AdbClient) -> dict:
     return result
 
 
+def original_runtime_status(adb: AdbClient) -> dict:
+    """Read-only proof that the modem is back in its unmodified runtime state."""
+    service_pid = adb.shell("pidof phnixIot4G || true")
+    service_path = adb.shell(
+        "p=$(pidof phnixIot4G | awk '{print $1}'); "
+        "test -n \"$p\" && readlink /proc/$p/exe || true"
+    )
+    service_state = adb.shell(
+        "p=$(pidof phnixIot4G | awk '{print $1}'); "
+        "test -n \"$p\" && awk '/^State:|^TracerPid:/ {print}' /proc/$p/status || true"
+    )
+    service_hash = adb.shell(f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'").upper()
+    watchdogs = adb.shell("ps | awk '$4 == \"{helloworld}\" {print $1}'")
+    http_pid_active = adb.shell(f"test -f {REMOTE_HTTP_PID}; echo $?") == "0"
+    http_listener = adb.shell(
+        "netstat -lnt 2>/dev/null | awk '$4 ~ /:8081$/ {print}'"
+    )
+    local_artifacts = adb.shell(f"ls -A {REMOTE_STAGE_DIR} 2>/dev/null || true")
+    result = {
+        "adb_state": adb.run("get-state").strip(),
+        "service_pid": service_pid,
+        "service_path": service_path,
+        "service_sha256": service_hash,
+        "service_state": service_state,
+        "debugger_pids": adb.shell("pidof gdbserver gdb || true"),
+        "run_active": adb.shell(f"test -f {REMOTE_RUN_ACTIVE}; echo $?") == "0",
+        "transfer_started": adb.shell(f"test -f {REMOTE_TRANSFER_STARTED}; echo $?") == "0",
+        "cloud_guards": adb.shell(
+            "iptables -S OUTPUT 2>/dev/null | grep -- '--dport 1883' || true; "
+            "iptables -S INPUT 2>/dev/null | grep -- '--sport 1883' || true"
+        ),
+        "mqtt_connection": adb.shell(
+            "netstat -nt 2>/dev/null | awk '$4 ~ /:1883$/ || $5 ~ /:1883$/ {print}'"
+        ),
+        "watchdog_pids": watchdogs,
+        "http_active": http_pid_active or bool(http_listener),
+        "http_listener": http_listener,
+        "local_ota_artifacts": local_artifacts,
+        "ota_info": asdict(parse_ota_info(adb.read_file(REMOTE_INFO))),
+        "ota_info_sha256": adb.shell(f"sha256sum {REMOTE_INFO} | awk '{{print $1}}'"),
+        "statistics_sha256": adb.shell(f"sha256sum {REMOTE_STATISTICS} | awk '{{print $1}}'"),
+    }
+    checks = {
+        "service_running": bool(service_pid),
+        "service_original": service_path == REMOTE_SERVICE and service_hash == EXPECTED_SERVICE_SHA256,
+        "service_untraced": "TracerPid:\t0" in service_state or "TracerPid: 0" in service_state,
+        "service_not_stopped": "T (stopped)" not in service_state,
+        "no_debugger": not result["debugger_pids"],
+        "no_local_ota": not result["run_active"] and not result["transfer_started"],
+        "no_cloud_guard": not result["cloud_guards"],
+        "cloud_connected": "ESTABLISHED" in result["mqtt_connection"],
+        "watchdogs_running": len(watchdogs.splitlines()) >= 2,
+        "http_stopped": not result["http_active"],
+        "staging_clean": not result["local_ota_artifacts"],
+        "ota_info_valid": result["ota_info"]["crc_ok"],
+    }
+    result["checks"] = checks
+    result["original_ok"] = all(checks.values())
+    return result
+
+
+def show_original_status(result: dict) -> None:
+    if not _human_output():
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    labels = {
+        "service_running": "Originaldienst laeuft",
+        "service_original": "Originale Programmdatei ist unveraendert",
+        "service_untraced": "Kein Debugger ist am Originaldienst aktiv",
+        "service_not_stopped": "Originaldienst ist nicht angehalten",
+        "no_debugger": "Keine GDB-/GDB-Server-Prozesse laufen",
+        "no_local_ota": "Kein lokales Firmwareupdate ist aktiv",
+        "no_cloud_guard": "Keine lokale Cloud-Sperre ist aktiv",
+        "cloud_connected": "Cloudverbindung ist hergestellt",
+        "watchdogs_running": "Originale Ueberwachungsdienste laufen",
+        "http_stopped": "Lokaler Firmware-Webserver ist beendet",
+        "staging_clean": "Lokale Firmware-Zwischendateien sind entfernt",
+        "ota_info_valid": "OTA-Statusdatei ist gueltig",
+    }
+    for key, label in labels.items():
+        ok = result["checks"][key]
+        print(_paint(f"[OK] {label}" if ok else f"[FEHLER] {label}", GREEN if ok else RED), flush=True)
+    summary = "Originalzustand vollstaendig bestaetigt" if result["original_ok"] else "Originalzustand nicht vollstaendig"
+    print(_paint(f"[OK] {summary}" if result["original_ok"] else f"[FEHLER] {summary}",
+                 GREEN if result["original_ok"] else RED), flush=True)
+
+
+def restore_original_runtime(adb: AdbClient) -> dict:
+    before = original_runtime_status(adb)
+    if before["transfer_started"]:
+        raise OtaError(
+            "firmware blocks have started; automatic restore is locked and the original service remains authoritative"
+        )
+    adb.shell(f"{REMOTE_HELPER} restore-original --status {REMOTE_STATUS}")
+    remove_local_ota_artifacts(adb)
+    time.sleep(1)
+    after = original_runtime_status(adb)
+    if not after["original_ok"]:
+        raise OtaError(f"original runtime restoration is incomplete: {after['checks']}")
+    print_event("original-state-released")
+    print_event("services-restored", **after)
+    return after
+
+
 def preflight(adb: AdbClient, firmware: Path, require_helper: bool,
               manifest: FirmwareManifest) -> dict:
     checks: dict[str, object] = {}
@@ -371,6 +478,14 @@ def stop_local_http(adb: AdbClient) -> None:
         f"test -f {REMOTE_HTTP_PID} && kill $(cat {REMOTE_HTTP_PID}) 2>/dev/null || true; "
         f"rm -f {REMOTE_HTTP_PID}",
         check=False,
+    )
+
+
+def remove_local_ota_artifacts(adb: AdbClient) -> None:
+    stop_local_http(adb)
+    adb.shell(
+        f"rm -rf {REMOTE_STAGE_DIR} {REMOTE_HOOK_STATE}; "
+        f"rm -f {REMOTE_STATUS} {REMOTE_HANDSHAKE_TRACE} {REMOTE_HTTP_PID}"
     )
 
 
@@ -640,7 +755,7 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     finally:
         if safe_terminal:
             adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
-            stop_local_http(adb)
+            remove_local_ota_artifacts(adb)
             print_event("original-state-released")
             runtime = verify_original_runtime(adb)
             if not runtime["ok"]:
@@ -659,11 +774,6 @@ def run_update(args, adb: AdbClient) -> None:
         return
 
     simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
-    if not simulated:
-        raise OtaError(
-            "live full update is temporarily locked: runtime injection must be "
-            "migrated from one-shot 0x1FDAC to the proven 0x1FE40 yield-loop path"
-        )
     expected_confirm = "VM-FULL-UPDATE" if simulated else "PHNIX-FULL-UPDATE"
     if args.confirm != expected_confirm:
         raise OtaError(f"confirmation must be {expected_confirm}")
@@ -716,7 +826,9 @@ def run_update(args, adb: AdbClient) -> None:
                 phase_started = time.monotonic()
                 print_event("phase-change", phase=phase)
             if hook.get("terminal") is True:
-                safe_terminal = phase in {"success", "failed", "parser-rejected"}
+                safe_terminal = phase in {
+                    "success", "failed", "parser-rejected", "precondition-rejected",
+                }
                 if phase == "success":
                     if hook.get("board_ota_step") != 12:
                         safe_terminal = False
@@ -766,7 +878,7 @@ def run_update(args, adb: AdbClient) -> None:
             except subprocess.TimeoutExpired:
                 print_event("warning", message="runtime helper did not exit within 10 seconds")
         if safe_terminal:
-            stop_local_http(adb)
+            remove_local_ota_artifacts(adb)
             print_event("hook-stopped")
             runtime = verify_original_runtime(adb)
             if not runtime["ok"]:
@@ -829,7 +941,7 @@ def cancel_update(args, adb: AdbClient) -> None:
     finally:
         if safe_terminal:
             adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
-            stop_local_http(adb)
+            remove_local_ota_artifacts(adb)
             print_event("cancel-cleanup-complete")
 
 
@@ -866,7 +978,12 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument("--confirm")
     cancel.add_argument("--poll-interval", type=float, default=0.5)
     cancel.add_argument("--timeout", type=float, default=25.0)
-    run = sub.add_parser("run", parents=[common])
+    run = sub.add_parser("run")
+    run.add_argument("--manifest", type=Path)
+    run.add_argument("--firmware", type=Path)
+    mode = run.add_mutually_exclusive_group()
+    mode.add_argument("--check", choices=("status",))
+    mode.add_argument("--restore", choices=("original",))
     run.add_argument("--firmware-url", default=DEFAULT_FIRMWARE_URL)
     run.add_argument("--execute", action="store_true")
     run.add_argument("--confirm")
@@ -885,7 +1002,7 @@ def main() -> int:
     OUTPUT_MODE = args.output
     COLOR_ENABLED = not args.no_color
     try:
-        if hasattr(args, "manifest"):
+        if getattr(args, "manifest", None) is not None:
             args.firmware_manifest = FirmwareManifest.load(args.manifest)
             args.firmware = args.firmware_manifest.resolve_firmware(args.manifest, args.firmware)
             args.firmware_manifest.validate_file(args.firmware)
@@ -920,6 +1037,16 @@ def main() -> int:
         if args.command == "same-version-test":
             run_same_version_test(args, adb)
             return 0
+        if args.command == "run" and args.check == "status":
+            result = original_runtime_status(adb)
+            show_original_status(result)
+            return 0 if result["original_ok"] else 1
+        if args.command == "run" and args.restore == "original":
+            result = restore_original_runtime(adb)
+            show_original_status(result)
+            return 0
+        if args.command == "run" and getattr(args, "manifest", None) is None:
+            raise OtaError("run requires --manifest unless --check status or --restore original is used")
         run_update(args, adb)
         return 0
     except (OtaError, TransportError, ManifestError, OSError, json.JSONDecodeError) as error:

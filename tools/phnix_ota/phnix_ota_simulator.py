@@ -442,6 +442,8 @@ def shell(command: str) -> tuple[int, bytes]:
         return (0, path.read_bytes()) if path.exists() else (1, b"")
     if command == "pidof phnixIot4G || true":
         return 0, b"4100\n"
+    if command.startswith("p=$(pidof phnixIot4G") and "awk '/^State:|^TracerPid:/" in command:
+        return 0, b"State:\tS (sleeping)\nTracerPid:\t0\n"
     if command.startswith("p=$(pidof phnixIot4G"):
         return 0, b"/data/phnixIot4G\n"
     if command.startswith("sha256sum /data/phnixIot4G"):
@@ -454,6 +456,32 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, b"httpd\nmd5sum\n"
     if command.startswith("netstat -nt"):
         return 0, b"tcp 0 0 10.0.0.2:45100 47.91.78.162:1883 ESTABLISHED\n"
+    if command.startswith("netstat -lnt"):
+        state = json.loads((sim_home() / "runtime.json").read_text(encoding="utf-8"))
+        return 0, (b"tcp 0 0 127.0.0.1:8081 0.0.0.0:* LISTEN\n" if state.get("httpd") else b"")
+    if command == "pidof gdbserver gdb || true":
+        return 0, b""
+    if command.startswith("test -f /tmp/phnix_ota_hook/run.active"):
+        state = json.loads((sim_home() / "runtime.json").read_text(encoding="utf-8"))
+        return 0, (b"0\n" if state.get("running") else b"1\n")
+    if command.startswith("test -f /tmp/phnix_ota_hook/transfer-started"):
+        return 0, b"1\n"
+    if command.startswith("iptables -S OUTPUT"):
+        state = json.loads((sim_home() / "runtime.json").read_text(encoding="utf-8"))
+        return 0, (b"-A OUTPUT -o sim0 -p tcp --dport 1883 -j DROP\n" if state.get("cloud_blocked") else b"")
+    if command.startswith("test -f /tmp/phnix_ota_httpd.pid"):
+        state = json.loads((sim_home() / "runtime.json").read_text(encoding="utf-8"))
+        return 0, (b"0\n" if state.get("httpd") else b"1\n")
+    if command.startswith("ls -A /data/phnix_local_ota"):
+        directory = root_path("/data/phnix_local_ota")
+        names = sorted(item.name for item in directory.iterdir()) if directory.exists() else []
+        return 0, (("\n".join(names) + "\n").encode() if names else b"")
+    if command.startswith("sha256sum /data/phnixIot_device_OTA_INFO"):
+        digest = hashlib.sha256(root_path("/data/phnixIot_device_OTA_INFO").read_bytes()).hexdigest()
+        return 0, (digest + "\n").encode()
+    if command.startswith("sha256sum /data/phnixIot_device_statisic"):
+        digest = hashlib.sha256(root_path("/data/phnixIot_device_statisic").read_bytes()).hexdigest()
+        return 0, (digest + "\n").encode()
     if command.startswith("df -k"):
         return 0, b"Filesystem 1K-blocks Used Available Use% Mounted on\nsim 1048576 1 1048575 1% /data\n"
     if command.startswith("test -r /data/phnixIot_device_") or command.startswith("test -x /data/phnix_ota_runtime_hook"):
@@ -498,6 +526,18 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, b""
     if command.startswith("/data/phnix_ota_runtime_hook stop "):
         runtime_state(running=False, held=False, cloud_blocked=False, watchdogs_paused=False)
+        return 0, b""
+    if command.startswith("/data/phnix_ota_runtime_hook restore-original "):
+        runtime_state(running=False, held=False, cloud_blocked=False,
+                      watchdogs_paused=False, recovery_running=False)
+        set_status("original-restored", True, recovery_required=False)
+        return 0, b""
+    if command.startswith("rm -rf /data/phnix_local_ota /tmp/phnix_ota_hook"):
+        shutil.rmtree(root_path("/data/phnix_local_ota"), ignore_errors=True)
+        shutil.rmtree(root_path("/tmp/phnix_ota_hook"), ignore_errors=True)
+        root_path("/tmp/phnix_ota_status.json").unlink(missing_ok=True)
+        root_path("/tmp/phnix_handshake_trace.json").unlink(missing_ok=True)
+        root_path("/tmp/phnix_ota_httpd.pid").unlink(missing_ok=True)
         return 0, b""
     if "rm -f /tmp/phnix_ota_httpd.pid" in command:
         runtime_state(httpd=False)

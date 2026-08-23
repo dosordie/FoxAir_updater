@@ -51,7 +51,9 @@ Watchdogs und Persistenz wurden kontrolliert in den Originalzustand versetzt.
 erfolgreiche Gleichversionstest verwendet dagegen den zyklisch erreichbaren
 MQTT-Yield-Punkt `0x1FE40` mit UART-Leerlauf- und Board-Step-12-Prüfung.
 
-Bis der Vollupdate-Helfer auf diesen bewährten linearen Startpfad migriert und
-offline sowie auf der VM erneut geprüft ist, verweigert der Controller reale
-`run --execute`-Aufrufe ausdrücklich. Simulator-Vollupdates und der begrenzte
-Gleichversionstest bleiben verfügbar.
+Der Vollupdate-Helfer wurde anschließend auf diesen bewährten zyklischen
+Startpfad migriert. Er prüft am Halt `0x1FE40` zusätzlich UART-Leerlauf und
+Board-Step 12, bevor er den lokalen Auftrag an `ota_code_handle` übergibt.
+Außerdem wurden ein zuvor fehlendes modemseitiges Persistenzbackup und ein
+`transfer-started`-Marker ergänzt. Letzterer verhindert, dass eine generische
+Wiederherstellung eine bereits laufende C5A8-Übertragung unterbricht.

@@ -1,12 +1,15 @@
 import io
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import Mock
 
 from tools.phnix_ota import phnix_local_ota_controller as controller
 from tools.phnix_ota.phnix_local_ota_controller import (
     cancel_proof_ok,
     cancel_payload,
+    build_parser,
+    OtaError,
     command_payload,
     crc16_x25,
     parse_ota_info,
@@ -14,6 +17,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     same_version_proof_ok,
     validate_logger_checklist,
     remote_status,
+    restore_original_runtime,
 )
 from updater.common.firmware_manifest import FirmwareManifest
 
@@ -163,6 +167,32 @@ class OtaInfoTests(unittest.TestCase):
         self.assertEqual(rendered.count("Fortschritt:"), 2)
         self.assertIn("25 % (71.899 / 287.598 Byte)", rendered)
         self.assertIn("26 % (74.776 / 287.598 Byte)", rendered)
+
+    def test_run_maintenance_switches_do_not_require_manifest(self):
+        check = build_parser().parse_args(["run", "--check", "status"])
+        restore = build_parser().parse_args(["run", "--restore", "original"])
+        self.assertEqual(check.check, "status")
+        self.assertIsNone(check.manifest)
+        self.assertEqual(restore.restore, "original")
+        self.assertIsNone(restore.manifest)
+
+    def test_full_runtime_hook_uses_proven_yield_loop_and_transfer_marker(self):
+        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        full = hook.split("make_gdb_script() {", 1)[1].split("run_hook() {", 1)[0]
+        self.assertIn("break *0x1fe40", full)
+        self.assertNotIn("break *0x1fdac", full)
+        self.assertIn("*(unsigned int *)0x930dc != 0", full)
+        self.assertIn("*(unsigned char *)0x98a94 != 12", full)
+        self.assertIn("shell touch $TRANSFER_STARTED", full)
+
+    def test_restore_refuses_after_firmware_blocks_started(self):
+        adb = Mock()
+        with unittest.mock.patch.object(
+            controller, "original_runtime_status", return_value={"transfer_started": True}
+        ):
+            with self.assertRaises(OtaError):
+                restore_original_runtime(adb)
+        adb.shell.assert_not_called()
 
 
 if __name__ == "__main__":

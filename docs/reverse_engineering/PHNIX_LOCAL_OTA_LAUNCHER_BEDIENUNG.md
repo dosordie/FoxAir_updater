@@ -246,6 +246,39 @@ python3 phnix_local_ota_controller.py status
 Während C5A8 dient ein CRC-gültiger OTA_INFO-Offset ausschließlich der Anzeige.
 Der Launcher greift aufgrund des Offsets nicht in die Originalübertragung ein.
 
+### Leserlicher Originalzustands-Check
+
+Für die normale Kontrolle auf Raspberry Pi oder Windows-Frontend ist kein
+Manifest erforderlich:
+
+```sh
+python3 phnix_local_ota_controller.py --adb adb run --check status
+```
+
+Der Befehl verändert nichts und prüft leserlich:
+
+- Originaldienst, Pfad, SHA-256, Prozesszustand und `TracerPid`;
+- GDB/GDB-Server und aktive lokale OTA-Marker;
+- MQTT-Sperrregeln und Cloudverbindung;
+- beide Original-Watchdogs und den lokalen Firmware-Webserver;
+- CRC der OTA_INFO sowie Hashes von OTA_INFO und Statistik.
+
+### Originalzustand wiederherstellen
+
+```sh
+python3 phnix_local_ota_controller.py --adb adb run --restore original
+```
+
+Der Befehl beendet übrig gebliebene Debugger/Helfer, setzt einen nur lokal
+vorbereiteten Persistenzzustand zurück, entfernt Cloudguards, setzt Dienst und
+Watchdogs fort und beendet den lokalen Webserver. Danach wird automatisch der
+vollständige Originalzustands-Check ausgeführt.
+
+Sicherheitsgrenze: Sobald der Helfer den ersten C5A8-Firmwareblock beobachtet
+hat, legt er einen `transfer-started`-Marker an. Dann verweigert
+`--restore original` jeden Eingriff. Ab diesem Zeitpunkt bleibt ausschließlich
+der Originaldienst für Abschluss oder Fehlerbehandlung zuständig.
+
 ## 10. Laborartefakte wieder entfernen
 
 Nur nach einem sicheren terminalen Zustand oder wenn kein aktiver OTA gestartet
