@@ -71,8 +71,11 @@ Top-Level-Feldes `code`. Der Handler 0073 liest keine `param`-Felder.
 5. Zwei `helloworld`-Watchdogs sind vorhanden.
 6. Stabile Stromversorgung; während des Tests nicht abschalten.
 7. Original-Cloud wird für das kurze Testfenster blockiert.
-8. RS485 wird passiv mitgeschnitten.
-9. Vor der Injektion wurde eine zusammenhängende Sendepause beobachtet.
+8. Wenn verfügbar, wird RS485 zusätzlich passiv mitgeschnitten. Der erste
+   freigegebene Lauf wurde ohne separaten ser2net-Mitschnitt ausgeführt.
+9. Vor der Injektion wurde eine zusammenhängende Sendepause beobachtet; beim
+   ersten Lauf wurde dazu der Originaldienst angehalten, `uart_send_flag == 0`
+   geprüft und eine weitere Sekunde gewartet.
 10. Eine Person überwacht Wärmepumpe, LTE-Modem und Statusausgabe.
 
 Lesender Vorplan:
@@ -131,9 +134,18 @@ werden.
 - Cloudverbindung wiederhergestellt, keine Testartefakte/Firewallregeln;
 - lesender Live-Vorplan: `ready: true`, keine Blocker;
 - Live-OTA_INFO: CRC gültig, Offset 0, Länge 0;
-- echter Live-Cancel im Runtime-Helfer: weiterhin gesperrt;
-- Mainboardtest: **noch nicht ausgeführt**.
+- echter Live-Cancel wurde nach ausdrücklicher Freigabe am 23.08.2026
+  ausgeführt;
+- beobachtet wurden `board_ota_step: 12 -> 7 -> 12` und
+  `cancel_pending: 0 -> 1 -> 0`;
+- `uart_send_flag` war vor und nach dem Lauf 0;
+- OTA_INFO blieb bei Offset 0 und Länge 0;
+- C350, C357 und C5A8 wurden nicht ausgelöst;
+- Dienst, Watchdogs, Firewall und Cloudverbindung wurden anschließend in den
+  Originalzustand zurückgeführt;
+- Mainboardtest: **erfolgreich ausgeführt**.
 
-Der nächste bewusste Schritt ist damit ausschließlich der oben beschriebene
-Mainboard-Schreibtest nach erneuter passiver Sendepause und ausdrücklicher
-Freigabe. Bis dahin bleibt `live_send_enabled: false`.
+Der Cancelpfad ist damit erstmals am echten Mainboard dynamisch bestätigt. Das
+ist keine Freigabe für C350/C357/C5A8 oder einen Firmwaretransfer; diese nächste
+Risikostufe benötigt weiterhin einen eigenen Testplan und eine neue
+ausdrückliche Freigabe.

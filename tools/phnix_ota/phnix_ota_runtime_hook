@@ -206,6 +206,238 @@ EOF
     echo "cancel breakpoint install/remove test passed"
 }
 
+make_cancel_probe_gdb_script() {
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+set print thread-events off
+set auto-load safe-path /
+set libthread-db-search-path /lib
+handle SIGILL nostop noprint pass
+handle SIGFPE nostop noprint pass
+handle SIGCONT nostop noprint pass
+file /data/phnixIot4G
+target remote 127.0.0.1:12345
+set \$injection_state = 0
+set \$quiet_hits = 0
+set \$c36a_seen = 0
+set \$c36c_seen = 0
+set \$pending_cleared = 0
+set \$step10_seen = 0
+set \$report_seen = 0
+
+break *0x1fdac
+commands 1
+  silent
+  if \$injection_state == 0
+    if *(unsigned int *)0x930dc == 0 && *(unsigned char *)0x98a94 == 12 && *(unsigned char *)0x988fe == 0
+      set \$quiet_hits = \$quiet_hits + 1
+    else
+      set \$quiet_hits = 0
+    end
+    if \$quiet_hits >= 5
+      set \$injection_state = 1
+      set \$return_pc = \$pc
+      set {char[64]} 0x94ab4 = "{\"cmd\":\"CMD_OTA\",\"code\":\"0073\"}"
+      shell echo '{"phase":"cancel-parser-injection","terminal":false,"quiet_hits":5}' > $STATUS
+      set \$r0 = 0x94ab4
+      set \$lr = \$return_pc
+      set \$pc = 0x19958
+    end
+  else
+    if \$injection_state == 1
+      set \$injection_state = 2
+      if *(unsigned char *)0x98a94 == 7 && *(unsigned char *)0x988fe == 1
+        disable 1
+        shell echo '{"phase":"cancel-accepted","terminal":false,"board_ota_step":7,"cancel_pending":true}' > $STATUS
+      else
+        shell echo '{"phase":"cancel-parser-rejected","terminal":false,"recovery_required":true}' > $STATUS
+        shell kill -STOP $PID
+        detach
+        quit
+      end
+    end
+  end
+  continue
+end
+
+break *0x1dacc
+commands 2
+  silent
+  if \$r0 == 1
+    set \$c36a_seen = 1
+    shell echo '{"phase":"c36a-sent","terminal":false,"c36a_sent":true}' > $STATUS
+  end
+  continue
+end
+
+break *0x1b51c
+commands 3
+  silent
+  if \$c36a_seen == 1 && *(unsigned char *)(\$r0+0) == 0 && *(unsigned char *)(\$r0+1) == 0x63 && *(unsigned char *)(\$r0+2) == 0 && *(unsigned char *)(\$r0+3) == 1
+    set \$c36c_seen = 1
+    shell echo '{"phase":"c36c-confirmed","terminal":false,"c36a_sent":true,"c36c_status":1,"ssid_match":true}' > $STATUS
+  else
+    shell echo '{"phase":"c36c-invalid","terminal":false,"recovery_required":true}' > $STATUS
+  end
+  continue
+end
+
+break *0x1b5a8
+commands 4
+  silent
+  if \$c36c_seen == 1 && *(unsigned char *)0x988fe == 0
+    set \$pending_cleared = 1
+    shell echo '{"phase":"cancel-pending-cleared","terminal":false,"c36a_sent":true,"c36c_status":1,"cancel_pending":false}' > $STATUS
+  end
+  continue
+end
+
+break *0x1db94
+commands 5
+  silent
+  if \$pending_cleared == 1 && \$r0 == 10
+    set \$step10_seen = 1
+    shell echo '{"phase":"cancel-step10","terminal":false,"c36a_sent":true,"c36c_status":1,"cancel_pending":false,"board_ota_step":10}' > $STATUS
+  end
+  continue
+end
+
+break *0x19264
+commands 6
+  silent
+  if \$step10_seen == 1
+    set \$report_seen = 1
+    shell echo '{"phase":"cancel-report","terminal":false,"c36a_sent":true,"c36c_status":1,"cancel_pending":false,"board_ota_step":10}' > $STATUS
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  continue
+end
+
+break *0x1d748
+commands 7
+  silent
+  if \$c36a_seen == 1 && \$c36c_seen == 1 && \$pending_cleared == 1 && \$step10_seen == 1 && \$report_seen == 1 && *(unsigned char *)0x98a94 == 12
+    shell echo '{"phase":"cancel-step12","terminal":true,"c36a_sent":true,"c36c_status":1,"ssid_match":true,"cancel_pending":false,"board_ota_step":12,"normal_operation_verified":false,"recovery_required":false}' > $STATUS
+    shell touch $SAFE_TO_CLEAN
+    detach
+    quit
+  end
+  continue
+end
+
+break *0x1c4bc
+commands 8
+  silent
+  shell echo '{"phase":"forbidden-c350","terminal":false,"recovery_required":true}' > $STATUS
+  set \$pc = \$lr
+  shell kill -STOP $PID
+  detach
+  quit
+end
+
+break *0x1cea0
+commands 9
+  silent
+  shell echo '{"phase":"forbidden-c357","terminal":false,"recovery_required":true}' > $STATUS
+  set \$pc = \$lr
+  shell kill -STOP $PID
+  detach
+  quit
+end
+
+break *0x1c7cc
+commands 10
+  silent
+  shell echo '{"phase":"forbidden-c5a8","terminal":false,"recovery_required":true}' > $STATUS
+  set \$pc = \$lr
+  shell kill -STOP $PID
+  detach
+  quit
+end
+
+disable 1
+shell sleep 1
+if *(unsigned int *)0x930dc == 0 && *(unsigned char *)0x98a94 == 7 && *(unsigned char *)0x988fe == 1
+  set \$injection_state = 2
+  set \$c36a_seen = 1
+  shell echo '{"phase":"cancel-resume","terminal":false,"board_ota_step":7,"cancel_pending":true}' > $STATUS
+else
+if *(unsigned int *)0x930dc == 0 && *(unsigned char *)0x98a94 == 12 && *(unsigned char *)0x988fe == 0
+  set {char[64]} 0x94ab4 = "{\"cmd\":\"CMD_OTA\",\"code\":\"0073\"}"
+  shell echo '{"phase":"cancel-parser-injection","terminal":false,"send_pause_seconds":1}' > $STATUS
+  set scheduler-locking on
+  call ((void (*) (char *)) 0x19958)((char *)0x94ab4)
+  set scheduler-locking off
+  set \$injection_state = 2
+  if *(unsigned char *)0x98a94 == 7 && *(unsigned char *)0x988fe == 1
+    shell echo '{"phase":"cancel-accepted","terminal":false,"board_ota_step":7,"cancel_pending":true}' > $STATUS
+  else
+    shell echo '{"phase":"cancel-parser-rejected","terminal":false,"recovery_required":true}' > $STATUS
+    shell kill -STOP $PID
+    detach
+    quit
+  end
+else
+  shell echo '{"phase":"cancel-precondition-failed","terminal":true,"recovery_required":false}' > $STATUS
+  shell touch $SAFE_TO_CLEAN
+  detach
+  quit
+end
+end
+
+shell kill -CONT $PID
+continue
+EOF
+}
+
+cancel_probe_hook() {
+    test "$LIVE_CONFIRM" = PHNIX-CANCEL-PROBE-0073 || fail "live cancel probe confirmation mismatch"
+    verify
+    command -v iptables >/dev/null 2>&1 || fail "iptables missing; cloud cannot be isolated"
+    PID=$(service_pid)
+    test "$(awk '/^TracerPid:/ {print $2}' /proc/$PID/status)" = 0 || fail "service is already traced"
+    test "$(dd if=/data/phnixIot_device_OTA_INFO bs=1 skip=212 count=4 2>/dev/null | od -An -tu4 | tr -d ' ')" = 0 || fail "persistent OTA offset is not zero"
+    test "$(dd if=/data/phnixIot_device_OTA_INFO bs=1 skip=216 count=4 2>/dev/null | od -An -tu4 | tr -d ' ')" = 0 || fail "persistent OTA length is not zero"
+    mkdir -p "$STATE_DIR"
+    rm -f "$SAFE_TO_CLEAN"
+    touch "$RUN_ACTIVE"
+    echo $$ > "$HELPER_PID"
+    trap cleanup EXIT INT TERM
+    watchdog_pids > "$WATCHDOG_PIDS"
+    iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
+    iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
+    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+    make_cancel_probe_gdb_script
+    printf '{"phase":"cancel-probe-attaching","terminal":false}\n' > "$STATUS"
+    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-cancel-probe.log" 2>&1 &
+    echo $! > "$GDBSERVER_PID"
+    sleep 1
+    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-probe.log" 2>&1 &
+    echo $! > "$GDB_PID"
+    wait "$(cat "$GDB_PID")"
+}
+
+cancel_probe_resume_hook() {
+    test "$LIVE_CONFIRM" = PHNIX-CANCEL-PROBE-0073 || fail "live cancel probe confirmation mismatch"
+    test -f "$RUN_ACTIVE" || fail "no guarded cancel probe to resume"
+    PID=$(service_pid)
+    test -n "$PID" || fail "original service missing during cancel probe resume"
+    test "$(awk '/^TracerPid:/ {print $2}' /proc/$PID/status)" = 0 || fail "service is already traced"
+    echo $$ > "$HELPER_PID"
+    trap cleanup EXIT INT TERM
+    make_cancel_probe_gdb_script
+    printf '{"phase":"cancel-resume-attaching","terminal":false}\n' > "$STATUS"
+    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-cancel-resume.log" 2>&1 &
+    echo $! > "$GDBSERVER_PID"
+    sleep 1
+    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-resume.log" 2>&1 &
+    echo $! > "$GDB_PID"
+    wait "$(cat "$GDB_PID")"
+}
+
 make_gdb_script() {
     JSON=$(tr -d '\r\n' < "$COMMAND")
     ESCAPED=$(printf '%s' "$JSON" | sed 's/\\/\\\\/g; s/"/\\"/g')
@@ -402,12 +634,14 @@ BUILD_ID=
 COMMAND=
 ALLOW=
 FORCE=0
+LIVE_CONFIRM=
 while test $# -gt 0; do
     case "$1" in
         --status) STATUS=$2; shift 2 ;;
         --build-id) BUILD_ID=$2; shift 2 ;;
         --command) COMMAND=$2; shift 2 ;;
         --allow-publish) ALLOW=$2; shift 2 ;;
+        --live-confirm) LIVE_CONFIRM=$2; shift 2 ;;
         --force) FORCE=1; shift ;;
         *) fail "unknown argument: $1" ;;
     esac
@@ -418,9 +652,11 @@ case "$ACTION" in
     attach-test) attach_test ;;
     breakpoint-test) breakpoint_test ;;
     cancel-breakpoint-test) cancel_breakpoint_test ;;
+    cancel-probe) cancel_probe_hook ;;
+    cancel-probe-resume) cancel_probe_resume_hook ;;
     run) run_hook ;;
     hold) hold_hook ;;
     cancel) echo "ERROR: live cancel is disabled until C36A/C36C runtime hooks are validated" >&2; exit 2 ;;
     stop) stop_hook ;;
-    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|run|hold|cancel|stop [options]" >&2; exit 2 ;;
+    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|cancel-probe|cancel-probe-resume|run|hold|cancel|stop [options]" >&2; exit 2 ;;
 esac
