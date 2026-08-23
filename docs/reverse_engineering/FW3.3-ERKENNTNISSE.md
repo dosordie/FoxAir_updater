@@ -1029,6 +1029,14 @@ E09 steuert das separate EVI-/Economizer-EEV und kennt laut Registerdefinition n
 
 Ein Smart-Modus ist für EVI nicht definiert. E01/E19 und die hier beschriebene Smart-Logik beziehen sich auf das Haupt-EEV.
 
+## 12.8 Abgeschlossene Detailblöcke
+
+Für drei inzwischen deutlich tiefer rekonstruierte Regelblöcke existieren eigene Detaildokumente:
+
+- [`FW3.3-EEV-SMART-REGELUNG.md`](FW3.3-EEV-SMART-REGELUNG.md) – EEV-, Smart- und Ventilantriebsregelung
+- [`FW3.3-OELRUECKFUEHRUNG.md`](FW3.3-OELRUECKFUEHRUNG.md) – Ölrückführung: 1…35 Hz, 120-min-Qualifikation, 60-Hz-Anforderung, H34-ERP-Sonderpfad und externe Modbus-Rekonstruktion
+- [`FW3.3-LUEFTERREGELUNG.md`](FW3.3-LUEFTERREGELUNG.md) – Lüfterkennlinien, 2074/2075/2076, 2019 Bit 2, Verdampfertemperatur, AT-Limits, Schutz-/Defrost-Overrides und Buspfad
+
 ---
 
 # 13. Aktuell offene Hauptziele
@@ -1043,10 +1051,10 @@ Ein Smart-Modus ist für EVI nicht definiert. E01/E19 und die hier beschriebene 
 8. Register 2137/2138 und 2140–2143 benennen
 9. 2146 Bit für Bit auf Ausstattungs-/Capability-Funktionen zurückführen
 10. 2151–2158 vollständig entschlüsseln
-11. Lüfterregelung über 2074/2075 und 2019 Bit 2 rekonstruieren
-12. Smart-EEV: physikalische Bedeutung der vier Arbeitspunktzustände und der verwendeten Referenztabelle benennen
-13. Öl-Rückführungszustandsmaschine identifizieren
-14. Service-/Engineering-Bereiche 5001–5180, 6001–6090, 8801–8820 sowie 60000/60010 auflösen
+11. Smart-EEV: physikalische Bedeutung der vier Arbeitspunktzustände und der verwendeten Referenztabelle benennen
+12. Service-/Engineering-Bereiche 5001–5180, 6001–6090, 8801–8820 sowie 60000/60010 auflösen
+
+Die zuvor hier aufgeführten Hauptziele **Lüfterregelung** und **Öl-Rückführungszustandsmaschine** sind mit Stand 23. August 2026 als eigene Analyseblöcke geschlossen und in den oben verlinkten Detaildokumenten festgehalten. Bei der Lüfterregelung bleiben nur die exakten Herstellerbezeichnungen einzelner F-Parameter und Hardwarevarianten als Restpunkte offen.
 
 ---
 
