@@ -120,3 +120,26 @@ Insbesondere fehlt weiterhin ein automatisch ausführbarer und anschließend üb
 `C36C Status 1` bestätigter Cancelpfad. Bis dieser getestet ist, bleibt ein
 nichtterminaler Fehler im fail-closed `guarded-hold` und verlangt eine bewusste
 Recoveryentscheidung.
+
+## Cancel-Breakpoints – Nachtest 2026-08-23
+
+Zusätzlich wurden am laufenden Originaldienst acht reine
+Cancel-Beobachtungspunkte gleichzeitig gesetzt, aufgelistet, entfernt und
+sauber detacht:
+
+```text
+0x1FDAC  Scheduler-/Injektionseinstieg
+0x19764  Original-0073-Handler
+0x1DACC  C36A-Sendeaufruf
+0x1B51C  C36C-Handler
+0x1B5A8  cancel_pending gelöscht
+0x1DB94  effektiver Step-10-Übergang
+0x19264  0083-Fehlerreport
+0x1D748  terminaler Step-12-Nachweis
+```
+
+Kein Breakpoint wurde ausgeführt und es wurde kein Testframe gesendet. Danach
+waren Originaldienst (13 Threads, `TracerPid: 0`), beide Watchdogs und die
+Cloudverbindung aktiv; Debugger, Testdateien und zusätzliche Firewallregeln
+waren nicht mehr vorhanden. Der lesende Live-Vorplan bestätigte gültige
+OTA_INFO-CRC sowie Offset und Länge 0.

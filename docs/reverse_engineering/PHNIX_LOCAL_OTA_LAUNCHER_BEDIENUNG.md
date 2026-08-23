@@ -4,6 +4,8 @@ Stand: 2026-08-23
 
 Für gefahrlose Komplett- und Fehlertests steht zusätzlich der
 [OTA-Simulator auf der Offline-VM](PHNIX_OTA_VM_SIMULATOR.md) zur Verfügung.
+Der vorbereitete erste Busversuch ist separat im
+[Cancel-Probe-Testplan](PHNIX_CANCEL_PROBE_MAINBOARD_TESTPLAN.md) beschrieben.
 
 ## Wichtiger Status
 

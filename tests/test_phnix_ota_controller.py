@@ -4,6 +4,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     EXPECTED_MD5,
     EXPECTED_SIZE,
     cancel_proof_ok,
+    cancel_payload,
     command_payload,
     crc16_x25,
     parse_ota_info,
@@ -60,6 +61,9 @@ class OtaInfoTests(unittest.TestCase):
             broken = dict(proof)
             broken[field] = 0
             self.assertFalse(cancel_proof_ok(broken))
+
+    def test_cancel_payload_uses_original_0073_dispatch(self):
+        self.assertEqual(cancel_payload(), {"cmd": "CMD_OTA", "code": "0073"})
 
 
 if __name__ == "__main__":

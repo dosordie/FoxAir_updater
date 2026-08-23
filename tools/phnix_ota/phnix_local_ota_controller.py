@@ -121,6 +121,12 @@ def command_payload(firmware_url: str) -> dict:
     }
 
 
+def cancel_payload() -> dict:
+    # ota_code_handle() dispatches solely on the numeric value of top-level
+    # "code". The cancel handler reads no param fields.
+    return {"cmd": "CMD_OTA", "code": "0073"}
+
+
 def print_event(event: str, **fields) -> None:
     record = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "event": event, **fields}
     print(json.dumps(record, ensure_ascii=False), flush=True)
@@ -237,6 +243,37 @@ def remote_status(adb: AdbClient) -> dict:
     hook = json.loads(status_text) if status_text else {"state": "hook-not-running"}
     info = asdict(parse_ota_info(adb.read_file(REMOTE_INFO)))
     return {"hook": hook, "ota_info": info}
+
+
+def cancel_probe_plan(adb: AdbClient) -> dict:
+    info = asdict(parse_ota_info(adb.read_file(REMOTE_INFO)))
+    service_sha = adb.shell(
+        f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'"
+    ).upper()
+    service_pid = adb.shell("pidof phnixIot4G || true")
+    watchdogs = adb.shell("ps | awk '$4 == \"{helloworld}\" {print $1}'")
+    current = remote_status(adb)["hook"]
+    blockers = []
+    if not info["crc_ok"]:
+        blockers.append("OTA_INFO CRC is invalid")
+    if info["offset"] != 0 or info["length"] != 0:
+        blockers.append("persistent OTA resume state is active")
+    if service_sha != EXPECTED_SERVICE_SHA256:
+        blockers.append("original service SHA256 does not match")
+    if not service_pid or not watchdogs:
+        blockers.append("service or supervisor watchdog is missing")
+    if current.get("phase") == "guarded-hold":
+        blockers.append("launcher is already in guarded-hold")
+    return {
+        "ready": not blockers,
+        "blockers": blockers,
+        "payload": cancel_payload(),
+        "service_pid": service_pid,
+        "watchdog_pids": watchdogs.splitlines(),
+        "ota_info": info,
+        "live_send_enabled": False,
+        "next_action": "explicit mainboard-test approval after breakpoint validation",
+    }
 
 
 def cancel_proof_ok(hook: dict) -> bool:
@@ -447,6 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("preflight", parents=[common])
     sub.add_parser("status")
+    sub.add_parser("cancel-probe-plan")
     cancel = sub.add_parser("cancel")
     cancel.add_argument("--execute", action="store_true")
     cancel.add_argument("--confirm")
@@ -474,6 +512,10 @@ def main() -> int:
         if args.command == "status":
             print(json.dumps(remote_status(adb), indent=2, ensure_ascii=False))
             return 0
+        if args.command == "cancel-probe-plan":
+            plan = cancel_probe_plan(adb)
+            print(json.dumps(plan, indent=2, ensure_ascii=False))
+            return 0 if plan["ready"] else 1
         if args.command == "cancel":
             cancel_update(args, adb)
             return 0

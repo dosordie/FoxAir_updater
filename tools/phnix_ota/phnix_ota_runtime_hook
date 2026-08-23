@@ -169,6 +169,43 @@ EOF
     echo "breakpoint install/remove test passed"
 }
 
+cancel_breakpoint_test() {
+    verify
+    mkdir -p "$STATE_DIR"
+    PID=$(service_pid)
+    watchdog_pids > "$WATCHDOG_PIDS"
+    trap cleanup EXIT INT TERM
+    touch "$SAFE_TO_CLEAN"
+    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-cancel-breakpoint-test.log" 2>&1 &
+    echo $! > "$GDBSERVER_PID"
+    sleep 1
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+target remote 127.0.0.1:12345
+break *0x1fdac
+break *0x19764
+break *0x1dacc
+break *0x1b51c
+break *0x1b5a8
+break *0x1db94
+break *0x19264
+break *0x1d748
+info breakpoints
+delete breakpoints
+detach
+quit
+EOF
+    printf '{"phase":"cancel-breakpoint-test","terminal":false}\n' > "$STATUS"
+    if ! gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-breakpoint-test.log" 2>&1; then
+        fail "GDB cancel breakpoint install/remove test failed"
+    fi
+    printf '{"phase":"cancel-breakpoint-test-ok","terminal":true,"breakpoints":8}\n' > "$STATUS"
+    echo "cancel breakpoint install/remove test passed"
+}
+
 make_gdb_script() {
     JSON=$(tr -d '\r\n' < "$COMMAND")
     ESCAPED=$(printf '%s' "$JSON" | sed 's/\\/\\\\/g; s/"/\\"/g')
@@ -380,9 +417,10 @@ case "$ACTION" in
     verify) verify ;;
     attach-test) attach_test ;;
     breakpoint-test) breakpoint_test ;;
+    cancel-breakpoint-test) cancel_breakpoint_test ;;
     run) run_hook ;;
     hold) hold_hook ;;
     cancel) echo "ERROR: live cancel is disabled until C36A/C36C runtime hooks are validated" >&2; exit 2 ;;
     stop) stop_hook ;;
-    *) echo "usage: $0 verify|attach-test|breakpoint-test|run|hold|cancel|stop [options]" >&2; exit 2 ;;
+    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|run|hold|cancel|stop [options]" >&2; exit 2 ;;
 esac
