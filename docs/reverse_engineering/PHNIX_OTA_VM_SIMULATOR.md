@@ -118,6 +118,7 @@ Verfügbar sind:
 | Szenario | Simuliertes Ergebnis |
 |---|---|
 | `success` | vollständiger Transfer und bestätigter Step 12 |
+| `same-version` | C36E Status 0, Persistenz-Restore und sauberes Ende ohne C5A8 |
 | `parser-rejected` | Original-0033 wird abgelehnt; sichere Aufräumphase |
 | `crc-error` | ungültiger Beobachtungswert; Originaldienst meldet danach Fehler |
 | `metadata-mismatch` | abweichende Metadaten; Originaldienst meldet danach Fehler |
@@ -178,7 +179,7 @@ phnix-ota-sim start --scenario success
 phnix-ota-sim stop
 ```
 
-Die Matrix umfasst zehn Update-, sechs Cancel-/Recovery- und sechs
+Die Matrix umfasst elf Update-, sechs Cancel-/Recovery- und sechs
 Handshake-Szenarien. Die
 Simulation deckte dabei zwei
 Zeitfehler im Launcher auf, die anschließend korrigiert wurden:

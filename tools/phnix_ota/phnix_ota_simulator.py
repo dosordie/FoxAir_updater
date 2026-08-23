@@ -20,7 +20,7 @@ DEFAULT_HOME = Path.home() / ".local/share/phnix-ota-simulator"
 SCENARIOS = {
     "success", "parser-rejected", "crc-error", "metadata-mismatch",
     "offset-backwards", "offset-overflow", "stall-c350", "stall-c5a8",
-    "helper-exit", "success-without-step12",
+    "helper-exit", "success-without-step12", "same-version",
 }
 CANCEL_SCENARIOS = {
     "success", "retry-success", "no-response", "rejected",
@@ -255,6 +255,16 @@ def helper_run() -> int:
     set_status("accepted", armed=True, active=True)
     time.sleep(0.25)
     set_status("c350")
+    if scenario == "same-version":
+        time.sleep(0.25)
+        set_status(
+            "same-version", True, c36e_status=0, ssid_match=True,
+            c357_sent=False, c5a8_sent=False, state_restored=True,
+            recovery_required=False,
+        )
+        runtime_state(running=False, cloud_blocked=False, watchdogs_paused=False)
+        pid_file.unlink(missing_ok=True)
+        return 0
     if scenario == "stall-c350":
         return wait_for_hold(pid_file)
     time.sleep(0.25)
@@ -528,6 +538,9 @@ def shell(command: str) -> tuple[int, bytes]:
         runtime_state(running=False, held=False, cloud_blocked=False, watchdogs_paused=False)
         return 0, b""
     if command.startswith("/data/phnix_ota_runtime_hook restore-original "):
+        info_path = root_path("/data/phnixIot_device_OTA_INFO")
+        if not info_path.exists() or len(info_path.read_bytes()) != 220:
+            info_path.write_bytes(make_ota_info())
         runtime_state(running=False, held=False, cloud_blocked=False,
                       watchdogs_paused=False, recovery_running=False)
         set_status("original-restored", True, recovery_required=False)

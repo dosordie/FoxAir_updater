@@ -57,3 +57,31 @@ Board-Step 12, bevor er den lokalen Auftrag an `ota_code_handle` übergibt.
 Außerdem wurden ein zuvor fehlendes modemseitiges Persistenzbackup und ein
 `transfer-started`-Marker ergänzt. Letzterer verhindert, dass eine generische
 Wiederherstellung eine bereits laufende C5A8-Übertragung unterbricht.
+
+## Dritter Liveversuch: C350 und Gleichversion
+
+Der migrierte Vollpfad erreichte am realen Mainboard erstmals deterministisch
+C350. Der passive Logger bestätigte:
+
+- C350-Angebot für Softwarecode `82400644`, Version `0033`, Ziel `0063`;
+- gültiges C350-ACK;
+- C36E Status 0;
+- kein C357 und kein C5A8.
+
+Damit funktionierte der neue `0x1FE40`-Einstieg. Der Vollhelfer besaß jedoch
+noch keinen terminalen Zweig für die Gleichversionsantwort und fiel nach dem
+normalen Ende des Debuggers in Guarded Hold. Der `transfer-started`-Marker war
+nicht gesetzt. Das modemseitige Backup restaurierte die vom originalen
+0033-Handler geleerte OTA_INFO bytegleich; danach wurden Dienst, Cloud,
+Watchdogs und temporäre Dateien vollständig wiederhergestellt.
+
+Als Korrektur überwacht der Vollpfad jetzt zusätzlich den bereits bekannten
+C36E-Halt `0x1BA04`. Für Ziel `0063` und Status 0 restauriert er die Persistenz,
+meldet terminal `same-version` und räumt ohne Guarded Hold auf. Status 1 wird
+unverändert dem Originaldienst für C357/C5A8 überlassen. Ein neues
+VM-Same-Version-Szenario prüft diesen Vertrag.
+
+Zusätzlich wurde `--restore original` so geändert, dass es eine absichtlich
+leere OTA_INFO vor der Wiederherstellung nicht zu dekodieren versucht. Ein
+fehlender HTTP-PID-Datensatz wird nun durch eine streng auf
+`127.0.0.1:8081` und `/data/phnix_local_ota` gefilterte Prozesssuche ersetzt.

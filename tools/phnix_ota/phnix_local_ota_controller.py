@@ -172,10 +172,11 @@ def _human_event(event: str, fields: dict) -> None:
                 "success-report": "Mainboard meldet erfolgreichen Abschluss",
                 "success": "Firmware-Update erfolgreich abgeschlossen",
                 "c350-same-version": "Gleiche Firmware erkannt - sichere Beendigung",
+                "same-version": "Gleiche Firmware erkannt - keine Uebertragung",
             }
             label = labels.get(phase)
             if label:
-                good = phase in {"verified", "accepted", "success", "c350-same-version"}
+                good = phase in {"verified", "accepted", "success", "c350-same-version", "same-version"}
                 print(_paint(f"[OK] {label}" if good else f"[..] {label}", GREEN if good else CYAN), flush=True)
 
         info = fields.get("ota_info", {})
@@ -256,15 +257,25 @@ def verify_original_runtime(adb: AdbClient) -> dict:
 
 def original_runtime_status(adb: AdbClient) -> dict:
     """Read-only proof that the modem is back in its unmodified runtime state."""
-    service_pid = adb.shell("pidof phnixIot4G || true")
-    service_path = adb.shell(
-        "p=$(pidof phnixIot4G | awk '{print $1}'); "
-        "test -n \"$p\" && readlink /proc/$p/exe || true"
-    )
-    service_state = adb.shell(
-        "p=$(pidof phnixIot4G | awk '{print $1}'); "
-        "test -n \"$p\" && awk '/^State:|^TracerPid:/ {print}' /proc/$p/status || true"
-    )
+    service_pid = ""
+    service_path = ""
+    service_state = ""
+    for attempt in range(3):
+        pid_before = adb.shell("pidof phnixIot4G || true")
+        path = adb.shell(
+            "p=$(pidof phnixIot4G | awk '{print $1}'); "
+            "test -n \"$p\" && readlink /proc/$p/exe || true"
+        )
+        state = adb.shell(
+            "p=$(pidof phnixIot4G | awk '{print $1}'); "
+            "test -n \"$p\" && awk '/^State:|^TracerPid:/ {print}' /proc/$p/status || true"
+        )
+        pid_after = adb.shell("pidof phnixIot4G || true")
+        if pid_before and pid_before == pid_after and path and state:
+            service_pid, service_path, service_state = pid_after, path, state
+            break
+        if attempt < 2:
+            time.sleep(0.25)
     service_hash = adb.shell(f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'").upper()
     watchdogs = adb.shell("ps | awk '$4 == \"{helloworld}\" {print $1}'")
     http_pid_active = adb.shell(f"test -f {REMOTE_HTTP_PID}; echo $?") == "0"
@@ -342,15 +353,30 @@ def show_original_status(result: dict) -> None:
 
 
 def restore_original_runtime(adb: AdbClient) -> dict:
-    before = original_runtime_status(adb)
-    if before["transfer_started"]:
+    # Do not parse OTA_INFO here: the original 0033 handler legitimately
+    # truncates it before C350 completes, which is exactly when restore is
+    # needed after a pre-transfer guarded hold.
+    transfer_started = adb.shell(f"test -f {REMOTE_TRANSFER_STARTED}; echo $?") == "0"
+    if transfer_started:
         raise OtaError(
             "firmware blocks have started; automatic restore is locked and the original service remains authoritative"
         )
     adb.shell(f"{REMOTE_HELPER} restore-original --status {REMOTE_STATUS}")
     remove_local_ota_artifacts(adb)
-    time.sleep(1)
-    after = original_runtime_status(adb)
+    deadline = time.monotonic() + 15
+    after = None
+    while time.monotonic() < deadline:
+        try:
+            candidate = original_runtime_status(adb)
+        except OtaError:
+            candidate = None
+        if candidate is not None:
+            after = candidate
+            if after["original_ok"]:
+                break
+        time.sleep(1)
+    if after is None:
+        raise OtaError("original runtime restoration could not be verified")
     if not after["original_ok"]:
         raise OtaError(f"original runtime restoration is incomplete: {after['checks']}")
     print_event("original-state-released")
@@ -476,6 +502,10 @@ def stage_firmware(adb: AdbClient, firmware: Path, manifest: FirmwareManifest) -
 def stop_local_http(adb: AdbClient) -> None:
     adb.shell(
         f"test -f {REMOTE_HTTP_PID} && kill $(cat {REMOTE_HTTP_PID}) 2>/dev/null || true; "
+        "for p in $(ps | awk '$4 == \"busybox\" && $5 == \"httpd\" {print $1}'); do "
+        "cmd=$(tr '\\000' ' ' < /proc/$p/cmdline 2>/dev/null || true); "
+        "case \"$cmd\" in *\"httpd -p 127.0.0.1:8081\"*\"-h /data/phnix_local_ota\"*) "
+        "kill $p 2>/dev/null || true ;; esac; done; "
         f"rm -f {REMOTE_HTTP_PID}",
         check=False,
     )
@@ -828,12 +858,19 @@ def run_update(args, adb: AdbClient) -> None:
             if hook.get("terminal") is True:
                 safe_terminal = phase in {
                     "success", "failed", "parser-rejected", "precondition-rejected",
+                    "same-version",
                 }
                 if phase == "success":
                     if hook.get("board_ota_step") != 12:
                         safe_terminal = False
                         raise OtaError("success was reported without confirmed board_ota_step 12")
                     print_event("complete", offset=info.get("offset"), length=info.get("length"))
+                    return
+                if phase == "same-version":
+                    print_event(
+                        "warning",
+                        message="Gleiche Firmware erkannt - keine Firmwaredaten uebertragen",
+                    )
                     return
                 raise OtaError(f"terminal OTA state: {phase}")
             if helper.poll() is not None:

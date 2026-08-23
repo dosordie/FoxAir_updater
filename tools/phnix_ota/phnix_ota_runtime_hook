@@ -773,6 +773,20 @@ commands 10
   continue
 end
 
+break *0x1ba04
+commands 11
+  silent
+  if \$launcher_armed == 1 && *(unsigned char *)(\$r0+1) == 0x63 && *(unsigned char *)(\$r0+3) == 0
+    set \$local_ota_active = 0
+    set \$launcher_armed = 0
+    shell $0 _restore-state --status $STATUS
+    shell echo '{"phase":"same-version","terminal":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
+    detach
+    quit
+  end
+  continue
+end
+
 continue
 EOF
 }

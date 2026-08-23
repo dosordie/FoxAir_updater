@@ -12,6 +12,7 @@ from pathlib import Path
 
 EXPECTED = {
     "success": (0, False),
+    "same-version": (0, False),
     "parser-rejected": (1, False),
     "crc-error": (1, False),
     "metadata-mismatch": (1, False),

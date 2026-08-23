@@ -184,15 +184,15 @@ class OtaInfoTests(unittest.TestCase):
         self.assertIn("*(unsigned int *)0x930dc != 0", full)
         self.assertIn("*(unsigned char *)0x98a94 != 12", full)
         self.assertIn("shell touch $TRANSFER_STARTED", full)
+        self.assertIn("break *0x1ba04", full)
+        self.assertIn("\"phase\":\"same-version\"", full)
 
     def test_restore_refuses_after_firmware_blocks_started(self):
         adb = Mock()
-        with unittest.mock.patch.object(
-            controller, "original_runtime_status", return_value={"transfer_started": True}
-        ):
-            with self.assertRaises(OtaError):
-                restore_original_runtime(adb)
-        adb.shell.assert_not_called()
+        adb.shell.return_value = "0"
+        with self.assertRaises(OtaError):
+            restore_original_runtime(adb)
+        adb.shell.assert_called_once()
 
 
 if __name__ == "__main__":
