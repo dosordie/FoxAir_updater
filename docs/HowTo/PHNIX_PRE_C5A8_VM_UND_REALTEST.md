@@ -127,6 +127,7 @@ Diese Punkte bleiben eigene, später separat freizugebende Risikostufen.
 
 ## Zugehörige Dokumente
 
+- [`PHNIX_PRE_C5A8_REALTEST_RUNBOOK.md`](PHNIX_PRE_C5A8_REALTEST_RUNBOOK.md)
 - [`PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md)
 - [`PHNIX_CANCEL_PROBE_LIVE_RESULT.md`](../reverse_engineering/PHNIX_CANCEL_PROBE_LIVE_RESULT.md)
 - [`phnix_ota_sender.md`](phnix_ota_sender.md)

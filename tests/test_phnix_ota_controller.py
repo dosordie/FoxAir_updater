@@ -9,6 +9,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     crc16_x25,
     parse_ota_info,
     pre_c5a8_proof_ok,
+    validate_logger_checklist,
 )
 
 
@@ -77,6 +78,25 @@ class OtaInfoTests(unittest.TestCase):
         self.assertTrue(pre_c5a8_proof_ok(hook, trace))
         trace["c5a8_frames"] = 1
         self.assertFalse(pre_c5a8_proof_ok(hook, trace))
+
+    def test_logger_checklist_is_fail_closed(self):
+        checklist = {
+            "schema": "phnix-pre-c5a8-logger-v1",
+            "capture_started": True, "passive_only": True,
+            "raw_hex_enabled": True, "timestamps_enabled": True,
+            "crc_validation_enabled": True,
+            "fragment_reassembly_enabled": True,
+            "multi_frame_split_enabled": True, "secrets_masked": True,
+            "c5a8_critical_alarm_enabled": True,
+            "registers": ["C350", "C357", "C36E", "C36A", "C36C", "C5A8"],
+            "output_file": "capture.log",
+        }
+        self.assertEqual(validate_logger_checklist(checklist), [])
+        checklist["passive_only"] = False
+        checklist["registers"].remove("C5A8")
+        blockers = validate_logger_checklist(checklist)
+        self.assertTrue(any("passive_only" in item for item in blockers))
+        self.assertTrue(any("C5A8" in item for item in blockers))
 
 
 if __name__ == "__main__":

@@ -307,6 +307,53 @@ def pre_c5a8_proof_ok(hook: dict, trace: dict) -> bool:
     )
 
 
+def validate_logger_checklist(value: dict) -> list[str]:
+    blockers = []
+    required_true = (
+        "capture_started", "passive_only", "raw_hex_enabled",
+        "timestamps_enabled", "crc_validation_enabled",
+        "fragment_reassembly_enabled", "multi_frame_split_enabled",
+        "secrets_masked", "c5a8_critical_alarm_enabled",
+    )
+    if value.get("schema") != "phnix-pre-c5a8-logger-v1":
+        blockers.append("logger checklist schema mismatch")
+    for field in required_true:
+        if value.get(field) is not True:
+            blockers.append(f"logger requirement is not confirmed: {field}")
+    required_registers = {"C350", "C357", "C36E", "C36A", "C36C", "C5A8"}
+    missing = sorted(required_registers - set(value.get("registers", [])))
+    if missing:
+        blockers.append("logger does not decode: " + ", ".join(missing))
+    if not str(value.get("output_file", "")).strip():
+        blockers.append("logger output_file is empty")
+    return blockers
+
+
+def real_test_plan(args, adb: AdbClient) -> dict:
+    checks = preflight(adb, args.firmware, require_helper=False)
+    checklist = json.loads(args.logger_checklist.read_text(encoding="utf-8"))
+    blockers = list(checks["failures"])
+    blockers.extend(validate_logger_checklist(checklist))
+    return {
+        "ready": not blockers,
+        "blockers": blockers,
+        "preflight": checks,
+        "logger": {
+            "schema": checklist.get("schema"),
+            "output_file": checklist.get("output_file"),
+            "registers": checklist.get("registers", []),
+            "passive_only": checklist.get("passive_only"),
+        },
+        "planned_sequence": [
+            "C350", "C36E_STATUS_1", "C357", "C36E_STATUS_2",
+            "HARD_STOP_BEFORE_C5A8", "C36A", "C36C_STATUS_1", "STEP_12",
+        ],
+        "forbidden": ["C5A8", "PROMOTION", "FLASH_COPY", "BOOT_SWITCH"],
+        "live_execution_enabled": False,
+        "approval_required": True,
+    }
+
+
 def run_pre_c5a8_vm_test(args, adb: AdbClient) -> None:
     """Exercise handshake/cancel while remaining impossible on real hardware."""
     if adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") != "0":
@@ -547,6 +594,8 @@ def build_parser() -> argparse.ArgumentParser:
     handshake = sub.add_parser("pre-c5a8-vm-test", parents=[common])
     handshake.add_argument("--execute", action="store_true")
     handshake.add_argument("--confirm")
+    real_plan = sub.add_parser("pre-c5a8-real-plan", parents=[common])
+    real_plan.add_argument("--logger-checklist", type=Path, required=True)
     cancel = sub.add_parser("cancel")
     cancel.add_argument("--execute", action="store_true")
     cancel.add_argument("--confirm")
@@ -584,6 +633,10 @@ def main() -> int:
         if args.command == "pre-c5a8-vm-test":
             run_pre_c5a8_vm_test(args, adb)
             return 0
+        if args.command == "pre-c5a8-real-plan":
+            plan = real_test_plan(args, adb)
+            print(json.dumps(plan, indent=2, ensure_ascii=False))
+            return 0 if plan["ready"] else 1
         run_update(args, adb)
         return 0
     except (OtaError, TransportError, OSError, json.JSONDecodeError) as error:

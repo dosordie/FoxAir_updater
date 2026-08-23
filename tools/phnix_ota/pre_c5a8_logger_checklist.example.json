@@ -1,0 +1,22 @@
+{
+  "schema": "phnix-pre-c5a8-logger-v1",
+  "capture_started": false,
+  "passive_only": true,
+  "raw_hex_enabled": true,
+  "timestamps_enabled": true,
+  "crc_validation_enabled": true,
+  "fragment_reassembly_enabled": true,
+  "multi_frame_split_enabled": true,
+  "secrets_masked": true,
+  "registers": [
+    "C350",
+    "C357",
+    "C36E",
+    "C36A",
+    "C36C",
+    "C5A8"
+  ],
+  "c5a8_critical_alarm_enabled": true,
+  "output_file": "",
+  "operator_note": "Vor dem Realtest ausfüllen; keine geheimen Kennungen eintragen."
+}
