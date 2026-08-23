@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -47,6 +48,8 @@ REMOTE_FIRMWARE = f"{REMOTE_STAGE_DIR}/phnixIot_device_OTA.bin"
 REMOTE_COMMAND = f"{REMOTE_STAGE_DIR}/ota-command.json"
 REMOTE_STATUS = "/tmp/phnix_ota_status.json"
 REMOTE_HTTP_PID = "/tmp/phnix_ota_httpd.pid"
+REMOTE_SIM_MARKER = "/data/.phnix_ota_simulator"
+REMOTE_HANDSHAKE_TRACE = "/tmp/phnix_handshake_trace.json"
 DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
 
 
@@ -288,6 +291,62 @@ def cancel_proof_ok(hook: dict) -> bool:
     )
 
 
+def pre_c5a8_proof_ok(hook: dict, trace: dict) -> bool:
+    return (
+        hook.get("phase") == "pre-c5a8-hold"
+        and hook.get("terminal") is True
+        and hook.get("c350_sent") is True
+        and hook.get("c36e_status_1") is True
+        and hook.get("c357_sent") is True
+        and hook.get("c36e_status_2") is True
+        and hook.get("c5a8_sent") is False
+        and hook.get("board_ota_step") == 1
+        and trace.get("c5a8_frames") == 0
+        and trace.get("metadata_stable") is True
+        and trace.get("ssid_match") is True
+    )
+
+
+def run_pre_c5a8_vm_test(args, adb: AdbClient) -> None:
+    """Exercise handshake/cancel while remaining impossible on real hardware."""
+    if adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") != "0":
+        raise OtaError("pre-c5a8-vm-test is locked to the marked VM simulator")
+    if not args.execute:
+        print_event("pre-c5a8-vm-dry-run", message="No VM state was changed")
+        return
+    if args.confirm != "VM-PRE-C5A8-ONLY":
+        raise OtaError("VM confirmation must be VM-PRE-C5A8-ONLY")
+    checks = preflight(adb, args.firmware, require_helper=True)
+    print_event("preflight", **checks)
+    if not checks["ok"]:
+        raise OtaError("preflight failed: " + "; ".join(checks["failures"]))
+
+    safe_terminal = False
+    try:
+        adb.shell(f"{REMOTE_HELPER} handshake-probe --status {REMOTE_STATUS}")
+        status = remote_status(adb)
+        raw_trace = adb.shell(f"cat {REMOTE_HANDSHAKE_TRACE} 2>/dev/null || true")
+        trace = json.loads(raw_trace) if raw_trace else {}
+        print_event("pre-c5a8-proof", status=status, trace=trace)
+        if not pre_c5a8_proof_ok(status["hook"], trace):
+            raise OtaError("VM handshake did not prove a safe halt before C5A8")
+
+        adb.shell(f"{REMOTE_HELPER} handshake-cancel --status {REMOTE_STATUS}")
+        cancelled = remote_status(adb)
+        print_event("pre-c5a8-cancel-proof", **cancelled)
+        if not cancel_proof_ok(cancelled["hook"]):
+            raise OtaError("VM handshake cancel did not reach the proven terminal state")
+        safe_terminal = True
+        print_event("pre-c5a8-vm-complete", message="C350/C357 simulated; zero C5A8 frames; cancel proven")
+    except BaseException:
+        adb.shell(f"{REMOTE_HELPER} hold --status {REMOTE_STATUS}", check=False)
+        print_event("guarded-hold", message="VM handshake proof failed closed")
+        raise
+    finally:
+        if safe_terminal:
+            adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
+
+
 def run_update(args, adb: AdbClient) -> None:
     # A dry-run must remain useful before the build-specific modem helper exists.
     checks = preflight(adb, args.firmware, require_helper=args.execute)
@@ -485,6 +544,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("preflight", parents=[common])
     sub.add_parser("status")
     sub.add_parser("cancel-probe-plan")
+    handshake = sub.add_parser("pre-c5a8-vm-test", parents=[common])
+    handshake.add_argument("--execute", action="store_true")
+    handshake.add_argument("--confirm")
     cancel = sub.add_parser("cancel")
     cancel.add_argument("--execute", action="store_true")
     cancel.add_argument("--confirm")
@@ -518,6 +580,9 @@ def main() -> int:
             return 0 if plan["ready"] else 1
         if args.command == "cancel":
             cancel_update(args, adb)
+            return 0
+        if args.command == "pre-c5a8-vm-test":
+            run_pre_c5a8_vm_test(args, adb)
             return 0
         run_update(args, adb)
         return 0

@@ -26,6 +26,10 @@ CANCEL_SCENARIOS = {
     "success", "retry-success", "no-response", "rejected",
     "wrong-ssid", "c36c-only",
 }
+HANDSHAKE_SCENARIOS = {
+    "success", "wrong-status-1", "missing-status-2", "metadata-change",
+    "c5a8-leak", "cancel-fail",
+}
 
 
 def sim_home() -> Path:
@@ -85,8 +89,10 @@ def reset_state(scenario: str, cancel_scenario: str = "success") -> None:
     root_path("/data/phnixIot_device_statisic").write_bytes(bytes(256))
     root_path("/data/phnixIot_device_OTA_INFO").write_bytes(make_ota_info())
     root_path("/data/phnix_ota_runtime_hook").write_text("simulated runtime hook\n", encoding="utf-8")
+    root_path("/data/.phnix_ota_simulator").write_text("PHNIX-OTA-SIMULATOR-V1\n", encoding="utf-8")
     write_json(home / "config.json", {
         "scenario": scenario, "cancel_scenario": cancel_scenario,
+        "handshake_scenario": "success",
     })
     write_json(home / "runtime.json", {
         "running": False, "httpd": False, "held": False,
@@ -130,6 +136,8 @@ def admin(argv: list[str]) -> int:
     scenario.add_argument("name", choices=sorted(SCENARIOS))
     cancel_scenario = sub.add_parser("cancel-scenario")
     cancel_scenario.add_argument("name", choices=sorted(CANCEL_SCENARIOS))
+    handshake_scenario = sub.add_parser("handshake-scenario")
+    handshake_scenario.add_argument("name", choices=sorted(HANDSHAKE_SCENARIOS))
     sub.add_parser("stop")
     sub.add_parser("status")
     args = parser.parse_args(argv)
@@ -160,6 +168,13 @@ def admin(argv: list[str]) -> int:
         current = config()
         current["cancel_scenario"] = args.name
         write_json(home / "config.json", current)
+    elif args.command == "handshake-scenario":
+        if not (home / "started").exists():
+            print("Simulator is stopped; use start first", file=sys.stderr)
+            return 1
+        current = config()
+        current["handshake_scenario"] = args.name
+        write_json(home / "config.json", current)
     elif args.command == "stop":
         terminate_helper()
         (home / "started").unlink(missing_ok=True)
@@ -174,6 +189,7 @@ def admin(argv: list[str]) -> int:
         "started": (home / "started").exists(),
         "scenario": config().get("scenario"),
         "cancel_scenario": config().get("cancel_scenario"),
+        "handshake_scenario": config().get("handshake_scenario"),
         "home": str(home),
     }
     runtime = home / "runtime.json"
@@ -311,6 +327,49 @@ def cancel_run() -> int:
     return 0
 
 
+def handshake_probe_run() -> int:
+    scenario = config().get("handshake_scenario", "success")
+    runtime_state(running=True, held=True, cloud_blocked=True, watchdogs_paused=True)
+    trace = {
+        "frames": ["C350", "C36E:1", "C357", "C36E:2"],
+        "c5a8_frames": 0, "metadata_stable": True, "ssid_match": True,
+    }
+    proof = {
+        "c350_sent": True, "c36e_status_1": True, "c357_sent": True,
+        "c36e_status_2": True, "c5a8_sent": False, "board_ota_step": 1,
+        "recovery_required": True,
+    }
+    if scenario == "wrong-status-1":
+        proof["c36e_status_1"] = False
+        trace["frames"] = ["C350", "C36E:0"]
+    elif scenario == "missing-status-2":
+        proof["c36e_status_2"] = False
+        trace["frames"] = ["C350", "C36E:1", "C357"]
+    elif scenario == "metadata-change":
+        trace["metadata_stable"] = False
+    elif scenario == "c5a8-leak":
+        proof["c5a8_sent"] = True
+        trace["c5a8_frames"] = 1
+        trace["frames"].append("C5A8:1")
+    write_json(root_path("/tmp/phnix_handshake_trace.json"), trace)
+    set_status("pre-c5a8-hold", True, **proof)
+    return 0
+
+
+def handshake_cancel_run() -> int:
+    scenario = config().get("handshake_scenario", "success")
+    if scenario == "cancel-fail":
+        set_status("cancel-no-response", False, c36a_sent=True,
+                   recovery_required=True)
+        return 0
+    update_info(0, 0)
+    set_status("cancelled", True, c36a_sent=True, c36c_status=1,
+               ssid_match=True, cancel_pending=False, board_ota_step=12,
+               normal_operation_verified=True, recovery_required=False)
+    runtime_state(running=False, held=False, recovery_running=False)
+    return 0
+
+
 def wait_for_cancel_hold(pid_file: Path) -> int:
     while True:
         time.sleep(0.1)
@@ -343,6 +402,8 @@ def shell(command: str) -> tuple[int, bytes]:
         return 0, b"Filesystem 1K-blocks Used Available Use% Mounted on\nsim 1048576 1 1048575 1% /data\n"
     if command.startswith("test -r /data/phnixIot_device_") or command.startswith("test -x /data/phnix_ota_runtime_hook"):
         return 0, b"0\n"
+    if command == "test -f /data/.phnix_ota_simulator; echo $?":
+        return 0, b"0\n"
     if command.startswith("mkdir -p /data/phnix_local_ota"):
         root_path("/data/phnix_local_ota").mkdir(parents=True, exist_ok=True)
         return 0, b""
@@ -359,10 +420,17 @@ def shell(command: str) -> tuple[int, bytes]:
     if command.startswith("cat /tmp/phnix_ota_status.json"):
         path = root_path("/tmp/phnix_ota_status.json")
         return 0, path.read_bytes() if path.exists() else b""
+    if command.startswith("cat /tmp/phnix_handshake_trace.json"):
+        path = root_path("/tmp/phnix_handshake_trace.json")
+        return 0, path.read_bytes() if path.exists() else b""
     if command.startswith("/data/phnix_ota_runtime_hook run "):
         return helper_run(), b""
     if command.startswith("/data/phnix_ota_runtime_hook cancel "):
         return cancel_run(), b""
+    if command.startswith("/data/phnix_ota_runtime_hook handshake-probe "):
+        return handshake_probe_run(), b""
+    if command.startswith("/data/phnix_ota_runtime_hook handshake-cancel "):
+        return handshake_cancel_run(), b""
     if command.startswith("/data/phnix_ota_runtime_hook hold "):
         runtime_state(held=True, running=False)
         set_status("guarded-hold", False, recovery_required=True)

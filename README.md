@@ -21,7 +21,6 @@ FoxAir_updater/
 │  └─ windows/              # Windows design; no Windows application yet
 ├─ tools/phnix_ota/         # Current guarded launcher, runtime hook and VM simulator
 ├─ devtools/                # Direct RS485 sender, board simulator and offline lab
-├─ tests/                   # Simulator, protocol and regression tests
 └─ tests/                   # Protocol, controller and simulator regression tests
 ```
 
@@ -50,9 +49,13 @@ The currently executable guarded laboratory launcher remains in
 
 ## Current safety boundary
 
-The VM simulator supports the complete cancel/recovery contract for regression
-testing. The real LTE runtime helper deliberately rejects live cancel until the
-C36A/C36C and terminal Step-12 hooks have been validated on the real build.
+The VM simulator supports the complete cancel/recovery contract and the
+C350/C357 handshake up to a hard stop before C5A8. The early C36A/C36C cancel
+and return to terminal Step 12 have been validated once on the real build.
+
+The new `pre-c5a8-vm-test` remains marker-locked to the simulator. A real
+C350/C357 test and every C5A8 firmware-writing test require a separate explicit
+approval and are not enabled by the VM command.
 
 ## Scope
 

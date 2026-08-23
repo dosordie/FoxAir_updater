@@ -64,3 +64,37 @@ Statistik SHA-256:
 
 Firmwarecache: nicht vorhanden
 ```
+
+## Ergänzung: Updater-Sicherheitsmatrix vom 23.08.2026
+
+Nach Einbau des gemeinsamen Streaming-Parsers und des marker-gesperrten
+Pre-C5A8-Ablaufs wurde die aktuelle Controller-/Simulator-Matrix erneut direkt
+auf der Offline-VM ausgeführt:
+
+```text
+22 von 22 Integrationsszenarien bestanden
+29 von 29 lokale Unit-/Protokolltests bestanden
+```
+
+Die 22 Integrationsszenarien umfassen:
+
+- vollständigen simulierten Transfer und neun Transferfehler;
+- zwei erfolgreiche Cancelvarianten und vier Cancelfehler;
+- erfolgreichen C350/C357-Handshake mit Halt vor C5A8 und Cancel;
+- fünf fail-closed Handshakefehler: falscher Status 1, fehlender Status 2,
+  Metadatenwechsel, unerlaubtes C5A8 und fehlgeschlagener Cancel.
+
+Nach der Matrix wurde der Simulator gestoppt. Endzustand:
+
+```text
+started=false
+running=false
+held=false
+cloud_blocked=false
+watchdogs_paused=false
+recovery_running=false
+```
+
+Der Befehl `pre-c5a8-vm-test` verlangt sowohl die Simulator-Markierung
+`/data/.phnix_ota_simulator` als auch `VM-PRE-C5A8-ONLY`. Damit kann derselbe
+Befehl nicht versehentlich gegen das echte LTE-Modem ausgeführt werden.

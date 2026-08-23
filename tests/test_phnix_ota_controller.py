@@ -8,6 +8,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     command_payload,
     crc16_x25,
     parse_ota_info,
+    pre_c5a8_proof_ok,
 )
 
 
@@ -64,6 +65,18 @@ class OtaInfoTests(unittest.TestCase):
 
     def test_cancel_payload_uses_original_0073_dispatch(self):
         self.assertEqual(cancel_payload(), {"cmd": "CMD_OTA", "code": "0073"})
+
+    def test_pre_c5a8_proof_requires_zero_firmware_frames(self):
+        hook = {
+            "phase": "pre-c5a8-hold", "terminal": True,
+            "c350_sent": True, "c36e_status_1": True,
+            "c357_sent": True, "c36e_status_2": True,
+            "c5a8_sent": False, "board_ota_step": 1,
+        }
+        trace = {"c5a8_frames": 0, "metadata_stable": True, "ssid_match": True}
+        self.assertTrue(pre_c5a8_proof_ok(hook, trace))
+        trace["c5a8_frames"] = 1
+        self.assertFalse(pre_c5a8_proof_ok(hook, trace))
 
 
 if __name__ == "__main__":

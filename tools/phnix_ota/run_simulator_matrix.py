@@ -30,6 +30,14 @@ CANCEL_EXPECTED = {
     "wrong-ssid": (1, True),
     "c36c-only": (1, True),
 }
+HANDSHAKE_EXPECTED = {
+    "success": (0, False),
+    "wrong-status-1": (1, True),
+    "missing-status-2": (1, True),
+    "metadata-change": (1, True),
+    "c5a8-leak": (1, True),
+    "cancel-fail": (1, True),
+}
 
 
 def run(command: list[str], timeout: float = 15) -> subprocess.CompletedProcess[str]:
@@ -95,6 +103,25 @@ def main() -> int:
         )
         results.append({
             "scenario": f"cancel-{scenario}",
+            "returncode": completed.returncode,
+            "held": status.get("held"),
+            "passed": passed,
+        })
+        print(json.dumps(results[-1]), flush=True)
+
+    for scenario, (expected_rc, expected_hold) in HANDSHAKE_EXPECTED.items():
+        run([str(args.sim), "scenario", "success"])
+        run([str(args.sim), "handshake-scenario", scenario])
+        completed = run([
+            str(args.controller), "--adb", str(args.adb), "pre-c5a8-vm-test",
+            "--firmware", str(args.firmware), "--execute",
+            "--confirm", "VM-PRE-C5A8-ONLY",
+        ])
+        status_result = run([str(args.sim), "status"])
+        status = json.loads(status_result.stdout)
+        passed = completed.returncode == expected_rc and status.get("held") is expected_hold
+        results.append({
+            "scenario": f"handshake-{scenario}",
             "returncode": completed.returncode,
             "held": status.get("held"),
             "passed": passed,
