@@ -46,6 +46,7 @@ cd /home/lte/phnix-ota-lab
 python3 phnix_local_ota_controller.py \
   --adb ./phnix-sim-adb \
   same-version-test \
+  --manifest firmware_manifests/FW3.3.json \
   --firmware phnixIot_device_OTA.bin \
   --execute \
   --confirm VM-SAME-VERSION-ONLY \
@@ -77,6 +78,7 @@ Der passive Logger muss bereits laufen.
 python3 phnix_local_ota_controller.py \
   --adb adb \
   same-version-test \
+  --manifest FW3.3.json \
   --firmware phnixIot_device_OTA.bin \
   --execute \
   --confirm PHNIX-C350-SAME-V33 \

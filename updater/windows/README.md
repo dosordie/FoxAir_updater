@@ -31,6 +31,7 @@ Raspberry Pi.
   directory;
 - CLI first, optional GUI only after the live protocol is stable;
 - no duplicated safety logic in the GUI.
+- use the same `foxair-firmware-v1` manifest validation as Linux/Raspberry Pi;
 
 ## Packaging boundary
 

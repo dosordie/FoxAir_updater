@@ -28,13 +28,9 @@ for candidate in (Path(__file__).resolve().parents[2], Path.cwd()):
         break
 
 from updater.common import AdbClient, TransportError
+from updater.common.firmware_manifest import FirmwareManifest, ManifestError
 
 
-EXPECTED_SIZE = 287_598
-EXPECTED_MD5 = "CEB6A4BF386FF644E23E410023E74673"
-EXPECTED_SOFTWARE_CODE = "82400644"
-EXPECTED_SOFTWARE_VERSION = "0033"
-EXPECTED_SSID = "0063"
 EXPECTED_BUILD_ID = "af4dcae12639bedce833ee5efa5da009777b6319"
 EXPECTED_SERVICE_SHA256 = "7C573431F0A67620D473419644A83A4F4DC04B8A91BDE5923C74A63BA1EAEDB7"
 
@@ -109,16 +105,16 @@ def file_md5(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
-def command_payload(firmware_url: str) -> dict:
+def command_payload(firmware_url: str, manifest: FirmwareManifest) -> dict:
     return {
         "cmd": "CMD_OTA",
         "code": "0033",
         "param": {
-            "softwareCode": EXPECTED_SOFTWARE_CODE,
-            "softwareVer": "V3.3",
-            "ssid": EXPECTED_SSID,
-            "fileMD5": EXPECTED_MD5,
-            "fileSize": EXPECTED_SIZE,
+            "softwareCode": manifest.software_code,
+            "softwareVer": manifest.display_version,
+            "ssid": manifest.target_ssid,
+            "fileMD5": manifest.md5,
+            "fileSize": manifest.size,
             "otaFileDownloadAddr": firmware_url,
         },
     }
@@ -135,15 +131,19 @@ def print_event(event: str, **fields) -> None:
     print(json.dumps(record, ensure_ascii=False), flush=True)
 
 
-def preflight(adb: AdbClient, firmware: Path, require_helper: bool) -> dict:
+def preflight(adb: AdbClient, firmware: Path, require_helper: bool,
+              manifest: FirmwareManifest) -> dict:
     checks: dict[str, object] = {}
     if not firmware.is_file():
         raise OtaError(f"firmware not found: {firmware}")
     checks["firmware_size"] = firmware.stat().st_size
     checks["firmware_md5"] = file_md5(firmware)
+    checks["firmware_sha256"] = hashlib.sha256(firmware.read_bytes()).hexdigest().upper()
+    checks["manifest"] = asdict(manifest)
     checks["firmware_ok"] = (
-        checks["firmware_size"] == EXPECTED_SIZE
-        and checks["firmware_md5"] == EXPECTED_MD5
+        checks["firmware_size"] == manifest.size
+        and checks["firmware_md5"] == manifest.md5
+        and checks["firmware_sha256"] == manifest.sha256
     )
 
     checks["adb_state"] = adb.run("get-state").strip()
@@ -214,11 +214,11 @@ def save_remote_state(adb: AdbClient, state_dir: Path) -> None:
     (state_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def stage_firmware(adb: AdbClient, firmware: Path) -> None:
+def stage_firmware(adb: AdbClient, firmware: Path, manifest: FirmwareManifest) -> None:
     adb.shell(f"mkdir -p {REMOTE_STAGE_DIR}")
     adb.push(firmware, REMOTE_FIRMWARE)
     remote_md5 = adb.shell(f"md5sum {REMOTE_FIRMWARE} | awk '{{print $1}}'").upper()
-    if remote_md5 != EXPECTED_MD5:
+    if remote_md5 != manifest.md5:
         raise OtaError(f"staged modem firmware MD5 mismatch: {remote_md5}")
     adb.shell(
         f"test -f {REMOTE_HTTP_PID} && kill $(cat {REMOTE_HTTP_PID}) 2>/dev/null || true; "
@@ -228,7 +228,7 @@ def stage_firmware(adb: AdbClient, firmware: Path) -> None:
     served_md5 = adb.shell(
         f"curl -fsS {DEFAULT_FIRMWARE_URL} | md5sum | awk '{{print $1}}'"
     ).upper()
-    if served_md5 != EXPECTED_MD5:
+    if served_md5 != manifest.md5:
         raise OtaError(f"modem localhost HTTP firmware MD5 mismatch: {served_md5}")
     print_event("firmware-staged", remote=REMOTE_FIRMWARE, url=DEFAULT_FIRMWARE_URL)
 
@@ -363,7 +363,7 @@ def validate_logger_checklist(value: dict) -> list[str]:
 
 
 def real_test_plan(args, adb: AdbClient) -> dict:
-    checks = preflight(adb, args.firmware, require_helper=False)
+    checks = preflight(adb, args.firmware, require_helper=False, manifest=args.firmware_manifest)
     checklist = json.loads(args.logger_checklist.read_text(encoding="utf-8"))
     blockers = list(checks["failures"])
     blockers.extend(validate_logger_checklist(checklist))
@@ -396,7 +396,7 @@ def run_pre_c5a8_vm_test(args, adb: AdbClient) -> None:
         return
     if args.confirm != "VM-PRE-C5A8-ONLY":
         raise OtaError("VM confirmation must be VM-PRE-C5A8-ONLY")
-    checks = preflight(adb, args.firmware, require_helper=True)
+    checks = preflight(adb, args.firmware, require_helper=True, manifest=args.firmware_manifest)
     print_event("preflight", **checks)
     if not checks["ok"]:
         raise OtaError("preflight failed: " + "; ".join(checks["failures"]))
@@ -436,7 +436,7 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
     expected_confirm = "VM-SAME-VERSION-ONLY" if simulated else "PHNIX-C350-SAME-V33"
     if not args.execute:
-        checks = preflight(adb, args.firmware, require_helper=not simulated)
+        checks = preflight(adb, args.firmware, require_helper=not simulated, manifest=args.firmware_manifest)
         print_event("same-version-dry-run", simulated=simulated, **checks)
         return
     if args.confirm != expected_confirm:
@@ -444,7 +444,7 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     if not simulated and args.logger_confirm != "PASSIVE-LOGGER-RUNNING":
         raise OtaError("live test requires --logger-confirm PASSIVE-LOGGER-RUNNING")
 
-    checks = preflight(adb, args.firmware, require_helper=True)
+    checks = preflight(adb, args.firmware, require_helper=True, manifest=args.firmware_manifest)
     print_event("preflight", **checks)
     if not checks["ok"]:
         raise OtaError("preflight failed: " + "; ".join(checks["failures"]))
@@ -454,8 +454,8 @@ def run_same_version_test(args, adb: AdbClient) -> None:
     original_info = (state_dir / "phnixIot_device_OTA_INFO").read_bytes()
     original_statistics = (state_dir / "phnixIot_device_statisic").read_bytes()
     print_event("state-backed-up", directory=str(state_dir))
-    stage_firmware(adb, args.firmware)
-    payload = command_payload(DEFAULT_FIRMWARE_URL)
+    stage_firmware(adb, args.firmware, args.firmware_manifest)
+    payload = command_payload(DEFAULT_FIRMWARE_URL, args.firmware_manifest)
     with tempfile.TemporaryDirectory() as temp_dir:
         command_file = Path(temp_dir) / "ota-command.json"
         command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
@@ -513,7 +513,7 @@ def run_same_version_test(args, adb: AdbClient) -> None:
 
 def run_update(args, adb: AdbClient) -> None:
     # A dry-run must remain useful before the build-specific modem helper exists.
-    checks = preflight(adb, args.firmware, require_helper=args.execute)
+    checks = preflight(adb, args.firmware, require_helper=args.execute, manifest=args.firmware_manifest)
     print_event("preflight", **checks)
     if not checks["ok"]:
         raise OtaError("preflight failed: " + "; ".join(checks["failures"]))
@@ -524,9 +524,9 @@ def run_update(args, adb: AdbClient) -> None:
     state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
     save_remote_state(adb, state_dir)
     print_event("state-backed-up", directory=str(state_dir))
-    stage_firmware(adb, args.firmware)
+    stage_firmware(adb, args.firmware, args.firmware_manifest)
 
-    payload = command_payload(args.firmware_url)
+    payload = command_payload(args.firmware_url, args.firmware_manifest)
     with tempfile.TemporaryDirectory() as temp_dir:
         command_file = Path(temp_dir) / "ota-command.json"
         command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
@@ -578,10 +578,10 @@ def run_update(args, adb: AdbClient) -> None:
                 print_event("phase-change", phase=phase)
             if phase == "c5a8":
                 metadata_ok = (
-                    info["md5"] == EXPECTED_MD5
-                    and info["software_code"] == EXPECTED_SOFTWARE_CODE
-                    and info["software_version"] == EXPECTED_SOFTWARE_VERSION
-                    and info["length"] == EXPECTED_SIZE
+                    info["md5"] == args.firmware_manifest.md5
+                    and info["software_code"] == args.firmware_manifest.software_code
+                    and info["software_version"] == args.firmware_manifest.wire_version
+                    and info["length"] == args.firmware_manifest.size
                     and info["offset"] >= 0
                 )
                 if not metadata_ok:
@@ -703,7 +703,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--firmware", type=Path, required=True)
+    common.add_argument("--manifest", type=Path, required=True)
+    common.add_argument("--firmware", type=Path)
 
     sub.add_parser("preflight", parents=[common])
     sub.add_parser("status")
@@ -738,10 +739,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    adb = AdbClient(args.adb, args.serial)
     try:
+        if hasattr(args, "manifest"):
+            args.firmware_manifest = FirmwareManifest.load(args.manifest)
+            args.firmware = args.firmware_manifest.resolve_firmware(args.manifest, args.firmware)
+            args.firmware_manifest.validate_file(args.firmware)
+        adb = AdbClient(args.adb, args.serial)
         if args.command == "preflight":
-            result = preflight(adb, args.firmware, require_helper=False)
+            result = preflight(adb, args.firmware, require_helper=False, manifest=args.firmware_manifest)
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if result["ok"] else 1
         if args.command == "status":
@@ -766,7 +771,7 @@ def main() -> int:
             return 0
         run_update(args, adb)
         return 0
-    except (OtaError, TransportError, OSError, json.JSONDecodeError) as error:
+    except (OtaError, TransportError, ManifestError, OSError, json.JSONDecodeError) as error:
         print_event("error", message=str(error))
         return 1
 

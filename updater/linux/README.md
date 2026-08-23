@@ -11,3 +11,8 @@ Planned responsibilities of this directory:
 - package a command-line launcher after the laboratory interface stabilizes.
 
 The current executable tools remain under `tools/phnix_ota/`.
+
+Firmware metadata is shared with the future Windows frontend through
+`updater/common/firmware_manifest.py`. Linux, Raspberry Pi and Windows must
+consume the same hash-pinned manifest and must not duplicate or hard-code
+firmware-specific values.

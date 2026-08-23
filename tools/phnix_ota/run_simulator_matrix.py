@@ -50,6 +50,7 @@ def main() -> int:
     parser.add_argument("--adb", type=Path, default=Path("./phnix-sim-adb"))
     parser.add_argument("--controller", type=Path, default=Path("./phnix_local_ota_controller.py"))
     parser.add_argument("--firmware", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, required=True)
     args = parser.parse_args()
     args.sim = args.sim.resolve()
     args.adb = args.adb.resolve()
@@ -62,7 +63,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix=f"phnix-{scenario}-") as state_dir:
             completed = run([
                 str(args.controller), "--adb", str(args.adb), "run",
-                "--firmware", str(args.firmware), "--execute",
+                "--manifest", str(args.manifest), "--firmware", str(args.firmware), "--execute",
                 "--state-dir", state_dir, "--poll-interval", "0.05",
                 "--start-timeout", "3", "--handshake-timeout", "3",
                 "--block-timeout", "1",
@@ -84,7 +85,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix=f"phnix-cancel-{scenario}-") as state_dir:
             prepare = run([
                 str(args.controller), "--adb", str(args.adb), "run",
-                "--firmware", str(args.firmware), "--execute",
+                "--manifest", str(args.manifest), "--firmware", str(args.firmware), "--execute",
                 "--state-dir", state_dir, "--poll-interval", "0.05",
                 "--start-timeout", "3", "--handshake-timeout", "3",
                 "--block-timeout", "1",
@@ -114,7 +115,7 @@ def main() -> int:
         run([str(args.sim), "handshake-scenario", scenario])
         completed = run([
             str(args.controller), "--adb", str(args.adb), "pre-c5a8-vm-test",
-            "--firmware", str(args.firmware), "--execute",
+            "--manifest", str(args.manifest), "--firmware", str(args.firmware), "--execute",
             "--confirm", "VM-PRE-C5A8-ONLY",
         ])
         status_result = run([str(args.sim), "status"])

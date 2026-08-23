@@ -1,0 +1,12 @@
+{
+  "schema": "foxair-firmware-v1",
+  "firmware_file": "FW3.3.bin",
+  "software_code": "82400644",
+  "display_version": "V3.3",
+  "wire_version": "0033",
+  "target_ssid": "0063",
+  "size": 287598,
+  "md5": "CEB6A4BF386FF644E23E410023E74673",
+  "sha256": "6C635D8E9A1E7246EA492B81ACFF5B748E85CC86C0FE0DEF35C2F0A597E4389A",
+  "image_base": "0x08050000"
+}
