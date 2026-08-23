@@ -47,6 +47,9 @@ same common Python code with a selected or bundled `adb.exe`.
 The currently executable guarded laboratory launcher remains in
 `tools/phnix_ota/` until its interfaces and live recovery path are stable.
 
+The current German end-user command reference is available at
+[`docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md).
+
 ## Current safety boundary
 
 The VM simulator supports the complete cancel/recovery contract and the
