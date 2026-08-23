@@ -160,10 +160,18 @@ Beispiel eines erfolgreichen simulierten Vollupdates:
 [OK] Firmware auf das LTE-Modem kopiert
 [..] Update gestartet
 [..] Firmware wird zum Mainboard uebertragen
-[..] Firmware wird auf dem Mainboard verarbeitet
+[..] Fortschritt:  25 % (71.899 / 287.598 Byte)
+[..] Fortschritt:  50 % (143.799 / 287.598 Byte)
+[..] Fortschritt: 100 % (287.598 / 287.598 Byte)
 [OK] Firmware-Update erfolgreich abgeschlossen
 [OK] Originaldienst, Ueberwachung und Cloud-Verbindung laufen
 ```
+
+Der Fortschritt stammt nicht aus einer geschätzten Laufzeit, sondern aus dem
+CRC-geprüften persistenten OTA-Offset des Originaldienstes. Eine neue Zeile
+erscheint bei mindestens einem Prozent Änderung oder spätestens nach fünf
+Sekunden. Rückwärts laufende, zu große oder CRC-ungültige Werte lösen weiterhin
+einen sicheren Abbruch aus.
 
 Für Protokolldateien oder Softwareintegration bleibt die vollständige
 JSON-Ausgabe erhalten:

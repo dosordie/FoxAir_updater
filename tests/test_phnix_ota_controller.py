@@ -1,6 +1,9 @@
+import io
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import Mock
 
+from tools.phnix_ota import phnix_local_ota_controller as controller
 from tools.phnix_ota.phnix_local_ota_controller import (
     cancel_proof_ok,
     cancel_payload,
@@ -136,6 +139,30 @@ class OtaInfoTests(unittest.TestCase):
         adb.shell.return_value = '{"phase":"old"}\n{"phase":"new"}'
         adb.read_file.return_value = bytes(self.make_info())
         self.assertEqual(remote_status(adb)["hook"]["phase"], "new")
+
+    def test_human_progress_uses_verified_offset_and_suppresses_duplicates(self):
+        controller.COLOR_ENABLED = False
+        controller._LAST_HUMAN_PHASE = None
+        controller._LAST_HUMAN_PERCENT = -1
+        controller._LAST_HUMAN_PROGRESS_AT = 0.0
+        output = io.StringIO()
+        with redirect_stdout(output):
+            controller._human_event("status", {
+                "hook": {"phase": "c5a8"},
+                "ota_info": {"offset": 71_899, "length": TEST_SIZE},
+            })
+            controller._human_event("status", {
+                "hook": {"phase": "c5a8"},
+                "ota_info": {"offset": 71_899, "length": TEST_SIZE},
+            })
+            controller._human_event("status", {
+                "hook": {"phase": "c5a8"},
+                "ota_info": {"offset": 74_776, "length": TEST_SIZE},
+            })
+        rendered = output.getvalue()
+        self.assertEqual(rendered.count("Fortschritt:"), 2)
+        self.assertIn("25 % (71.899 / 287.598 Byte)", rendered)
+        self.assertIn("26 % (74.776 / 287.598 Byte)", rendered)
 
 
 if __name__ == "__main__":

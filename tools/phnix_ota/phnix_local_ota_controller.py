@@ -51,6 +51,8 @@ DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
 OUTPUT_MODE = "auto"
 COLOR_ENABLED = True
 _LAST_HUMAN_PHASE: str | None = None
+_LAST_HUMAN_PERCENT = -1
+_LAST_HUMAN_PROGRESS_AT = 0.0
 GREEN = "\033[1;32m"
 YELLOW = "\033[1;33m"
 RED = "\033[1;31m"
@@ -145,32 +147,49 @@ def _paint(text: str, color: str) -> str:
 
 def _human_event(event: str, fields: dict) -> None:
     """Render reassuring milestones while JSON stays available for machines."""
-    global _LAST_HUMAN_PHASE
+    global _LAST_HUMAN_PHASE, _LAST_HUMAN_PERCENT, _LAST_HUMAN_PROGRESS_AT
     if event in {"same-version-status", "status"}:
         hook = fields.get("hook", {})
         phase = hook.get("phase") if isinstance(hook, dict) else None
-        if not phase or phase == _LAST_HUMAN_PHASE:
+        if not phase:
             return
-        _LAST_HUMAN_PHASE = phase
-        labels = {
-            "verified": "Sicherheitspruefungen bestanden",
-            "attaching": "Originaldienst wird kontrolliert vorbereitet",
-            "waiting-for-yield-loop": "Warte auf einen sicheren Sendepunkt",
-            "c350-probe-attaching": "Warte auf einen sicheren Sendepunkt",
-            "parser-injection": "Updateauftrag wurde gestartet",
-            "accepted": "Originaldienst hat den Updateauftrag angenommen",
-            "c350-sent": "Firmwareangebot wurde an das Mainboard gesendet",
-            "c350": "Mainboard prueft das Firmwareangebot",
-            "c357": "Firmware wird zum Mainboard uebertragen",
-            "c5a8": "Firmware wird auf dem Mainboard verarbeitet",
-            "success-report": "Mainboard meldet erfolgreichen Abschluss",
-            "success": "Firmware-Update erfolgreich abgeschlossen",
-            "c350-same-version": "Gleiche Firmware erkannt - sichere Beendigung",
-        }
-        label = labels.get(phase)
-        if label:
-            good = phase in {"verified", "accepted", "success", "c350-same-version"}
-            print(_paint(f"[OK] {label}" if good else f"[..] {label}", GREEN if good else CYAN), flush=True)
+        if phase != _LAST_HUMAN_PHASE:
+            _LAST_HUMAN_PHASE = phase
+            labels = {
+                "verified": "Sicherheitspruefungen bestanden",
+                "attaching": "Originaldienst wird kontrolliert vorbereitet",
+                "waiting-for-yield-loop": "Warte auf einen sicheren Sendepunkt",
+                "c350-probe-attaching": "Warte auf einen sicheren Sendepunkt",
+                "parser-injection": "Updateauftrag wurde gestartet",
+                "accepted": "Originaldienst hat den Updateauftrag angenommen",
+                "c350-sent": "Firmwareangebot wurde an das Mainboard gesendet",
+                "c350": "Mainboard prueft das Firmwareangebot",
+                "c357": "Mainboard hat die Transferdaten erhalten",
+                "c5a8": "Firmware wird zum Mainboard uebertragen",
+                "success-report": "Mainboard meldet erfolgreichen Abschluss",
+                "success": "Firmware-Update erfolgreich abgeschlossen",
+                "c350-same-version": "Gleiche Firmware erkannt - sichere Beendigung",
+            }
+            label = labels.get(phase)
+            if label:
+                good = phase in {"verified", "accepted", "success", "c350-same-version"}
+                print(_paint(f"[OK] {label}" if good else f"[..] {label}", GREEN if good else CYAN), flush=True)
+
+        info = fields.get("ota_info", {})
+        if phase == "c5a8" and isinstance(info, dict):
+            offset = info.get("offset")
+            length = info.get("length")
+            if isinstance(offset, int) and isinstance(length, int) and length > 0:
+                percent = 100 if offset >= length else min(99, max(0, round(offset * 100 / length)))
+                now = time.monotonic()
+                if (percent >= _LAST_HUMAN_PERCENT + 1 or
+                        now - _LAST_HUMAN_PROGRESS_AT >= 5 or percent == 100):
+                    _LAST_HUMAN_PERCENT = percent
+                    _LAST_HUMAN_PROGRESS_AT = now
+                    print(_paint(
+                        f"[..] Fortschritt: {percent:3d} % "
+                        f"({offset:,} / {length:,} Byte)".replace(",", "."), CYAN
+                    ), flush=True)
         return
     messages = {
         "preflight": (GREEN, "[OK] Vorpruefung erfolgreich"),
