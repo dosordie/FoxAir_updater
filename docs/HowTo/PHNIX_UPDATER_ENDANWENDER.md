@@ -42,6 +42,117 @@ Wer Controller und Helfer direkt in sein Home-Verzeichnis kopiert, muss
 zusätzlich sicherstellen, dass das Python-Paket `updater/common` vorhanden oder
 installiert ist.
 
+## Dateien auf den Raspberry Pi holen
+
+### Empfohlen: vollständiges Repository mit Git
+
+```sh
+cd ~
+git clone https://github.com/dosordie/FoxAir_updater.git
+cd FoxAir_updater
+```
+
+Wurde das Repository bereits geklont, lässt es sich aktualisieren:
+
+```sh
+cd ~/FoxAir_updater
+git pull --ff-only
+```
+
+Anschließend stehen Controller, Runtime-Helfer, Manifestwerkzeug,
+Python-Module und Dokumentation gemeinsam in der erwarteten Verzeichnisstruktur
+zur Verfügung.
+
+### Alternative: jede benötigte Datei mit wget laden
+
+Ohne Git müssen die Verzeichnisse und alle Python-Abhängigkeiten vollständig
+angelegt werden:
+
+```sh
+mkdir -p ~/FoxAir_updater/tools/phnix_ota
+mkdir -p ~/FoxAir_updater/updater/common
+cd ~/FoxAir_updater
+
+wget -O tools/phnix_ota/phnix_local_ota_controller.py \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/phnix_ota/phnix_local_ota_controller.py
+wget -O tools/phnix_ota/phnix_ota_runtime_hook \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/phnix_ota/phnix_ota_runtime_hook
+wget -O tools/phnix_ota/create_firmware_manifest.py \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/phnix_ota/create_firmware_manifest.py
+
+wget -O updater/__init__.py \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/__init__.py
+wget -O updater/common/__init__.py \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/__init__.py
+wget -O updater/common/adb_transport.py \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/adb_transport.py
+wget -O updater/common/firmware_manifest.py \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/firmware_manifest.py
+wget -O updater/common/phnix_frames.py \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/phnix_frames.py
+
+chmod 755 tools/phnix_ota/phnix_local_ota_controller.py
+chmod 755 tools/phnix_ota/phnix_ota_runtime_hook
+chmod 755 tools/phnix_ota/create_firmware_manifest.py
+```
+
+Danach kurz prüfen:
+
+```sh
+python3 tools/phnix_ota/phnix_local_ota_controller.py --help
+python3 tools/phnix_ota/create_firmware_manifest.py --help
+adb get-state
+```
+
+`adb get-state` muss `device` ausgeben. Die Firmwaredatei selbst wird nicht
+automatisch aus dem öffentlichen Repository geladen. Sie muss als geprüfte
+Datei separat auf den Raspberry Pi kopiert werden.
+
+## Manifest für eine Firmware erstellen
+
+Jede Firmware benötigt eine eigene JSON-Manifestdatei. Sie enthält Zielgerät,
+Version, Dateigröße sowie MD5 und SHA-256. Größe und Hashwerte werden vom
+Werkzeug automatisch aus der Firmwaredatei berechnet.
+
+Beispiel für eine analysierte V3.4:
+
+```sh
+cd ~/FoxAir_updater
+
+python3 tools/phnix_ota/create_firmware_manifest.py \
+  --firmware FW3.4.bin \
+  --software-code 82400644 \
+  --display-version V3.4 \
+  --target-ssid 0063 \
+  --output FW3.4.json
+```
+
+Das Werkzeug leitet aus `V3.4` automatisch die Busversion `0034` ab und setzt
+standardmäßig die geprüfte Image-Basis `0x08050000`. Falls eine andere Basis
+tatsächlich analysiert und freigegeben wurde, existiert dafür die Expertenoption
+`--image-base`; derzeit akzeptiert das Manifestformat jedoch ausschließlich
+`0x08050000`.
+
+Die Werte dürfen nicht geraten werden:
+
+- `--software-code` muss zum Zielimage und Mainboard passen;
+- `--display-version` muss das Format `Vn.n` verwenden;
+- `--target-ssid` ist die vierstellige hexadezimale Mainboard-SSID;
+- Firmwaredatei und erzeugtes Manifest sollten im selben Verzeichnis liegen.
+
+Erzeugtes Manifest anzeigen:
+
+```sh
+cat FW3.4.json
+```
+
+Der anschließende Dry-Run lädt das Manifest erneut, prüft alle Felder und
+vergleicht Dateiname, Dateigröße, MD5 und SHA-256 mit der Firmwaredatei. Eine
+nachträglich veränderte oder falsch benannte Firmware wird dadurch abgelehnt.
+
+Hinweis: `wire_version`, `size`, `md5` und `sha256` werden automatisch erzeugt
+und sind keine notwendigen Kommandozeilenschalter.
+
 ## Die vier normalen Anwenderbefehle
 
 ### 1. Originalzustand kontrollieren
@@ -259,3 +370,9 @@ Folgende Unterbefehle gehören nicht zum normalen Endnutzerablauf:
 Für normale Anwender sind `run --check status`, der Dry-Run, `run --execute`
 und bei Bedarf `run --restore original` ausreichend.
 
+## Geplantes Installationsskript
+
+Ein späteres Installationsskript soll Repository/Dateien, Verzeichnisstruktur,
+Python-Voraussetzungen, ADB-Erreichbarkeit und Dateirechte automatisch
+einrichten. Dieser Installer ist noch nicht Bestandteil des aktuellen Stands;
+bis dahin gelten die Git- oder wget-Schritte aus dieser Anleitung.
