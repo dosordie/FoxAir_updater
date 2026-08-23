@@ -114,15 +114,16 @@ python3 phnix_local_ota_controller.py run \
   --manifest FW3.4.json \
   --firmware FW3.4.bin \
   --execute \
-  --confirm PHNIX-FULL-UPDATE \
-  --logger-confirm PASSIVE-LOGGER-RUNNING
+  --confirm PHNIX-FULL-UPDATE
 ```
 
 Der Vollupdate-Aufruf ist absichtlich doppelt bestätigt. Er darf erst mit einer
 analysierten, zum Mainboard passenden neuen Firmware und nach einer eigenen
 Live-Freigabe verwendet werden. Der Gleichversionstest benutzt weiterhin das
 separate Kommando `same-version-test` und kann dadurch nicht versehentlich in
-einen vollständigen Transfer übergehen.
+einen vollständigen Transfer übergehen. Ein externer Buslogger ist für den
+normalen Vollupdate-Aufruf nicht erforderlich; Status und Sicherheitsprüfungen
+kommen direkt vom Originaldienst und Launcher.
 
 Der Ablauf:
 

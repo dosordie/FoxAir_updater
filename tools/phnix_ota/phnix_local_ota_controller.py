@@ -619,8 +619,6 @@ def run_update(args, adb: AdbClient) -> None:
     expected_confirm = "VM-FULL-UPDATE" if simulated else "PHNIX-FULL-UPDATE"
     if args.confirm != expected_confirm:
         raise OtaError(f"confirmation must be {expected_confirm}")
-    if not simulated and args.logger_confirm != "PASSIVE-LOGGER-RUNNING":
-        raise OtaError("live full update requires --logger-confirm PASSIVE-LOGGER-RUNNING")
 
     state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
     save_remote_state(adb, state_dir)
@@ -838,7 +836,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--firmware-url", default=DEFAULT_FIRMWARE_URL)
     run.add_argument("--execute", action="store_true")
     run.add_argument("--confirm")
-    run.add_argument("--logger-confirm")
     run.add_argument("--state-dir", type=Path, default=Path("phnix-ota-state"))
     run.add_argument("--poll-interval", type=float, default=2.0)
     run.add_argument("--start-timeout", type=float, default=60.0)
