@@ -237,11 +237,24 @@ def preflight(adb: AdbClient, firmware: Path, require_helper: bool,
     )
 
     checks["adb_state"] = adb.run("get-state").strip()
-    checks["service_pid"] = adb.shell("pidof phnixIot4G || true")
-    checks["service_path"] = adb.shell(
-        "p=$(pidof phnixIot4G | awk '{print $1}'); "
-        "test -n \"$p\" && readlink /proc/$p/exe || true"
-    )
+    # The modem supervisor can restart the service between pidof and readlink.
+    # Require one stable PID snapshot, but tolerate that harmless short race.
+    service_pid = ""
+    service_path = ""
+    for attempt in range(3):
+        pid_before = adb.shell("pidof phnixIot4G || true")
+        path = adb.shell(
+            "p=$(pidof phnixIot4G | awk '{print $1}'); "
+            "test -n \"$p\" && readlink /proc/$p/exe || true"
+        )
+        pid_after = adb.shell("pidof phnixIot4G || true")
+        if pid_before and pid_before == pid_after and path:
+            service_pid, service_path = pid_after, path
+            break
+        if attempt < 2:
+            time.sleep(0.25)
+    checks["service_pid"] = service_pid
+    checks["service_path"] = service_path
     checks["service_sha256"] = adb.shell(
         f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'"
     ).upper()
