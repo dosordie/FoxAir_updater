@@ -208,6 +208,16 @@ def _human_event(event: str, fields: dict) -> None:
         "manual-recovery-required": (RED, "[FEHLER] Manueller Wiederherstellungsschritt erforderlich"),
         "error": (RED, f"[FEHLER] {fields.get('message', 'Unbekannter Fehler')}"),
     }
+    if event == "complete":
+        offset = fields.get("offset")
+        length = fields.get("length")
+        if (isinstance(offset, int) and isinstance(length, int)
+                and length > 0 and offset >= length and _LAST_HUMAN_PERCENT < 100):
+            _LAST_HUMAN_PERCENT = 100
+            print(_paint(
+                f"[..] Fortschritt: 100 % "
+                f"({offset:,} / {length:,} Byte)".replace(",", "."), CYAN
+            ), flush=True)
     item = messages.get(event)
     if item:
         print(_paint(item[1], item[0]), flush=True)
@@ -669,6 +679,10 @@ def run_update(args, adb: AdbClient) -> None:
         f"--command {REMOTE_COMMAND} --status {REMOTE_STATUS} "
         "--allow-publish 0023,0053,0083"
     )
+    # A terminal record from a previous run must never be interpreted as the
+    # result of the helper that is about to start. This mirrors the guarded
+    # same-version path and closes the start-up race seen on the real modem.
+    adb.shell(f"rm -f {REMOTE_STATUS}")
     print_event("hook-start", allowed_publish=["0023", "0053", "0083"])
     helper = adb.popen_shell(helper_command)
 
