@@ -241,10 +241,14 @@ def stop_local_http(adb: AdbClient) -> None:
     )
 
 
-def remote_status(adb: AdbClient) -> dict:
+def remote_status(adb: AdbClient, *, allow_transient_info: bool = False) -> dict:
     status_text = adb.shell(f"cat {REMOTE_STATUS} 2>/dev/null || true")
     hook = json.loads(status_text) if status_text else {"state": "hook-not-running"}
-    info = asdict(parse_ota_info(adb.read_file(REMOTE_INFO)))
+    raw_info = adb.read_file(REMOTE_INFO)
+    if allow_transient_info and len(raw_info) != 220:
+        info = {"transient": True, "length_bytes": len(raw_info), "crc_ok": False}
+    else:
+        info = asdict(parse_ota_info(raw_info))
     return {"hook": hook, "ota_info": info}
 
 
@@ -304,6 +308,21 @@ def pre_c5a8_proof_ok(hook: dict, trace: dict) -> bool:
         and trace.get("c5a8_frames") == 0
         and trace.get("metadata_stable") is True
         and trace.get("ssid_match") is True
+    )
+
+
+def same_version_proof_ok(hook: dict) -> bool:
+    """Require the complete C350 equal-build terminal proof."""
+    return (
+        hook.get("phase") == "c350-same-version"
+        and hook.get("terminal") is True
+        and hook.get("c350_sent") is True
+        and hook.get("c36e_status") == 0
+        and hook.get("ssid_match") is True
+        and hook.get("c357_sent") is False
+        and hook.get("c5a8_sent") is False
+        and hook.get("state_restored") is True
+        and hook.get("recovery_required") is False
     )
 
 
@@ -392,6 +411,87 @@ def run_pre_c5a8_vm_test(args, adb: AdbClient) -> None:
     finally:
         if safe_terminal:
             adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
+
+
+def run_same_version_test(args, adb: AdbClient) -> None:
+    """Offer the verified V3.3 as 0033 and require C36E/status 0.
+
+    The helper hard-stops at C357 and C5A8.  Persistent files are backed up
+    both on the controller and inside the modem helper.
+    """
+    simulated = adb.shell(f"test -f {REMOTE_SIM_MARKER}; echo $?") == "0"
+    expected_confirm = "VM-SAME-VERSION-ONLY" if simulated else "PHNIX-C350-SAME-V33"
+    if not args.execute:
+        checks = preflight(adb, args.firmware, require_helper=not simulated)
+        print_event("same-version-dry-run", simulated=simulated, **checks)
+        return
+    if args.confirm != expected_confirm:
+        raise OtaError(f"confirmation must be {expected_confirm}")
+    if not simulated and args.logger_confirm != "PASSIVE-LOGGER-RUNNING":
+        raise OtaError("live test requires --logger-confirm PASSIVE-LOGGER-RUNNING")
+
+    checks = preflight(adb, args.firmware, require_helper=True)
+    print_event("preflight", **checks)
+    if not checks["ok"]:
+        raise OtaError("preflight failed: " + "; ".join(checks["failures"]))
+
+    state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
+    save_remote_state(adb, state_dir)
+    original_info = (state_dir / "phnixIot_device_OTA_INFO").read_bytes()
+    original_statistics = (state_dir / "phnixIot_device_statisic").read_bytes()
+    print_event("state-backed-up", directory=str(state_dir))
+    stage_firmware(adb, args.firmware)
+    payload = command_payload(DEFAULT_FIRMWARE_URL)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        command_file = Path(temp_dir) / "ota-command.json"
+        command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        adb.push(command_file, REMOTE_COMMAND)
+
+    action = "same-version-probe" if simulated else "c350-probe"
+    helper_command = (
+        f"{REMOTE_HELPER} {action} --command {REMOTE_COMMAND} --status {REMOTE_STATUS} "
+        f"--live-confirm {expected_confirm} --logger-confirm "
+        f"{args.logger_confirm or 'SIMULATOR'}"
+    )
+    helper = adb.popen_shell(helper_command)
+    deadline = time.monotonic() + args.timeout
+    safe_terminal = False
+    try:
+        while time.monotonic() < deadline:
+            status = remote_status(adb, allow_transient_info=True)
+            print_event("same-version-status", **status)
+            hook = status["hook"]
+            if hook.get("phase") == "guarded-hold":
+                raise OtaError("same-version test entered guarded hold")
+            if hook.get("recovery_required") is True:
+                raise OtaError(f"same-version guard triggered: {hook.get('phase')}")
+            if hook.get("terminal") is True:
+                if not same_version_proof_ok(hook):
+                    raise OtaError(f"unexpected terminal proof: {hook}")
+                if adb.read_file(REMOTE_INFO) != original_info:
+                    raise OtaError("OTA_INFO was not restored byte-for-byte")
+                if adb.read_file(REMOTE_STATISTICS) != original_statistics:
+                    raise OtaError("statistics file was not restored byte-for-byte")
+                safe_terminal = True
+                print_event(
+                    "same-version-complete", c36e_status=0,
+                    c357_frames=0, c5a8_frames=0, persistent_state_restored=True,
+                )
+                return
+            if helper.poll() is not None:
+                time.sleep(0.2)
+            time.sleep(args.poll_interval)
+        raise OtaError("same-version test watchdog expired")
+    except BaseException:
+        if not safe_terminal:
+            adb.shell(f"{REMOTE_HELPER} hold --status {REMOTE_STATUS}", check=False)
+            print_event("guarded-hold", message="No safe equal-build terminal proof")
+        raise
+    finally:
+        if safe_terminal:
+            adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
+            stop_local_http(adb)
+            print_event("original-state-released")
 
 
 def run_update(args, adb: AdbClient) -> None:
@@ -596,6 +696,13 @@ def build_parser() -> argparse.ArgumentParser:
     handshake.add_argument("--confirm")
     real_plan = sub.add_parser("pre-c5a8-real-plan", parents=[common])
     real_plan.add_argument("--logger-checklist", type=Path, required=True)
+    same = sub.add_parser("same-version-test", parents=[common])
+    same.add_argument("--execute", action="store_true")
+    same.add_argument("--confirm")
+    same.add_argument("--logger-confirm")
+    same.add_argument("--state-dir", type=Path, default=Path("phnix-ota-state"))
+    same.add_argument("--poll-interval", type=float, default=0.5)
+    same.add_argument("--timeout", type=float, default=30.0)
     cancel = sub.add_parser("cancel")
     cancel.add_argument("--execute", action="store_true")
     cancel.add_argument("--confirm")
@@ -637,6 +744,9 @@ def main() -> int:
             plan = real_test_plan(args, adb)
             print(json.dumps(plan, indent=2, ensure_ascii=False))
             return 0 if plan["ready"] else 1
+        if args.command == "same-version-test":
+            run_same_version_test(args, adb)
+            return 0
         run_update(args, adb)
         return 0
     except (OtaError, TransportError, OSError, json.JSONDecodeError) as error:

@@ -13,6 +13,7 @@ GDBSERVER_PID=$STATE_DIR/gdbserver.pid
 WATCHDOG_PIDS=$STATE_DIR/watchdogs.pids
 RUN_ACTIVE=$STATE_DIR/run.active
 SAFE_TO_CLEAN=$STATE_DIR/safe-to-clean
+STATE_BACKUP=$STATE_DIR/original-state
 DEFAULT_STATUS=/tmp/phnix_ota_status.json
 
 fail() {
@@ -60,6 +61,28 @@ remove_cloud_guard() {
         iptables -D OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP 2>/dev/null || true
         iptables -D INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP 2>/dev/null || true
     fi
+}
+
+backup_persistent_state() {
+    rm -rf "$STATE_BACKUP"
+    mkdir -p "$STATE_BACKUP"
+    cp -p /data/phnixIot_device_OTA_INFO "$STATE_BACKUP/OTA_INFO"
+    cp -p /data/phnixIot_device_statisic "$STATE_BACKUP/statisic"
+    test "$(wc -c < "$STATE_BACKUP/OTA_INFO")" = 220 || fail "OTA_INFO backup is not 220 bytes"
+    sha256sum "$STATE_BACKUP/OTA_INFO" | awk '{print $1}' > "$STATE_BACKUP/OTA_INFO.sha256"
+}
+
+restore_persistent_state() {
+    test -f "$STATE_BACKUP/OTA_INFO" || fail "OTA_INFO backup missing"
+    test -f "$STATE_BACKUP/statisic" || fail "statistics backup missing"
+    cp -p "$STATE_BACKUP/OTA_INFO" /data/.phnixIot_device_OTA_INFO.restore
+    cp -p "$STATE_BACKUP/statisic" /data/.phnixIot_device_statisic.restore
+    test "$(sha256sum /data/.phnixIot_device_OTA_INFO.restore | awk '{print $1}')" = "$(cat "$STATE_BACKUP/OTA_INFO.sha256")" || fail "OTA_INFO restore verification failed"
+    mv /data/.phnixIot_device_OTA_INFO.restore /data/phnixIot_device_OTA_INFO
+    mv /data/.phnixIot_device_statisic.restore /data/phnixIot_device_statisic
+    sync
+    test "$(sha256sum /data/phnixIot_device_OTA_INFO | awk '{print $1}')" = "$(cat "$STATE_BACKUP/OTA_INFO.sha256")" || fail "OTA_INFO post-restore verification failed"
+    touch "$SAFE_TO_CLEAN"
 }
 
 cleanup_original_state() {
@@ -204,6 +227,160 @@ EOF
     fi
     printf '{"phase":"cancel-breakpoint-test-ok","terminal":true,"breakpoints":8}\n' > "$STATUS"
     echo "cancel breakpoint install/remove test passed"
+}
+
+make_c350_probe_gdb_script() {
+    JSON=$(tr -d '\r\n' < "$COMMAND")
+    ESCAPED=$(printf '%s' "$JSON" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+set print thread-events off
+set auto-load safe-path /
+set libthread-db-search-path /lib
+handle SIGILL nostop noprint pass
+handle SIGFPE nostop noprint pass
+file /data/phnixIot4G
+target remote 127.0.0.1:12345
+set \$c350_seen = 0
+set \$injection_state = 0
+set \$quiet_hits = 0
+
+break *0x1fdac
+commands 1
+  silent
+  if \$injection_state == 0
+    if *(unsigned int *)0x930dc == 0 && *(unsigned char *)0x98a94 == 12
+      set \$quiet_hits = \$quiet_hits + 1
+    else
+      set \$quiet_hits = 0
+    end
+    if \$quiet_hits >= 5
+      set \$injection_state = 1
+      set \$return_pc = \$pc
+      set {char[512]} 0x94ab4 = "$ESCAPED"
+      shell echo '{"phase":"c350-parser-injection","terminal":false,"quiet_hits":5}' > $STATUS
+      set \$r0 = 0x94ab4
+      set \$lr = \$return_pc
+      set \$pc = 0x19958
+    end
+  else
+    if \$injection_state == 1
+      set \$injection_state = 2
+      disable 1
+    end
+  end
+  continue
+end
+
+break *0x1c4bc
+commands 2
+  silent
+  set \$c350_seen = 1
+  shell echo '{"phase":"c350-sent","terminal":false,"c350_sent":true}' > $STATUS
+  continue
+end
+
+break *0x1ba04
+commands 3
+  silent
+  if \$c350_seen == 1 && *(unsigned char *)(\$r0+1) == 0x63 && *(unsigned char *)(\$r0+3) == 0
+    shell $0 _restore-state --status $STATUS
+    shell echo '{"phase":"c350-same-version","terminal":true,"c350_sent":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
+    detach
+    quit
+  else
+    shell echo '{"phase":"c36e-unexpected","terminal":false,"c350_sent":true,"recovery_required":true}' > $STATUS
+    shell kill -STOP $PID
+    detach
+    quit
+  end
+end
+
+break *0x1cea0
+commands 4
+  silent
+  shell echo '{"phase":"forbidden-c357","terminal":false,"c350_sent":true,"c357_sent":false,"c5a8_sent":false,"recovery_required":true}' > $STATUS
+  set \$pc = \$lr
+  shell kill -STOP $PID
+  detach
+  quit
+end
+
+break *0x1c7cc
+commands 5
+  silent
+  shell echo '{"phase":"forbidden-c5a8","terminal":false,"c350_sent":true,"c357_sent":false,"c5a8_sent":false,"recovery_required":true}' > $STATUS
+  set \$pc = \$lr
+  shell kill -STOP $PID
+  detach
+  quit
+end
+
+continue
+EOF
+}
+
+c350_breakpoint_test() {
+    verify
+    mkdir -p "$STATE_DIR"
+    PID=$(service_pid)
+    watchdog_pids > "$WATCHDOG_PIDS"
+    trap cleanup EXIT INT TERM
+    touch "$SAFE_TO_CLEAN"
+    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-c350-breakpoint-test.log" 2>&1 &
+    echo $! > "$GDBSERVER_PID"
+    sleep 1
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+file /data/phnixIot4G
+target remote 127.0.0.1:12345
+break *0x1fdac
+break *0x1c4bc
+break *0x1ba04
+break *0x1cea0
+break *0x1c7cc
+info breakpoints
+delete breakpoints
+detach
+quit
+EOF
+    printf '{"phase":"c350-breakpoint-test","terminal":false}\n' > "$STATUS"
+    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/c350-breakpoint-test.log" 2>&1 || fail "C350 breakpoint test failed"
+    printf '{"phase":"c350-breakpoint-test-ok","terminal":true,"breakpoints":5}\n' > "$STATUS"
+}
+
+c350_probe_hook() {
+    test "$LIVE_CONFIRM" = PHNIX-C350-SAME-V33 || fail "C350 live confirmation mismatch"
+    test "$LOGGER_CONFIRM" = PASSIVE-LOGGER-RUNNING || fail "passive logger confirmation mismatch"
+    test -r "$COMMAND" || fail "C350 command missing"
+    verify
+    PID=$(service_pid)
+    test "$(awk '/^TracerPid:/ {print $2}' /proc/$PID/status)" = 0 || fail "service is already traced"
+    test "$(dd if=/data/phnixIot_device_OTA_INFO bs=1 skip=212 count=4 2>/dev/null | od -An -tu4 | tr -d ' ')" = 0 || fail "persistent OTA offset is not zero"
+    test "$(dd if=/data/phnixIot_device_OTA_INFO bs=1 skip=216 count=4 2>/dev/null | od -An -tu4 | tr -d ' ')" = 0 || fail "persistent OTA length is not zero"
+    mkdir -p "$STATE_DIR"
+    backup_persistent_state
+    rm -f "$SAFE_TO_CLEAN"
+    touch "$RUN_ACTIVE"
+    echo $$ > "$HELPER_PID"
+    trap cleanup EXIT INT TERM
+    watchdog_pids > "$WATCHDOG_PIDS"
+    iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
+    iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
+    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+    make_c350_probe_gdb_script
+    printf '{"phase":"c350-probe-attaching","terminal":false}\n' > "$STATUS"
+    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-c350-probe.log" 2>&1 &
+    echo $! > "$GDBSERVER_PID"
+    sleep 1
+    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/c350-probe.log" 2>&1 &
+    echo $! > "$GDB_PID"
+    wait "$(cat "$GDB_PID")"
 }
 
 make_cancel_probe_gdb_script() {
@@ -635,6 +812,7 @@ COMMAND=
 ALLOW=
 FORCE=0
 LIVE_CONFIRM=
+LOGGER_CONFIRM=
 while test $# -gt 0; do
     case "$1" in
         --status) STATUS=$2; shift 2 ;;
@@ -642,6 +820,7 @@ while test $# -gt 0; do
         --command) COMMAND=$2; shift 2 ;;
         --allow-publish) ALLOW=$2; shift 2 ;;
         --live-confirm) LIVE_CONFIRM=$2; shift 2 ;;
+        --logger-confirm) LOGGER_CONFIRM=$2; shift 2 ;;
         --force) FORCE=1; shift ;;
         *) fail "unknown argument: $1" ;;
     esac
@@ -652,11 +831,14 @@ case "$ACTION" in
     attach-test) attach_test ;;
     breakpoint-test) breakpoint_test ;;
     cancel-breakpoint-test) cancel_breakpoint_test ;;
+    c350-breakpoint-test) c350_breakpoint_test ;;
     cancel-probe) cancel_probe_hook ;;
+    c350-probe) c350_probe_hook ;;
+    _restore-state) restore_persistent_state ;;
     cancel-probe-resume) cancel_probe_resume_hook ;;
     run) run_hook ;;
     hold) hold_hook ;;
     cancel) echo "ERROR: live cancel is disabled until C36A/C36C runtime hooks are validated" >&2; exit 2 ;;
     stop) stop_hook ;;
-    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|cancel-probe|cancel-probe-resume|run|hold|cancel|stop [options]" >&2; exit 2 ;;
+    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|c350-breakpoint-test|c350-probe|cancel-probe|cancel-probe-resume|run|hold|cancel|stop [options]" >&2; exit 2 ;;
 esac

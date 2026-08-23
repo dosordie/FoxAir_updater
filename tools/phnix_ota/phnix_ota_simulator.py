@@ -30,6 +30,9 @@ HANDSHAKE_SCENARIOS = {
     "success", "wrong-status-1", "missing-status-2", "metadata-change",
     "c5a8-leak", "cancel-fail",
 }
+SAME_VERSION_SCENARIOS = {
+    "success", "status-1", "c357-leak", "c5a8-leak", "restore-mismatch",
+}
 
 
 def sim_home() -> Path:
@@ -93,6 +96,7 @@ def reset_state(scenario: str, cancel_scenario: str = "success") -> None:
     write_json(home / "config.json", {
         "scenario": scenario, "cancel_scenario": cancel_scenario,
         "handshake_scenario": "success",
+        "same_version_scenario": "success",
     })
     write_json(home / "runtime.json", {
         "running": False, "httpd": False, "held": False,
@@ -138,6 +142,8 @@ def admin(argv: list[str]) -> int:
     cancel_scenario.add_argument("name", choices=sorted(CANCEL_SCENARIOS))
     handshake_scenario = sub.add_parser("handshake-scenario")
     handshake_scenario.add_argument("name", choices=sorted(HANDSHAKE_SCENARIOS))
+    same_version_scenario = sub.add_parser("same-version-scenario")
+    same_version_scenario.add_argument("name", choices=sorted(SAME_VERSION_SCENARIOS))
     sub.add_parser("stop")
     sub.add_parser("status")
     args = parser.parse_args(argv)
@@ -175,6 +181,13 @@ def admin(argv: list[str]) -> int:
         current = config()
         current["handshake_scenario"] = args.name
         write_json(home / "config.json", current)
+    elif args.command == "same-version-scenario":
+        if not (home / "started").exists():
+            print("Simulator is stopped; use start first", file=sys.stderr)
+            return 1
+        current = config()
+        current["same_version_scenario"] = args.name
+        write_json(home / "config.json", current)
     elif args.command == "stop":
         terminate_helper()
         (home / "started").unlink(missing_ok=True)
@@ -190,6 +203,7 @@ def admin(argv: list[str]) -> int:
         "scenario": config().get("scenario"),
         "cancel_scenario": config().get("cancel_scenario"),
         "handshake_scenario": config().get("handshake_scenario"),
+        "same_version_scenario": config().get("same_version_scenario"),
         "home": str(home),
     }
     runtime = home / "runtime.json"
@@ -370,6 +384,40 @@ def handshake_cancel_run() -> int:
     return 0
 
 
+def same_version_probe_run() -> int:
+    scenario = config().get("same_version_scenario", "success")
+    original_info = root_path("/data/phnixIot_device_OTA_INFO").read_bytes()
+    original_statistics = root_path("/data/phnixIot_device_statisic").read_bytes()
+    runtime_state(running=True, held=True, cloud_blocked=True, watchdogs_paused=True)
+    # The real 0033 handler truncates OTA_INFO before the board handshake.
+    root_path("/data/phnixIot_device_OTA_INFO").write_bytes(b"")
+    set_status("c350-sent", False, c350_sent=True)
+    time.sleep(0.1)
+    if scenario in {"status-1", "c357-leak", "c5a8-leak"}:
+        phase = {
+            "status-1": "c36e-unexpected",
+            "c357-leak": "forbidden-c357",
+            "c5a8-leak": "forbidden-c5a8",
+        }[scenario]
+        set_status(
+            phase, False, c350_sent=True, c36e_status=1,
+            c357_sent=scenario == "c357-leak",
+            c5a8_sent=scenario == "c5a8-leak", recovery_required=True,
+        )
+        return 0
+    root_path("/data/phnixIot_device_OTA_INFO").write_bytes(original_info)
+    root_path("/data/phnixIot_device_statisic").write_bytes(original_statistics)
+    if scenario == "restore-mismatch":
+        root_path("/data/phnixIot_device_OTA_INFO").write_bytes(make_ota_info(offset=1))
+    set_status(
+        "c350-same-version", True, c350_sent=True, c36e_status=0,
+        ssid_match=True, c357_sent=False, c5a8_sent=False,
+        state_restored=scenario != "restore-mismatch", recovery_required=False,
+    )
+    runtime_state(running=False, held=False, cloud_blocked=False, watchdogs_paused=False)
+    return 0
+
+
 def wait_for_cancel_hold(pid_file: Path) -> int:
     while True:
         time.sleep(0.1)
@@ -431,6 +479,8 @@ def shell(command: str) -> tuple[int, bytes]:
         return handshake_probe_run(), b""
     if command.startswith("/data/phnix_ota_runtime_hook handshake-cancel "):
         return handshake_cancel_run(), b""
+    if command.startswith("/data/phnix_ota_runtime_hook same-version-probe "):
+        return same_version_probe_run(), b""
     if command.startswith("/data/phnix_ota_runtime_hook hold "):
         runtime_state(held=True, running=False)
         set_status("guarded-hold", False, recovery_required=True)

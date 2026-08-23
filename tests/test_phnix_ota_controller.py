@@ -9,6 +9,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     crc16_x25,
     parse_ota_info,
     pre_c5a8_proof_ok,
+    same_version_proof_ok,
     validate_logger_checklist,
 )
 
@@ -97,6 +98,25 @@ class OtaInfoTests(unittest.TestCase):
         blockers = validate_logger_checklist(checklist)
         self.assertTrue(any("passive_only" in item for item in blockers))
         self.assertTrue(any("C5A8" in item for item in blockers))
+
+    def test_same_version_proof_is_fail_closed(self):
+        proof = {
+            "phase": "c350-same-version", "terminal": True,
+            "c350_sent": True, "c36e_status": 0, "ssid_match": True,
+            "c357_sent": False, "c5a8_sent": False,
+            "state_restored": True, "recovery_required": False,
+        }
+        self.assertTrue(same_version_proof_ok(proof))
+        for field in ("c350_sent", "ssid_match", "state_restored"):
+            broken = dict(proof)
+            broken[field] = False
+            self.assertFalse(same_version_proof_ok(broken))
+        for field in ("c357_sent", "c5a8_sent", "recovery_required"):
+            broken = dict(proof)
+            broken[field] = True
+            self.assertFalse(same_version_proof_ok(broken))
+        broken = dict(proof, c36e_status=1)
+        self.assertFalse(same_version_proof_ok(broken))
 
 
 if __name__ == "__main__":
