@@ -119,18 +119,20 @@ Verfügbar sind:
 |---|---|
 | `success` | vollständiger Transfer und bestätigter Step 12 |
 | `parser-rejected` | Original-0033 wird abgelehnt; sichere Aufräumphase |
-| `crc-error` | OTA_INFO-CRC wird während des Transfers ungültig |
-| `metadata-mismatch` | falsche MD5-/Software-Metadaten vor C5A8 |
-| `offset-backwards` | persistenter Offset läuft rückwärts |
-| `offset-overflow` | Offset überschreitet Firmwarelänge |
+| `crc-error` | ungültiger Beobachtungswert; Originaldienst meldet danach Fehler |
+| `metadata-mismatch` | abweichende Metadaten; Originaldienst meldet danach Fehler |
+| `offset-backwards` | Offset läuft rückwärts; Originaldienst meldet danach Fehler |
+| `offset-overflow` | Offset über Dateilänge; Originaldienst meldet danach Fehler |
 | `stall-c350` | Timeout im ersten Handshake |
-| `stall-c5a8` | Transferfortschritt bleibt stehen |
+| `stall-c5a8` | Transfer pausiert; Originaldienst beendet ihn mit Fehlerstatus |
 | `helper-exit` | Runtime-Helfer endet ohne terminalen Status |
 | `success-without-step12` | falsche Erfolgsmeldung bei Board-Step 11 |
 
-Bei allen nichtterminalen Fehlern muss der Launcher in `guarded-hold` enden.
-`parser-rejected` ist dagegen ein sicherer terminaler Zustand und wird sauber
-aufgeräumt.
+Fehler vor Beginn der Firmwareblöcke müssen in `guarded-hold` enden.
+Ab C5A8 greift der Launcher aufgrund beobachteter OTA_INFO-Werte nicht mehr ein;
+der Simulator lässt deshalb den Originaldienst selbst einen terminalen
+Fehlerstatus melden. `parser-rejected` ist ebenfalls ein sicherer terminaler
+Zustand und wird sauber aufgeräumt.
 
 ### Cancel-/Recovery-Szenarien
 

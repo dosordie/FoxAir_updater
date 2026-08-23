@@ -270,7 +270,9 @@ def helper_run() -> int:
         update_info(EXPECTED_SIZE + 1)
     elif scenario == "stall-c5a8":
         update_info(32_000)
-        return wait_for_hold(pid_file)
+        time.sleep(0.75)
+    elif scenario == "metadata-mismatch":
+        time.sleep(0.25)
     else:
         for offset in (32_000, 96_000, 160_000):
             time.sleep(0.25)
@@ -287,7 +289,13 @@ def helper_run() -> int:
                 runtime_state(running=False, cloud_blocked=False, watchdogs_paused=False)
             pid_file.unlink(missing_ok=True)
             return 0
-    return wait_for_hold(pid_file)
+    # Observer anomalies are resolved by the simulated original service. The
+    # controller must not force a hold once C5A8 transfer has started.
+    time.sleep(0.25)
+    set_status("failed", True, board_ota_step=12)
+    runtime_state(running=False, cloud_blocked=False, watchdogs_paused=False)
+    pid_file.unlink(missing_ok=True)
+    return 0
 
 
 def wait_for_hold(pid_file: Path) -> int:

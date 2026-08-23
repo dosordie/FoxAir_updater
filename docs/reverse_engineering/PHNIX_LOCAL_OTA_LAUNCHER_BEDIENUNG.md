@@ -136,7 +136,7 @@ Der Ablauf:
 7. erlaubt während `launcher_armed` nur den Run-Step-Override `7 -> 11`;
 8. aktiviert die Publish-Stubs erst nach akzeptiertem Original-`0033`;
 9. bestätigt lokal ausschließlich `0023`, `0053` und `0083`;
-10. überwacht CRC, Metadaten, Offset und Phasenzeit;
+10. zeigt den vom Originaldienst gemeldeten Fortschritt rein beobachtend an;
 11. beendet den Hook erst nach dem echten terminalen Übergang auf
     `board_ota_step == 12`;
 12. prüft danach erneut Originaldienst, dessen SHA-256, beide Watchdogs und die
@@ -167,11 +167,13 @@ Beispiel eines erfolgreichen simulierten Vollupdates:
 [OK] Originaldienst, Ueberwachung und Cloud-Verbindung laufen
 ```
 
-Der Fortschritt stammt nicht aus einer geschätzten Laufzeit, sondern aus dem
-CRC-geprüften persistenten OTA-Offset des Originaldienstes. Eine neue Zeile
+Der Fortschritt stammt nicht aus einer geschätzten Laufzeit, sondern aus einem
+CRC-gültigen persistenten OTA-Offset des Originaldienstes. Eine neue Zeile
 erscheint bei mindestens einem Prozent Änderung oder spätestens nach fünf
-Sekunden. Rückwärts laufende, zu große oder CRC-ungültige Werte lösen weiterhin
-einen sicheren Abbruch aus.
+Sekunden. Unvollständige, CRC-ungültige oder unplausible Zwischenwerte werden
+nicht angezeigt. Sie lösen während C5A8 ausdrücklich keinen Eingriff aus: Ab
+dem ersten Firmwareblock steuert und bewertet ausschließlich der Originaldienst
+die Übertragung.
 
 Für Protokolldateien oder Softwareintegration bleibt die vollständige
 JSON-Ausgabe erhalten:
@@ -185,8 +187,9 @@ kurze Ansicht auch bei umgeleiteter Ausgabe.
 
 ## 7. Guarded Hold
 
-Bei CRC-Fehler, falschen Metadaten, rückwärts laufendem Offset, Timeout oder
-unerwartetem Helper-Ende wird nicht automatisch aufgeräumt. Der Status lautet:
+Bei einem Fehler vor Beginn der Firmwareübertragung oder einem unerwarteten
+Ende der kontrollierenden Laufzeitumgebung wird nicht automatisch aufgeräumt.
+Der Status lautet:
 
 ```json
 {"phase":"guarded-hold","terminal":false,"recovery_required":true}
@@ -240,8 +243,8 @@ im VM-Simulator aktiv ausführbar.
 python3 phnix_local_ota_controller.py status
 ```
 
-Während C5A8 zählt nur der CRC-validierte persistente OTA_INFO-Offset als
-bestätigter Fortschritt.
+Während C5A8 dient ein CRC-gültiger OTA_INFO-Offset ausschließlich der Anzeige.
+Der Launcher greift aufgrund des Offsets nicht in die Originalübertragung ein.
 
 ## 10. Laborartefakte wieder entfernen
 

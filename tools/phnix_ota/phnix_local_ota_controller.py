@@ -176,10 +176,11 @@ def _human_event(event: str, fields: dict) -> None:
                 print(_paint(f"[OK] {label}" if good else f"[..] {label}", GREEN if good else CYAN), flush=True)
 
         info = fields.get("ota_info", {})
-        if phase == "c5a8" and isinstance(info, dict):
+        if phase == "c5a8" and isinstance(info, dict) and info.get("crc_ok") is True:
             offset = info.get("offset")
             length = info.get("length")
-            if isinstance(offset, int) and isinstance(length, int) and length > 0:
+            if (isinstance(offset, int) and isinstance(length, int)
+                    and length > 0 and 0 <= offset <= length):
                 percent = 100 if offset >= length else min(99, max(0, round(offset * 100 / length)))
                 now = time.monotonic()
                 if (percent >= _LAST_HUMAN_PERCENT + 1 or
@@ -674,56 +675,34 @@ def run_update(args, adb: AdbClient) -> None:
     phase_started = time.monotonic()
     previous_phase = None
     last_offset = -1
-    last_progress = time.monotonic()
     safe_terminal = False
     guarded_hold = False
     helper_exit_seen_at = None
     try:
         while True:
-            status = remote_status(adb)
+            # OTA_INFO is owned by the original service. A read can overlap a
+            # rewrite, so intermediate values are observational only and must
+            # never interrupt an active firmware transfer.
+            status = remote_status(adb, allow_transient_info=True)
             hook = status["hook"]
             info = status["ota_info"]
             print_event("status", **status)
-            if not info["crc_ok"]:
-                raise OtaError("OTA_INFO CRC became invalid")
-            if info["length"] and info["offset"] > info["length"]:
-                raise OtaError("OTA_INFO offset exceeds firmware length")
-            if (
-                last_offset >= 0
-                and info["offset"] < last_offset
-                and hook.get("phase") not in {"success", "failed"}
-            ):
-                raise OtaError("OTA_INFO offset moved backwards unexpectedly")
-            if info["offset"] != last_offset:
-                last_offset = info["offset"]
-                last_progress = time.monotonic()
+            observed_offset = info.get("offset") if info.get("crc_ok") is True else None
+            if isinstance(observed_offset, int) and observed_offset != last_offset:
+                last_offset = observed_offset
 
             phase = hook.get("phase", "unknown")
             if phase != previous_phase:
                 previous_phase = phase
                 phase_started = time.monotonic()
-                if phase == "c5a8":
-                    # C5A8 has its own no-progress watchdog. Time spent in the
-                    # parser and handshakes must not consume this allowance.
-                    last_progress = phase_started
                 print_event("phase-change", phase=phase)
-            if phase == "c5a8":
-                metadata_ok = (
-                    info["md5"] == args.firmware_manifest.md5
-                    and info["software_code"] == args.firmware_manifest.software_code
-                    and info["software_version"] == args.firmware_manifest.wire_version
-                    and info["length"] == args.firmware_manifest.size
-                    and info["offset"] >= 0
-                )
-                if not metadata_ok:
-                    raise OtaError("persisted OTA metadata does not match the manifest before C5A8")
             if hook.get("terminal") is True:
                 safe_terminal = phase in {"success", "failed", "parser-rejected"}
                 if phase == "success":
                     if hook.get("board_ota_step") != 12:
                         safe_terminal = False
                         raise OtaError("success was reported without confirmed board_ota_step 12")
-                    print_event("complete", offset=info["offset"], length=info["length"])
+                    print_event("complete", offset=info.get("offset"), length=info.get("length"))
                     return
                 raise OtaError(f"terminal OTA state: {phase}")
             if helper.poll() is not None:
@@ -738,13 +717,17 @@ def run_update(args, adb: AdbClient) -> None:
                 raise OtaError(f"runtime helper exited unexpectedly with code {helper.returncode}")
 
             now = time.monotonic()
+            if phase == "c5a8":
+                # From the first firmware block onward the original service is
+                # authoritative. The controller observes but never times out,
+                # pauses or cancels a transfer based on OTA_INFO progress.
+                time.sleep(args.poll_interval)
+                continue
             phase_limit = {
                 "c350": args.handshake_timeout,
                 "c357": args.handshake_timeout,
-                "c5a8": args.block_timeout,
             }.get(phase, args.start_timeout)
-            reference = last_progress if phase == "c5a8" else phase_started
-            if now - reference > phase_limit:
+            if now - phase_started > phase_limit:
                 raise OtaError(f"phase watchdog expired in {phase}")
             time.sleep(args.poll_interval)
     except BaseException:
@@ -872,7 +855,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--poll-interval", type=float, default=2.0)
     run.add_argument("--start-timeout", type=float, default=60.0)
     run.add_argument("--handshake-timeout", type=float, default=20.0)
-    run.add_argument("--block-timeout", type=float, default=25.0)
+    run.add_argument("--block-timeout", type=float, default=25.0,
+                     help="deprecated compatibility option; C5A8 is controlled by the original service")
     return parser
 
 

@@ -13,12 +13,12 @@ from pathlib import Path
 EXPECTED = {
     "success": (0, False),
     "parser-rejected": (1, False),
-    "crc-error": (1, True),
-    "metadata-mismatch": (1, True),
-    "offset-backwards": (1, True),
-    "offset-overflow": (1, True),
+    "crc-error": (1, False),
+    "metadata-mismatch": (1, False),
+    "offset-backwards": (1, False),
+    "offset-overflow": (1, False),
     "stall-c350": (1, True),
-    "stall-c5a8": (1, True),
+    "stall-c5a8": (1, False),
     "helper-exit": (1, True),
     "success-without-step12": (1, True),
 }
@@ -81,7 +81,7 @@ def main() -> int:
         print(json.dumps(results[-1]), flush=True)
 
     for scenario, (expected_rc, expected_hold) in CANCEL_EXPECTED.items():
-        run([str(args.sim), "scenario", "crc-error"])
+        run([str(args.sim), "scenario", "stall-c350"])
         run([str(args.sim), "cancel-scenario", scenario])
         with tempfile.TemporaryDirectory(prefix=f"phnix-cancel-{scenario}-") as state_dir:
             prepare = run([

@@ -149,15 +149,15 @@ class OtaInfoTests(unittest.TestCase):
         with redirect_stdout(output):
             controller._human_event("status", {
                 "hook": {"phase": "c5a8"},
-                "ota_info": {"offset": 71_899, "length": TEST_SIZE},
+                "ota_info": {"crc_ok": True, "offset": 71_899, "length": TEST_SIZE},
             })
             controller._human_event("status", {
                 "hook": {"phase": "c5a8"},
-                "ota_info": {"offset": 71_899, "length": TEST_SIZE},
+                "ota_info": {"crc_ok": True, "offset": 71_899, "length": TEST_SIZE},
             })
             controller._human_event("status", {
                 "hook": {"phase": "c5a8"},
-                "ota_info": {"offset": 74_776, "length": TEST_SIZE},
+                "ota_info": {"crc_ok": True, "offset": 74_776, "length": TEST_SIZE},
             })
         rendered = output.getvalue()
         self.assertEqual(rendered.count("Fortschritt:"), 2)
