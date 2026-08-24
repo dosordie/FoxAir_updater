@@ -81,16 +81,56 @@ def windows_ota_state_root() -> Path:
     return path
 
 
+def update_state_dir(args: list[str]) -> Path:
+    """Return the exact state directory the controller will use for this run."""
+    supplied = value_after(args, "--state-dir")
+    path = Path(supplied) if supplied else windows_ota_state_root()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def with_state_dir(args: list[str], state_dir: Path) -> list[str]:
     if "--state-dir" in args:
         return list(args)
     return [*args, "--state-dir", str(state_dir)]
 
 
-def latest_update_phase(state_dir: Path) -> str:
+def _run_state_signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def snapshot_run_states(state_dir: Path) -> dict[str, tuple[int, int]]:
+    """Capture existing run-state files so stale runs cannot be reused as proof."""
+    result: dict[str, tuple[int, int]] = {}
+    for path in state_dir.glob("*/run-state.json"):
+        if not path.is_file():
+            continue
+        try:
+            result[str(path.resolve())] = _run_state_signature(path)
+        except OSError:
+            continue
+    return result
+
+
+def latest_update_phase(
+    state_dir: Path,
+    before: dict[str, tuple[int, int]] | None = None,
+) -> str:
     files = [path for path in state_dir.glob("*/run-state.json") if path.is_file()]
+    if before is not None:
+        fresh: list[Path] = []
+        for path in files:
+            try:
+                signature = _run_state_signature(path)
+                old = before.get(str(path.resolve()))
+            except OSError:
+                continue
+            if old != signature:
+                fresh.append(path)
+        files = fresh
     if not files:
-        fail("Terminaler Host-Run-State des Updates fehlt")
+        fail(f"Terminaler Host-Run-State des aktuellen Updates fehlt unter: {state_dir}")
     latest = max(files, key=lambda path: path.stat().st_mtime_ns)
     try:
         value = json.loads(latest.read_text(encoding="utf-8"))
@@ -166,7 +206,9 @@ def backup_update_cache(base: list[str]) -> None:
     if paths["pending"].exists():
         fail(
             "Es existiert bereits ein offener Cache-Sicherungszustand. "
-            "Zuerst den Zustand klären bzw. bei bestätigtem Pre-C5A8-Zustand Restore ausführen."
+            f"Marker: {paths['pending']}. "
+            "Nur nach eindeutig bestätigtem Pre-C5A8-/Same-Version-Zustand bereinigen; "
+            "ansonsten zuerst den Zustand klären bzw. Restore ausführen."
         )
 
     for key in ("backup", "present", "absent", "md5", "sha256"):
@@ -312,12 +354,13 @@ def main() -> int:
         if not manifest_value:
             fail("--manifest fehlt beim Update")
         full_manifest_preflight(Path(manifest_value), manifest_tool)
-        state_dir = windows_ota_state_root()
+        state_dir = update_state_dir(args)
         run_args = with_state_dir(args, state_dir)
+        before_states = snapshot_run_states(state_dir)
         backup_update_cache(base)
         rc = run_core(core, run_args)
         if rc == 0:
-            phase = latest_update_phase(state_dir)
+            phase = latest_update_phase(state_dir, before_states)
             if phase == "same-version":
                 restore_update_cache(base)
                 note("Gleichversion über normalen Updatepfad erkannt; ursprünglicher Cache wurde wiederhergestellt.")
