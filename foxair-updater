@@ -18,7 +18,7 @@ Verwendung:
   ./foxair-updater update MANIFEST [--full] --confirm
   ./foxair-updater same-version MANIFEST --confirm
   ./foxair-updater restore
-  ./foxair-updater manifest FIRMWARE [--full] [--software-code CODE] [--display-version VERSION] [--target-ssid 0063]
+  ./foxair-updater manifest FIRMWARE [--full] [--show] [--software-code CODE] [--display-version VERSION] [--target-ssid 0063]
   ./foxair-updater version
 
 MANIFEST und FIRMWARE können als Pfad angegeben werden. Wird nur ein Dateiname
@@ -31,18 +31,22 @@ Beispiele:
   ./foxair-updater update FW3.4.json --full --confirm
   ./foxair-updater same-version FW3.3.json --confirm
   ./foxair-updater manifest FW3.4.bin --full
-  ./foxair-updater manifest FW3.4.bin --software-code 82400644 --display-version V3.4
+  ./foxair-updater manifest FW3.4.bin --full --show
+  ./foxair-updater manifest FW3.4.bin --software-code 82400644 --display-version V3.4 --show
 
 --full beim Manifest-Befehl extrahiert SoftwareCode und Wire-Version direkt aus
 der Firmwaredatei und plausibilisiert das Cortex-M-Image. target_ssid ist fuer
 FoxAir fest 0063 (Modbus Unit-ID 0x63).
 
+--show erzeugt dasselbe Manifest nur im Speicher und gibt das JSON auf stdout
+aus. Es wird dabei keine Manifestdatei geschrieben.
+
 --full beim Update analysiert die zum Manifest gehoerende Firmware erneut und
 vergleicht die extrahierte Identitaet sowie Dateigroesse und Hashes strikt mit
 dem Manifest, bevor ADB oder Busaktivitaet beginnt.
 
-Beim Manifest-Befehl wird die JSON-Datei standardmaessig neben der Firmware mit
-dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json.
+Beim Manifest-Befehl wird ohne --show die JSON-Datei standardmaessig neben der
+Firmware mit dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json.
 TXT
 }
 
@@ -219,18 +223,27 @@ case "$command" in
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --restore original
         ;;
     manifest)
-        [[ $# -ge 2 ]] || die "Verwendung: ./foxair-updater manifest FIRMWARE [--full] [--software-code CODE --display-version VERSION]"
+        [[ $# -ge 2 ]] || die "Verwendung: ./foxair-updater manifest FIRMWARE [--full] [--show] [--software-code CODE --display-version VERSION]"
         [[ -f "$MANIFEST_TOOL" ]] || die "Manifest-Werkzeug fehlt: $MANIFEST_TOOL"
         firmware="$(resolve_firmware "$2")"
         shift 2
 
         output_seen=0
+        show_seen=0
         for arg in "$@"; do
-            if [[ "$arg" == "--output" || "$arg" == --output=* ]]; then
-                output_seen=1
-                break
-            fi
+            case "$arg" in
+                --output|--output=*) output_seen=1 ;;
+                --show) show_seen=1 ;;
+            esac
         done
+
+        if (( show_seen == 1 && output_seen == 1 )); then
+            die "--show und --output koennen nicht gemeinsam verwendet werden"
+        fi
+
+        if (( show_seen == 1 )); then
+            exec python3 "$MANIFEST_TOOL" --firmware "$firmware" "$@"
+        fi
 
         if (( output_seen == 0 )); then
             output="${firmware%.*}.json"
