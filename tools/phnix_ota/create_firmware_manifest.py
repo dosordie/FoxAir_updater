@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a hash-pinned FoxAir firmware manifest for later review."""
+"""Create or preview a hash-pinned FoxAir firmware manifest."""
 
 import argparse
 import hashlib
@@ -26,8 +26,8 @@ def _analyse_firmware_identity(raw: bytes, image_base: int) -> tuple[str, str, s
     """Return software_code, wire_version, display_version and file offset.
 
     The V3.3 reference image contains the active mainboard identity as one
-    12-byte ASCII constant: 82400644 + 0033.  A neighbouring compatibility
-    constant ends in 0000, so it is deliberately excluded.  We do not rely on
+    12-byte ASCII constant: 82400644 + 0033. A neighbouring compatibility
+    constant ends in 0000, so it is deliberately excluded. We do not rely on
     the V3.3 file offset; a future image may move the constant.
 
     Fail closed if the format is absent or ambiguous.
@@ -56,7 +56,7 @@ def _analyse_firmware_identity(raw: bytes, image_base: int) -> tuple[str, str, s
         wire_version = match.group(2).decode("ascii")
         if wire_version == "0000":
             # The V3.3 image has a second code-referenced 12-byte constant
-            # 823003140000.  It is not the running firmware version identity.
+            # 823003140000. It is not the running firmware version identity.
             continue
         display_version = f"V{wire_version[2]}.{wire_version[3]}"
         candidates.append((software_code, wire_version, display_version, match.start()))
@@ -83,12 +83,22 @@ def main() -> int:
         action="store_true",
         help="extract software code/version from the firmware and validate the Cortex-M image",
     )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="print the generated manifest JSON to stdout without writing a file",
+    )
     parser.add_argument("--software-code")
     parser.add_argument("--display-version")
     parser.add_argument("--target-ssid", default=DEFAULT_TARGET_SSID)
     parser.add_argument("--image-base", default=DEFAULT_IMAGE_BASE)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+
+    if args.show and args.output is not None:
+        parser.error("--show and --output are mutually exclusive")
+    if not args.show and args.output is None:
+        parser.error("--output is required unless --show is used")
 
     raw = args.firmware.read_bytes()
 
@@ -146,8 +156,15 @@ def main() -> int:
         image_base=args.image_base,
     )
     manifest.validate_fields()
+    manifest_json = json.dumps(asdict(manifest), indent=2) + "\n"
+
+    if args.show:
+        sys.stdout.write(manifest_json)
+        return 0
+
+    assert args.output is not None
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(asdict(manifest), indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(manifest_json, encoding="utf-8")
     print(args.output)
     return 0
 
