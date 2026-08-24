@@ -1,18 +1,19 @@
 # Mainboard-Firmware V3.3 – Reverse-Engineering-Erkenntnisse
 
-Stand: 23. August 2026
+Stand: 24. August 2026
 
-Diese Datei dokumentiert die statische Reverse-Engineering-Analyse der PHNIX-/FoxAir-Mainboard-Firmware `82400644 / V3.3`.
+Diese Datei dokumentiert die Reverse-Engineering-Analyse der PHNIX-/FoxAir-Mainboard-Firmware `82400644 / V3.3`.
 
 Sie ist bewusst von der allgemeinen Registertabelle und der DWIN-/DGUS-Displaydokumentation getrennt. Hier werden auch interne RAM-Strukturen, Funktionsadressen, Zustandsmaschinen und noch nicht vollständig benannte Datenfelder dokumentiert.
 
 ## Bewertungsstufen
 
 - **bestätigt** – direkt im untersuchten Binary nachgewiesen oder durch Binary und reale Bus-/Gerätedaten gemeinsam bestätigt
+- **live bestätigt** – zusätzlich am realen Gerät funktional verifiziert
 - **sehr wahrscheinlich** – Datenfluss ist weitgehend geschlossen, die letzte physikalische oder semantische Zuordnung fehlt noch
 - **Hypothese** – plausible Arbeitshypothese, noch nicht ausreichend verifiziert
 
-Die Firmware wird ausschließlich statisch analysiert und nicht verändert.
+Die Firmware wird ausschließlich analysiert und nicht verändert.
 
 > **Adresskorrektur:** Die V3.3-BIN ist für `0x08050000` gelinkt. Frühere Analysen mit angenommener Basis `0x08080000` lagen bei aus dem Dateioffset berechneten Codeadressen systematisch `+0x30000` zu hoch. Die Funktionsadressen in dieser Datei sind auf die korrekte Basis umgestellt. RAM-, Peripheral- und tatsächlich im Code verwendete Flash-Zieladressen sind davon nicht betroffen.
 
@@ -46,31 +47,89 @@ Die Aufteilung `82400644` + `0033` passt zur realen Gerätekennung und zu den im
 
 # 2. Modbus-Engine der Hauptsteuerung
 
+Die V3.3 besitzt mehrere getrennte Modbusrollen. Seit dem vollständigen Dispatcher-Audit dürfen diese nicht mehr als eine einzige Registeroberfläche betrachtet werden.
+
+## 2.1 Direkter Mainboard-/User-Dispatcher
+
 | Dateioffset | VA | Funktion | Bewertung |
 |---:|---:|---|---|
 | `0x0094E` | `0x0805094E` | Modbus-CRC | bestätigt |
 | `0x03F62` | `0x08053F62` | FC03-Antwortaufbau | bestätigt |
 | `0x04040` | `0x08054040` | FC06-Antwortaufbau | bestätigt |
 | `0x040D4` | `0x080540D4` | FC10-Antwortaufbau | bestätigt |
-| `0x164C8` | `0x080664C8` | zentraler Modbus-Request-Dispatcher | bestätigt |
+| `0x164C8` | `0x080664C8` | direkter Mainboard-/Engineering-Request-Dispatcher | bestätigt |
 
-Der Hauptdispatcher behandelt FC03, FC06 und FC10. Für FC04 wurde dort kein eigener Pfad gefunden.
-
-## Bestätigte FC03-Bereiche
+Bestätigte normale/Engineeringbereiche:
 
 ```text
-1001–1540
-2001–2180
-5001–5090
-5091–5180
-6001–6090
-8801–8820
-60010        Spezialpfad
+MAIN:P       1001–1540
+MAIN:S       2001–2180
+ENG:A        5001–5090
+ENG:B        5091–5180
+DIAG         6001–6090
+ENG:CTRL     8801–8820
+SPECIAL      60000 / 60010
 ```
 
-`60000` wird beim Schreiben als Sonderbefehl behandelt und ist kein normales Holding Register.
+Die früher offene Serviceklassifikation ist inzwischen strukturell geschlossen:
 
-Die Service-/Engineering-Bereiche `5001+`, `6001+`, `8801+`, `60000` und `60010` sind noch nicht vollständig funktional benannt.
+```text
+5001–5090 = Engineering-Parameter-Schatten / Apply-Profil
+5091–5180 = 90-Wort-Konfig-/Synchronisationsfenster
+6001–6090 = read-only Engineering-Diagnosesnapshot
+8801–8820 = Engineering-Control
+60000      = MAIN:1024 / Unit Address auf 1 zurücksetzen
+60010      = STM32-UID-gebundene Unit-Address-Provisionierung
+```
+
+Für `ENG:CTRL:8801` ist die Funktion sogar **live bestätigt**: virtueller SG-Ready-Zustand bei `MAIN:1334=3`.
+
+## 2.2 Separater Warmlink-/LTE-Dispatcher Slave 0x63
+
+Ein zweiter großer Dispatcher liegt ungefähr bei:
+
+```text
+0x08067548
+```
+
+und gehört zum separaten Warmlink-/LTE-Servicepfad auf USART1/9600.
+
+Normale Bereiche dieses `0x63`-Dispatchers:
+
+```text
+FC03:
+  1001–1540
+  2001–2180
+  8001–8090
+
+FC06:
+  1001–1540
+  8001–8090
+
+FC10:
+  1001–1540
+  5091–5180
+  7001–7090
+  7091–7180
+  8001–8090
+  + spezielle 0xCxxx-OTA-/Servicehandler
+```
+
+**Wichtig:** `8801–8820` fehlt im normalen `0x63`-Dispatcher. Das erklärt den realen Test exakt:
+
+```text
+0x63:1334 lesen/schreiben -> funktioniert
+0x63:2133 lesen           -> funktioniert
+0x63:8801 FC03            -> Timeout
+```
+
+Der im Test beobachtete formal passende FC16-ACK auf `0x63:8801` ist deshalb **kein Beweis für einen Apply auf ENG:CTRL:8801**. Ein Cross-Bus-Gegencheck bestätigte keine sichere Änderung des echten User-Modbus-Registers. Die genaue Quelle dieses ACKs bleibt offen.
+
+Details:
+
+- [`FW3.3-MODBUS-GESAMTKATALOG.md`](FW3.3-MODBUS-GESAMTKATALOG.md)
+- [`FW3.3-MODBUS-SERVICE-ENGINEERING-AUDIT.md`](FW3.3-MODBUS-SERVICE-ENGINEERING-AUDIT.md)
+- [`FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md`](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md)
 
 ---
 
@@ -121,7 +180,7 @@ Im zweiten Kommunikationsabbild werden dagegen gesetzt:
 2105 = 416
 ```
 
-Die Werte sind **bestätigt**. Die Rolle des zweiten Abbilds ist **sehr wahrscheinlich** Display-/Kompatibilitätskommunikation, aber noch nicht bis zum UART-Peripheral geschlossen.
+Die Werte sind **bestätigt**. Die Rolle des zweiten Abbilds ist **sehr wahrscheinlich** Display-/Kompatibilitätskommunikation, aber noch nicht vollständig semantisch geschlossen.
 
 ---
 
@@ -451,17 +510,105 @@ Ventilrückschaltung **bestätigt**, Bezeichnung Recovery **sehr wahrscheinlich*
 
 ---
 
-# 8. SG Ready – Kurzreferenz
+# 8. SG Ready – virtueller Modbuspfad jetzt live bestätigt
 
-Nur zur Vollständigkeit; SG ist nicht mehr Hauptfokus der Analyse.
+SG-Runtime-Struktur:
 
 ```text
-0x20016948 +0 → 2034 Bit 12
-0x20016948 +1 → 2034 Bit 13
-0x20016948 +2 → 2133
+0x20016948
 ```
 
-State-Machine ungefähr VA `0x08081BC0`; reguläre States 1–4, zusätzlich interner State 5. Register 1334–1340 werden direkt verwendet.
+Wichtige Felder:
+
+```text
++0  → physischer SG-Kontakt 1 → MAIN:2034 Bit12
++1  → physischer SG-Kontakt 2 → MAIN:2034 Bit13
++2  → effektiver SG-State     → MAIN:2133
++0x24 → Hold-Timer            → 0x2001696C
+```
+
+State-Machine ungefähr:
+
+```text
+0x08081BC0 ff.
+```
+
+## 8.1 MAIN:1334 besitzt einen vierten Modus
+
+```text
+1334 = 0 → SG aus
+1334 = 1 → 1-Kontakt-Modus
+1334 = 2 → 2 physische SG-Kontakte
+1334 = 3 → virtueller SG-Ready-Eingang über Modbus
+```
+
+Bei `1334=3` liest die State-Machine:
+
+```text
+ENG:CTRL:8801
+RAM 0x20016970
+```
+
+Mapping:
+
+```text
+8801=1 → virtuelle Kontakte (1,0) → Mode 1 / Schlaf
+8801=2 → virtuelle Kontakte (0,0) → Mode 2 / wenig PV / Normal
+8801=3 → virtuelle Kontakte (0,1) → Mode 3 / mittel PV
+8801=4 → virtuelle Kontakte (1,1) → Mode 4 / High PV
+```
+
+## 8.2 Live-Verifikation
+
+Am direkten User-/Mainboard-Modbus wurde bestätigt:
+
+```text
+8801 initial 0
+lesen           ✓
+0..4 schreiben  ✓
+Rücklesen       ✓
+Wert bleibt     ✓
+SG-Wirkung      ✓
+```
+
+Explizit beobachtet:
+
+```text
+8801=1 → Mode 1 / Schlafmodus → WP startet nicht
+8801=4 → Mode 4 / High Power  → WP startet
+```
+
+Die grundsätzliche Wirkung von `8801` ist damit **live bestätigt**.
+
+## 8.3 Fester 10-Minuten-Hold
+
+Nach jeder tatsächlich akzeptierten SG-Modusänderung setzt V3.3:
+
+```text
+0x2001696C = 0x04B0 = 1200
+```
+
+Die gleiche SG-Routine multipliziert die Mode-1-Schlafzeit `MAIN:1335` mit `120`. Damit entsprechen 120 Zyklen einer Minute und ein SG-Zyklus `0,5 s`.
+
+Folglich:
+
+```text
+1200 × 0,5 s = 600 s = 10 Minuten
+```
+
+Während des Holds kann `8801` sofort geändert und zurückgelesen werden, aber `MAIN:2133` bleibt zunächst auf dem zuletzt akzeptierten Mode. Nach Ablauf wird der dann aktuell anliegende Sollzustand übernommen; Zwischenwerte können vollständig übersprungen werden.
+
+## 8.4 Änderung von MAIN:1334 setzt den Hold zurück
+
+V3.3 setzt bei Änderung der SG-Quellenauswahl den Hold-Timer und interne Übergangszustände zurück.
+
+Dieser Punkt wurde zunächst statisch rekonstruiert und am 24.08.2026 anschließend **am realen Gerät getestet und bestätigt**.
+
+Damit ist die beobachtete Verzögerung vollständig erklärt.
+
+Details:
+
+[`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md)
 
 ---
 
@@ -469,8 +616,14 @@ State-Machine ungefähr VA `0x08081BC0`; reguläre States 1–4, zusätzlich int
 
 | Register | Funktion | Bewertung |
 |---:|---|---|
-| 2133 | SG-State | bestätigt |
-| 2136 | aufbereiteter signed Temperatur-/Regelwert | Charakter bestätigt, physischer Sensor offen |
+| **2133** | **effektiver SG-Ready-Modus 0..4; 10-Minuten-Hold** | **Binary + live bestätigt** |
+| 2136 | T04 Außentemperatur, zweiter Publikationspfad | bestätigt |
+| 2137 | elektrische WP-/Inverterleistung ohne Zusatzanteil, ×10 | bestätigt |
+| 2138 | thermische WP-Leistung ohne Zusatzanteil, ×10 | bestätigt |
+| 2140/2141 | gemeinsamer 32-Bit-Wert | Struktur bestätigt |
+| 2142/2143 | weiterer 32-Bit-Wert | Struktur bestätigt |
+| 2146 | Capability-/Statusbitfeld, Basis `0x002C` | bestätigt |
+| 2151–2158 | separates internes/Warmlink-nahes Subsystem | Provenance bestätigt, Semantik teilweise offen |
 | 2160 | Zone-1-Raumtemperatur | bestätigt |
 | 2161 | Zone-2-Mischwassertemperatur | bestätigt |
 | 2162 | Zone-2-Raumtemperatur | bestätigt |
@@ -478,42 +631,40 @@ State-Machine ungefähr VA `0x08081BC0`; reguläre States 1–4, zusätzlich int
 | 2164 | Zone-1-Auslauftemperatur nach AT-Kompensation | bestätigt |
 | 2165 | Zone-2-Auslauftemperatur nach AT-Kompensation | bestätigt |
 | 2166 | signed Wert derselben Zonenstruktur | aktiv, Bedeutung offen |
-
-Weitere aktive Kandidaten:
-
-- 2137/2138: zwei Float-Messgrößen, jeweils `×10`
-- 2140/2141: 32-Bit-Wert
-- 2142/2143: weiterer 32-Bit-Wert
-- 2146: aktives Capability-/Konfigurationsbitfeld
-- 2151–2158: separates internes Subsystem
-- 2178–2180: zusammenhängender Dreierblock
+| 2178–2180 | zusammenhängender Dreierblock | Provenance bestätigt, Semantik offen |
 
 ---
 
-# 10. Verstecktes internes Registerfenster 8001–8090
+# 10. Warmlink-/0x63-Servicefenster 8001–8090
 
-Dispatcher ungefähr VA `0x08067548`.
+Der bereits früher gefundene Block `8001–8090` ist korrekt, muss aber ausdrücklich vom direkten Engineeringblock `8801–8820` getrennt werden.
+
+Dispatcher:
 
 ```text
-Slave/Unit 0x63 = 99
-Broadcast 0
-FC03
-FC06
-FC10
-Register 8001–8090
+ungefähr 0x08067548
+Slave 0x63
 ```
 
-RAM-Fenster:
+Warmlink-spezifisches RAM-Fenster:
 
 ```text
 0x20015EF0
 ```
 
+Für `8001–8090` sind im `0x63`-Dispatcher bestätigt:
+
+```text
+FC03
+FC06
+FC10
+```
+
 Spiegelungen:
 
-| öffentlich | intern |
+| öffentlich | Warmlink-intern |
 |---:|---:|
-| 2151 | Low-Byte 8001 |
+| 2151 | Teil-/Statuspfad 8001 |
 | 2153 | 8002 |
 | 2156 | 8003 |
 | 2154 | 8004 |
@@ -523,7 +674,31 @@ Spiegelungen:
 
 Internes Register 8006 besitzt eine Änderungserkennung mit 150-Zyklen-Timer. Zentrale Verarbeitung ungefähr `0x08088E5C–0x080894FC`.
 
-Die Funktion des Subsystems bleibt **offen**. Eine optionale Erweiterungsfunktion ist nur **Hypothese**.
+Die genaue Funktion des Subsystems bleibt offen.
+
+Die entscheidende Namespace-Regel lautet:
+
+```text
+WARMLINK:SVC 8001–8090
+    = eigener Serviceblock des 0x63-Dispatchers
+
+ENG:CTRL 8801–8820
+    = direkter User-/Mainboard-Engineeringblock
+    = 8801 virtueller SG-Ready-Zustand
+```
+
+Zusätzlich kennt der `0x63`-FC10-Dispatcher die separaten Servicefenster:
+
+```text
+7001–7090
+7091–7180
+```
+
+deren detaillierte Semantik noch offen ist.
+
+Details:
+
+[`FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md`](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md)
 
 ---
 
@@ -1031,30 +1206,45 @@ Ein Smart-Modus ist für EVI nicht definiert. E01/E19 und die hier beschriebene 
 
 ## 12.8 Abgeschlossene Detailblöcke
 
-Für drei inzwischen deutlich tiefer rekonstruierte Regelblöcke existieren eigene Detaildokumente:
+Für mehrere inzwischen deutlich tiefer rekonstruierte Regel-/Kommunikationsblöcke existieren eigene Detaildokumente:
 
 - [`FW3.3-EEV-SMART-REGELUNG.md`](FW3.3-EEV-SMART-REGELUNG.md) – EEV-, Smart- und Ventilantriebsregelung
 - [`FW3.3-OELRUECKFUEHRUNG.md`](FW3.3-OELRUECKFUEHRUNG.md) – Ölrückführung: 1…35 Hz, 120-min-Qualifikation, 60-Hz-Anforderung, H34-ERP-Sonderpfad und externe Modbus-Rekonstruktion
 - [`FW3.3-LUEFTERREGELUNG.md`](FW3.3-LUEFTERREGELUNG.md) – Lüfterkennlinien, 2074/2075/2076, 2019 Bit 2, Verdampfertemperatur, AT-Limits, Schutz-/Defrost-Overrides und Buspfad
+- [`FW3.3-MODBUS-GESAMTKATALOG.md`](FW3.3-MODBUS-GESAMTKATALOG.md) – vollständige Modbus-Namespace-/Rechtematrix
+- [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md) – virtueller SG-Ready-Pfad, 10-Minuten-Hold und Live-Verifikation
+- [`FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md`](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md) – eigener LTE-/Service-Dispatcher und dessen Registerfenster
 
 ---
 
 # 13. Aktuell offene Hauptziele
 
+Nach Abschluss des Mainboard-Modbusaudits und der SG-Ready-Liveverifikation bleiben vor allem semantische Einzelziele:
+
 1. verbleibende Writer und Limitquellen von Register 2071 vollständig benennen
 2. C11-Derating-Tabelle mit allen Temperaturstützpunkten rekonstruieren
 3. Inverter-Run-/Mode-Wörter im FC10-Paket ab 1999 vollständig benennen
-4. Register 1432/1433 aus der Parameter-Validierung: Min/Max/Default/RW extrahieren
-5. PWM-Pin von TIM5_CH2 bis zur GPIO-/AFIO-Konfiguration verfolgen
-6. Helper `0x0808799C` physikalisch eindeutig einem Sensor zuordnen
-7. verstecktes Subsystem 8001–8090 identifizieren
-8. Register 2137/2138 und 2140–2143 benennen
+4. PWM-Pin von TIM5_CH2 bis zur GPIO-/AFIO-Konfiguration verfolgen
+5. Helper `0x0808799C` physikalisch eindeutig einem Sensor zuordnen
+6. Warmlink-Subsystem `8001–8090` fachlich identifizieren
+7. Warmlink-FC10-Servicefenster `7001–7090` und `7091–7180` fachlich identifizieren
+8. Register 2140–2143 fachlich benennen
 9. 2146 Bit für Bit auf Ausstattungs-/Capability-Funktionen zurückführen
 10. 2151–2158 vollständig entschlüsseln
 11. Smart-EEV: physikalische Bedeutung der vier Arbeitspunktzustände und der verwendeten Referenztabelle benennen
-12. Service-/Engineering-Bereiche 5001–5180, 6001–6090, 8801–8820 sowie 60000/60010 auflösen
+12. genaue Quelle/Bedeutung des im Realtest beobachteten formal passenden FC16-ACKs auf nicht unterstütztes `0x63:8801` klären
 
-Die zuvor hier aufgeführten Hauptziele **Lüfterregelung** und **Öl-Rückführungszustandsmaschine** sind mit Stand 23. August 2026 als eigene Analyseblöcke geschlossen und in den oben verlinkten Detaildokumenten festgehalten. Bei der Lüfterregelung bleiben nur die exakten Herstellerbezeichnungen einzelner F-Parameter und Hardwarevarianten als Restpunkte offen.
+Nicht mehr als offene Hauptziele gelten:
+
+- direkte Service-/Engineeringbereiche 5001–5180 / 6001–6090 / 8801–8820
+- Sonderkommandos 60000/60010
+- SG-Ready-Funktion von 8801
+- 10-Minuten-SG-Hold
+- Reset dieses Holds durch Änderung von 1334
+- Grund für den FC03-Timeout von `0x63:8801`
+- physische UART-Trennung interner Ring vs. Warmlink/LTE
+
+Die Lüfterregelung und Öl-Rückführungszustandsmaschine sind ebenfalls als eigene Analyseblöcke geschlossen. Bei ihnen bleiben nur Herstellerbezeichnungen einzelner Parameter/Hardwarevarianten als Restpunkte offen.
 
 ---
 
@@ -1065,7 +1255,9 @@ Neue Register werden möglichst über die vollständige Provenance-Kette dokumen
 ```text
 Modbusregister
   ↓
-Registerspiegel
+Namespace / Dispatcher / physischer Bus
+  ↓
+Registerspiegel oder Remote-Puffer
   ↓
 interne RAM-Variable
   ↓
@@ -1074,6 +1266,12 @@ Writer / Berechnungsfunktion
 Sensor, Zustand oder Aktor
   ↓
 Verbraucher / Seiteneffekt
+  ↓
+Live-Gegenprüfung, wenn gefahrlos möglich
 ```
+
+Seit den `8801`-Tests gilt zusätzlich ausdrücklich:
+
+> **Eine identische Registernummer oder ein formal gültiger Modbus-ACK reicht bei dieser Firmware nicht als semantischer Beweis. Dispatcher, Buskontext und unabhängiger Readback müssen gemeinsam betrachtet werden.**
 
 Damit sollen insbesondere bisher als `reserved` oder unbekannt geführte Register reproduzierbar und mit Confidence-Stufe entschlüsselt werden.
