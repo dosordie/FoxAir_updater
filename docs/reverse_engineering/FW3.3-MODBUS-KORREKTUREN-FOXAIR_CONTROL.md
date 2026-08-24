@@ -2,9 +2,7 @@
 
 Stand: 24. August 2026
 
-Diese Datei ist die **umsetzbare Delta-Liste** zum ausführlichen Audit:
-
-[`FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md`](FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md)
+Diese Datei ist die **umsetzbare Delta-Liste** zum ausführlichen V3.3-Modbusaudit.
 
 Vergleichsbasis:
 
@@ -15,7 +13,7 @@ Datei:      foxair_phnix_registers.json
 Blob SHA:   ff24c160813f12304b7b8c403be0287b49a84686
 ```
 
-Die Datei beschreibt **nur Änderungen, die aus dem V3.3-Binary bzw. Binary + realem Bus belastbar ableitbar sind**. Sie ist noch kein Commit gegen `FoxAir_Control` selbst.
+Die Datei beschreibt nur Änderungen, die aus dem V3.3-Binary bzw. aus **Binary + realem Bus-/Funktionstest** belastbar ableitbar sind. Sie ist noch kein Commit gegen `FoxAir_Control/data` selbst.
 
 ---
 
@@ -38,6 +36,7 @@ Die Datei beschreibt **nur Änderungen, die aus dem V3.3-Binary bzw. Binary + re
 | 2119 | Reserviert | High-Wort des 32-Bit-Zählers 2119/2120 | bestätigt |
 | 2121 | Reserviert | High-Wort des 32-Bit-Zählers 2121/2122 | bestätigt |
 | 2123 | Reserviert | High-Wort des 32-Bit-Zählers 2123/2124 | bestätigt |
+| **2133** | aktiver SG-Modus | **effektiver SG-Ready-Modus 0..4; Umschaltung unterliegt festem 10-Minuten-Hold** | **Binary + live bestätigt** |
 | 2136 | berechneter x0,1-Regel-/Modulwert | **T04 / Außentemperatur, zweiter Veröffentlichungsweg** | bestätigt |
 | 2137 | Spiegel von 2054 (Kandidat) | **elektrische WP-/Inverterleistung ohne zusätzlichen Leistungsanteil**, `/10 kW` | bestätigt |
 | 2138 | Spiegel von 2059 (Kandidat) | **thermische WP-Leistung ohne zusätzlichen Leistungsanteil**, `/10 kW` | bestätigt |
@@ -45,6 +44,13 @@ Die Datei beschreibt **nur Änderungen, die aus dem V3.3-Binary bzw. Binary + re
 | 2142/2143 | zwei unbekannte RAW | ein gemeinsamer 32-Bit-Wert | Struktur bestätigt |
 | 2146 | Funktion unbekannt | Capability-/Statusbitfeld; V3.3-Basis `0x002C` | bestätigt |
 | 2147 | Funktion unbekannt | intern befüllter signed V3.3-Wert | Provenance bestätigt |
+
+Zusätzlich neu aufzunehmen:
+
+| Register | neuer Stand | Sicherheit |
+|---:|---|---|
+| **1334** | Wert `3` = virtueller SG-Ready-Eingang über Modbus | **Binary + live bestätigt** |
+| **8801** | virtueller SG-Ready-Zustand `1..4`; direkter User-Modbus R/W | **Binary + live bestätigt** |
 
 ---
 
@@ -54,11 +60,6 @@ Die Datei beschreibt **nur Änderungen, die aus dem V3.3-Binary bzw. Binary + re
 
 ```text
 MAIN:2054 = int(float[0x200161A4+0x14] × 10)
-```
-
-Damit:
-
-```text
 scale = 0.1 kW
 ```
 
@@ -66,11 +67,6 @@ scale = 0.1 kW
 
 ```text
 MAIN:2059 = int(float[0x200161A4+0x18] × 10)
-```
-
-Damit:
-
-```text
 scale = 0.1 kW
 ```
 
@@ -78,11 +74,6 @@ scale = 0.1 kW
 
 ```text
 MAIN:2060 = int(float[0x200161A4+0x1C] × 100)
-```
-
-Damit:
-
-```text
 scale = 0.01 COP
 ```
 
@@ -134,21 +125,10 @@ Empfohlene GUI-Namen:
 Der Softwarekatalog darf die High-Wörter nicht mehr als Reserve darstellen.
 
 ```text
-Elektrisch Heizen:
-    high = 2117
-    low  = 2118
-
-Thermisch Heizen:
-    high = 2119
-    low  = 2120
-
-Elektrisch Kühlen:
-    high = 2121
-    low  = 2122
-
-Thermisch Kühlen:
-    high = 2123
-    low  = 2124
+Elektrisch Heizen:  2117 high / 2118 low
+Thermisch Heizen:   2119 high / 2120 low
+Elektrisch Kühlen:  2121 high / 2122 low
+Thermisch Kühlen:   2123 high / 2124 low
 ```
 
 Berechnung:
@@ -173,10 +153,7 @@ Aufgrund der Betriebszweige sind diese **sehr wahrscheinlich**:
 2127/2128 = thermische Energie Warmwasser/DHW
 ```
 
-Empfehlung für die Software:
-
-- 32-Bit-Kombination sofort implementierbar,
-- DHW-Klartext zunächst mit Confidence `very_likely`, bis ein Warmwasserlauf live korreliert wurde.
+Empfehlung: 32-Bit-Kombination sofort implementierbar; DHW-Klartext bis zur Livekorrelation mit Confidence `very_likely` führen.
 
 ---
 
@@ -189,17 +166,9 @@ remote_source = INV1:2100
 role = Compressor/Inverter Driver Fault Word 1
 ```
 
-Sonderfall:
+Sonderfall `2081 Bit15` wird lokal vom Mainboard erzeugt, wenn Unit `0x01` nicht mehr gültig antwortet.
 
-```text
-2081 Bit15
-```
-
-wird lokal vom Mainboard erzeugt, wenn Unit `0x01` nicht mehr gültig antwortet.
-
-Daher sollte die Software bei Bit15 nicht formulieren, der Inverter selbst habe diesen Fehler „gemeldet“.
-
-Besser:
+Besserer Text:
 
 ```text
 Mainboard ↔ Inverterboard Kommunikation ausgefallen
@@ -212,13 +181,13 @@ remote_source = INV1:2109
 role = Compressor/Inverter Driver Fault Word 2
 ```
 
-Die bestehenden Bitnamen sollen in einem separaten Alarmbit-Audit erhalten und einzeln überprüft werden; kein pauschales Überschreiben.
+Die bestehenden Bitnamen separat prüfen; kein pauschales Überschreiben.
 
 ---
 
 ## 6. 2146 als Bitfeld anlegen
 
-Empfohlenes vorläufiges Schema:
+Vorläufiges Schema:
 
 ```json
 {
@@ -237,13 +206,7 @@ Empfohlenes vorläufiges Schema:
 }
 ```
 
-Wichtig:
-
-```text
-Bits 2, 3 und 5 sind in diesem V3.3-Build immer gesetzt.
-```
-
-Daher ist der normale Basiswert:
+Bits 2, 3 und 5 sind in diesem V3.3-Build immer gesetzt. Normaler Basiswert:
 
 ```text
 0x002C = 44
@@ -283,7 +246,7 @@ Konservative Ersteinträge:
 | 2179 | V3.3 Diagnose 2179 | uint16 `0x20016DB4+0x02` |
 | 2180 | V3.3 Diagnose 2180 | uint16 `0x20016DB4+0x04` |
 
-Reale Beispielwerte aus dem Mitschnitt:
+Reale Beispielwerte:
 
 ```text
 2152 = 1
@@ -292,13 +255,97 @@ Reale Beispielwerte aus dem Mitschnitt:
 2166 = 1
 ```
 
-Die Felder sollen zunächst sichtbar und loggbar gemacht werden, aber nicht mit erfundenen Herstellerbezeichnungen versehen werden.
+Die Felder zunächst sichtbar/loggbar machen, aber nicht mit erfundenen Herstellerbezeichnungen versehen.
 
 ---
 
-## 8. Unit-1-Remote-Reg. 2002 ebenfalls korrigieren
+## 8. SG Ready / 1334 / 8801 – jetzt live bestätigt
 
-Aus der neuen Gesamtregisterzuordnung ist jetzt geschlossen:
+Dieser Punkt ist seit den Tests vom 24.08.2026 kein reiner Reverse-Engineering-Kandidat mehr.
+
+### MAIN:1334
+
+Ergänzen:
+
+```text
+0 = Aus
+1 = 1 Kontakt
+2 = 2 physische Kontakte
+3 = virtueller SG-Ready-Eingang über Modbus
+```
+
+### ENG:CTRL:8801
+
+Neues Registermodell:
+
+```text
+Name: Virtueller SG-Ready-Zustand
+Adresse: 8801 / 0x2261
+Werte: 1..4
+Wirksam wenn: MAIN:1334 == 3
+Direkter User-Modbus: R/W live bestätigt
+```
+
+Mapping:
+
+```text
+1 -> Kontakte (1,0) -> Mode 1
+2 -> Kontakte (0,0) -> Mode 2
+3 -> Kontakte (0,1) -> Mode 3
+4 -> Kontakte (1,1) -> Mode 4
+```
+
+Live beobachtet unter anderem:
+
+```text
+8801=1 -> Mode 1 / Schlafmodus; WP startet nicht
+8801=4 -> Mode 4 / High Power; WP startet
+```
+
+### Fester 10-Minuten-Hold
+
+Nach jeder tatsächlich akzeptierten SG-Modusänderung gilt:
+
+```text
+hold = 1200 Zyklen
+SG-Zyklus = 0,5 s
+=> 10 Minuten
+```
+
+Während des Holds ändert sich `8801` sofort, `MAIN:2133` bleibt aber zunächst auf dem zuletzt akzeptierten Mode. Nach Ablauf wird der dann aktuell anliegende gewünschte Zustand übernommen.
+
+### MAIN:1334 resettiert den Hold
+
+**Binary + live bestätigt:** Eine Änderung der SG-Quellenauswahl in `1334` setzt den laufenden 10-Minuten-Hold und zugehörige Übergangszustände zurück.
+
+Softwarehinweis:
+
+- `2133` ist die effektive Rückmeldung, nicht `8801` selbst.
+- UI sollte einen laufenden/erwartbaren Hold erklären.
+- Ein 1334-Quellenwechsel sollte nicht automatisch als Methode für schnelles Umschalten verwendet werden.
+
+### User-Modbus und Warmlink/LTE nicht gleich behandeln
+
+Direkter User-Modbus:
+
+```text
+8801 lesen/schreiben -> live bestätigt
+```
+
+Warmlink-/LTE, Slave `0x63`:
+
+```text
+1334 R/W -> funktioniert
+2133 R   -> funktioniert
+8801 FC03 -> Timeout
+8801 FC16 -> ACK, tatsächlicher Apply auf User-8801 nicht bestätigt
+```
+
+Daher muss das Backend die Zugriffswege getrennt behandeln.
+
+---
+
+## 9. Unit-1-Remote-Reg. 2002 ebenfalls korrigieren
 
 ```text
 INV1:2002
@@ -312,15 +359,13 @@ Im aktuellen `FoxAir_Control`-Parameterbestand ist:
 MAIN:1343 = A39 / Max. Current Value
 ```
 
-Damit ist das in `FW3.3-UNIT1-INVERTER-PROTOKOLL.md` noch als unbekannt bezeichnete Remote-Wort funktional:
+Damit ist das Remote-Wort funktional:
 
 > **Maximalstrom-/Current-Limit-Vorgabe an das Inverterboard**
 
-Dies sollte bei der nächsten Aktualisierung der Unit-1-Dokumentation ergänzt werden.
-
 ---
 
-## 9. Noch nicht automatisch in FoxAir_Control ändern
+## 10. Noch nicht automatisch in FoxAir_Control ändern
 
 Folgende Punkte bleiben bewusst Kandidaten/offen:
 
@@ -334,23 +379,33 @@ Folgende Punkte bleiben bewusst Kandidaten/offen:
 2147 fachliche Bedeutung
 2151–2166 fachliche Bedeutung
 2178–2180 fachliche Bedeutung
+8802–8820 Engineering-Semantik
 ```
 
-Der Unterschied ist wichtig:
+Wichtig ist die Trennung:
 
 - **Provenance** kann bestätigt sein,
-- während die **fachliche Herstellerbezeichnung** noch offen bleibt.
-
-Die Software sollte diese beiden Confidence-Ebenen künftig getrennt speichern können.
+- während die **fachliche Herstellerbezeichnung** offen bleibt.
 
 ---
 
-## 10. Empfohlene Reihenfolge beim späteren Software-Commit
+## 11. Empfohlene Reihenfolge beim späteren Software-Commit
 
 1. sichere Namen/Descriptions korrigieren,
-2. 2054/2059/2060 Confidence hochstufen,
-3. Energiezähler 32-Bit-fähig machen,
-4. 2150–2180 konservativ ergänzen,
-5. Runtime-/Remote-Provenance als Metadaten hinzufügen,
-6. erst danach GUI-Texte für noch offene Felder weiter verfeinern.
+2. `1334 = 3` und `8801` einschließlich Werte 1..4 aufnehmen,
+3. 10-Minuten-Hold und 1334-Hold-Reset in SG-UI/Logik dokumentieren,
+4. User- und Warmlink-/LTE-Zugriffsrechte getrennt modellieren,
+5. 2054/2059/2060 Confidence hochstufen,
+6. Energiezähler 32-Bit-fähig machen,
+7. 2150–2180 konservativ ergänzen,
+8. Runtime-/Remote-Provenance als Metadaten hinzufügen,
+9. erst danach GUI-Texte für noch offene Felder weiter verfeinern.
 
+---
+
+## 12. Verwandte Dokumente
+
+- [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md)
+- [`FW3.3-MODBUS-GESAMTKATALOG.md`](FW3.3-MODBUS-GESAMTKATALOG.md)
+- [`FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md`](FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md)
+- [`FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md`](FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md)
