@@ -2,20 +2,37 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from html import escape
+from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+)
 
 import foxair_updater_gui as base
+import release_check
 
 
 APP_VERSION = "0.1.6"
+MODEM_DRIVER_URL = "https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip"
 
 GREEN = "#16803a"
 YELLOW = "#b26a00"
 RED = "#b42318"
 GRAY = "#667085"
+
+
+class UpdateSignals(QObject):
+    result = Signal(dict)
+    error = Signal(str)
 
 
 class MainWindow(base.MainWindow):
@@ -24,8 +41,196 @@ class MainWindow(base.MainWindow):
     def __init__(self):
         self._flow_steps: dict[str, tuple[str, str]] = {}
         self._flow_title = "Noch kein Ablauf gestartet."
+        self._release_check_running = False
+        self._latest_release_url = release_check.UPDATE_RELEASES_URL
+        self._update_signals = UpdateSignals()
+        self._update_signals.result.connect(self._release_check_result)
+        self._update_signals.error.connect(self._release_check_error)
         super().__init__()
         self.setWindowTitle(f"FoxAir Updater {APP_VERSION} – EXPERIMENTELL")
+
+        # QSettings already stores ADB mode/path, Pi address/port and the backup
+        # target in the base GUI. Persist manual edits as well and remember the
+        # last directories used by firmware/manifest dialogs.
+        self.backup_path.editingFinished.connect(self._persist_settings)
+        self.update_manifest.editingFinished.connect(self._persist_settings)
+        self.same_manifest.editingFinished.connect(self._persist_settings)
+        self.firmware.editingFinished.connect(self._persist_settings)
+        QTimer.singleShot(900, lambda: self._check_for_updates(silent=True))
+
+    def _connection(self):
+        widget = super()._connection()
+        layout = widget.layout()
+
+        driver_row = QHBoxLayout()
+        driver = QPushButton("SIMCom USB-Treiber herunterladen")
+        driver.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(MODEM_DRIVER_URL)))
+        driver_row.addWidget(driver)
+        driver_note = QLabel("Für die direkte USB-Verbindung unter Windows zuerst den Modem-Treiber installieren.")
+        driver_note.setWordWrap(True)
+        driver_row.addWidget(driver_note, 1)
+        # The existing Platform-Tools download row is item 1 in the base GUI.
+        # Insert the modem driver directly before it, as prerequisite step 1.
+        layout.insertLayout(1, driver_row)
+
+        update_heading = QLabel("<b>Programmupdate</b>")
+        self.release_status = QLabel(f"Installiert: v{APP_VERSION} – GitHub-Prüfung noch nicht ausgeführt.")
+        self.release_status.setWordWrap(True)
+        update_row = QHBoxLayout()
+        self.release_check_btn = QPushButton("Auf neue Version prüfen")
+        self.release_check_btn.clicked.connect(lambda: self._check_for_updates(silent=False))
+        self.release_open_btn = QPushButton("GitHub Release öffnen")
+        self.release_open_btn.setEnabled(False)
+        self.release_open_btn.clicked.connect(self._open_latest_release)
+        update_row.addWidget(self.release_check_btn)
+        update_row.addWidget(self.release_open_btn)
+        update_row.addStretch()
+
+        # Keep the existing explanatory note and final stretch at the bottom.
+        insert_at = max(0, layout.count() - 1)
+        layout.insertWidget(insert_at, update_heading)
+        layout.insertWidget(insert_at + 1, self.release_status)
+        layout.insertLayout(insert_at + 2, update_row)
+        return widget
+
+    def _settings_directory(self, key: str, fallback: Path | None = None) -> Path:
+        value = str(self.settings.value(key, "") or "").strip()
+        if value:
+            path = Path(value)
+            if path.is_dir():
+                return path
+        return fallback or Path.home()
+
+    def _remember_parent(self, key: str, value: str) -> None:
+        text = str(value or "").strip().strip('"')
+        if not text:
+            return
+        path = Path(text)
+        parent = path if path.is_dir() else path.parent
+        if parent and parent.exists():
+            self.settings.setValue(key, str(parent))
+
+    def _persist_settings(self) -> None:
+        self.settings.setValue("adb", self.adb.text().strip().strip('"'))
+        self.settings.setValue("backup", self.backup_path.text().strip())
+        self.settings.setValue("adb_mode", "remote" if self.adb_remote.isChecked() else "local")
+        self.settings.setValue("remote_host", self.remote_host.text().strip())
+        self.settings.setValue("remote_port", self.remote_port.value())
+        self._remember_parent("manifest_dir", self.update_manifest.text())
+        self._remember_parent("manifest_dir", self.same_manifest.text())
+        self._remember_parent("firmware_dir", self.firmware.text())
+        self.settings.sync()
+
+    def _browse_adb(self):
+        current = self.adb.text().strip().strip('"')
+        current_path = Path(current) if current else None
+        start = (
+            current_path.parent
+            if current_path and current_path.parent.is_dir()
+            else self._settings_directory("adb_dir")
+        )
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "adb.exe auswählen", str(start), "ADB (adb.exe)"
+        )
+        if file_name:
+            self.adb.setText(file_name)
+            self.settings.setValue("adb_dir", str(Path(file_name).parent))
+            self._adb_changed()
+            self.settings.sync()
+
+    def _browse_backup(self):
+        start = self.backup_path.text().strip() or str(self._settings_directory("backup"))
+        directory = QFileDialog.getExistingDirectory(self, "Backup-Ziel", start)
+        if directory:
+            self.backup_path.setText(directory)
+            self.settings.setValue("backup", directory)
+            self.settings.sync()
+
+    def _pick_manifest(self, field):
+        current = field.text().strip()
+        current_path = Path(current) if current else None
+        start = (
+            current_path.parent
+            if current_path and current_path.parent.is_dir()
+            else self._settings_directory("manifest_dir")
+        )
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Manifest auswählen", str(start), "Manifest (*.json)"
+        )
+        if file_name:
+            field.setText(file_name)
+            self.settings.setValue("manifest_dir", str(Path(file_name).parent))
+            self.settings.sync()
+
+    def _pick_firmware(self):
+        current = self.firmware.text().strip()
+        current_path = Path(current) if current else None
+        start = (
+            current_path.parent
+            if current_path and current_path.parent.is_dir()
+            else self._settings_directory("firmware_dir")
+        )
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Firmware auswählen",
+            str(start),
+            "Alle Dateien (*);;BIN-Dateien (*.bin)",
+        )
+        if file_name:
+            self.firmware.setText(file_name)
+            self.settings.setValue("firmware_dir", str(Path(file_name).parent))
+            self.settings.sync()
+            self.manifest_preview.clear()
+            self._buttons()
+
+    def _check_for_updates(self, *, silent: bool) -> None:
+        if self._release_check_running:
+            return
+        self._release_check_running = True
+        self.release_check_btn.setEnabled(False)
+        self.release_status.setStyleSheet("")
+        self.release_status.setText("Prüfe GitHub Releases …")
+
+        def work():
+            try:
+                value = release_check.fetch_latest_release(APP_VERSION)
+            except Exception as error:
+                self._update_signals.error.emit(str(error))
+            else:
+                self._update_signals.result.emit(value)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _release_check_result(self, value: dict) -> None:
+        self._release_check_running = False
+        self.release_check_btn.setEnabled(True)
+        tag = str(value.get("tag", "?"))
+        self._latest_release_url = str(value.get("html_url") or release_check.UPDATE_RELEASES_URL)
+        self.release_open_btn.setEnabled(True)
+        if value.get("newer") is True:
+            self.release_status.setStyleSheet(f"QLabel{{color:{YELLOW};font-weight:bold;}}")
+            self.release_status.setText(
+                f"Neue Version verfügbar: {tag} (installiert: v{APP_VERSION})."
+            )
+        else:
+            self.release_status.setStyleSheet(f"QLabel{{color:{GREEN};}}")
+            self.release_status.setText(
+                f"Installierte Version v{APP_VERSION} ist aktuell. Letztes Release: {tag}."
+            )
+
+    def _release_check_error(self, message: str) -> None:
+        self._release_check_running = False
+        self.release_check_btn.setEnabled(True)
+        self.release_open_btn.setEnabled(True)
+        self._latest_release_url = release_check.UPDATE_RELEASES_URL
+        self.release_status.setStyleSheet(f"QLabel{{color:{GRAY};}}")
+        self.release_status.setText(
+            "GitHub-Updateprüfung derzeit nicht möglich. Die Updater-Funktionen bleiben davon unberührt."
+        )
+        self._log("[Update-Prüfung] " + message)
+
+    def _open_latest_release(self) -> None:
+        QDesktopServices.openUrl(QUrl(self._latest_release_url))
 
     def _update(self):
         widget = super()._update()
@@ -450,6 +655,10 @@ class MainWindow(base.MainWindow):
     def _same(self):
         self._reset_flow("Gleichversionstest wird vorbereitet", transfer_expected=False)
         super()._same()
+
+    def closeEvent(self, event):
+        self._persist_settings()
+        super().closeEvent(event)
 
 
 def main():
