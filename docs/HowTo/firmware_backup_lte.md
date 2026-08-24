@@ -1,16 +1,22 @@
 # Firmware-Backup des LTE-Modems über Micro-USB
 
-Diese Anleitung beschreibt kurz, wie man sich per **Micro-USB** mit dem LTE-Modem verbindet und die Firmware sowie einige zusätzliche Dateien mit **ADB (Android Debug Bridge, Bestandteil der Android SDK Platform Tools)** sichert.
+Diese Anleitung beschreibt, wie man sich per **Micro-USB** mit dem LTE-Modem verbindet und die Firmware sowie zusätzliche Dateien mit **ADB (Android Debug Bridge, Bestandteil der Android SDK Platform Tools)** sichert.
 
 > [!NOTE]
-> Es gibt zwei alternative Wege:
-> - **Windows**: siehe Abschnitte 2 bis 6
-> - **Linux / Raspberry Pi**: siehe Abschnitt 7
+> Es gibt drei alternative Bedienwege:
+> - **Windows – empfohlen:** FoxAir Updater mit grafischer Oberfläche;
+> - **Windows – manuell:** PowerShell und direkte `adb.exe`-Befehle;
+> - **Linux / Raspberry Pi:** `adb` beziehungsweise der Linux-Launcher `./foxair-updater`.
 >
-> Es muss **nur einer der beiden Wege** verwendet werden. Die Linux-Anleitung ist eine Alternative zur Windows-Anleitung, kein zusätzlicher notwendiger Schritt.
+> Es muss **nur einer dieser Wege** verwendet werden. Die PowerShell- und Linux-Abschnitte sind Alternativen zur Windows-GUI und keine zusätzlichen notwendigen Schritte.
+
+> [!IMPORTANT]
+> Der **Windows-Backup-Pfad wurde real getestet**: ADB-Verbindung, Originalstatus und das read-only Backup der LTE-Dateien funktionieren sowohl mit lokal angeschlossenem Modem als auch über den optionalen Remote-ADB-Weg zum Raspberry Pi.
+>
+> Ein **echtes Firmwareupdate auf eine andere Mainboard-Version wurde mit der Windows-Version noch nicht live durchgeführt und bestätigt**. Die Update-Funktion bleibt experimentell und ist nicht Voraussetzung für das hier beschriebene Backup.
 
 > [!NOTE]
-> Die in dieser Anleitung verwendeten ADB-Befehle **verändern nichts am LTE-Modem**. Mit `adb pull` werden die angegebenen Dateien lediglich vom LTE-Modem auf den PC bzw. Raspberry Pi **heruntergeladen/kopiert**. Die beschriebenen Backup-Schritte können daher gefahrlos verwendet werden.
+> Die in dieser Anleitung verwendeten Backup-Funktionen **verändern nichts am LTE-Modem**. Die Windows-GUI verwendet hierfür ausschließlich `adb pull`; bei den manuellen Wegen werden dieselben Dateien ebenfalls nur vom LTE-Modem heruntergeladen/kopiert.
 
 > [!WARNING]
 > Die aus dem LTE-Modem ausgelesenen Firmware- und Datendateien **nicht öffentlich hochladen oder weiterveröffentlichen**. Sie können herstellerspezifische Software, Konfigurationsdaten oder andere nicht für die Veröffentlichung bestimmte Inhalte enthalten.
@@ -63,6 +69,8 @@ ADB ist Bestandteil der Android SDK Platform Tools:
 
 - [Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools?hl=de#downloads)
 
+**ADB wird aus Lizenz- und Distributionsgründen nicht mit dem FoxAir Updater mitgeliefert.**
+
 Für Windows die ZIP-Datei herunterladen und z. B. nach
 
 ```text
@@ -71,7 +79,32 @@ C:\platform-tools
 
 entpacken.
 
-### PowerShell direkt im `platform-tools`-Ordner öffnen
+### Empfohlen: ADB direkt in der Windows-GUI auswählen
+
+Die aktuelle Windows-Version des FoxAir Updaters ist als **Portable-ZIP** und als **Setup-EXE** auf der normalen GitHub-Releases-Seite verfügbar:
+
+- [FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)
+
+Nach dem Start:
+
+1. Registerkarte **Verbindung** öffnen.
+2. Falls `adb.exe` nicht automatisch gefunden wird, **adb.exe auswählen…** verwenden.
+3. Die zuvor entpackte `adb.exe` auswählen.
+4. **ADB prüfen** anklicken.
+5. Das LTE-Modem muss im Status `device` erscheinen.
+
+Die GUI kann alternativ auch einen ADB-Server auf einem Raspberry Pi verwenden. Dafür auf dem Pi kurzfristig starten:
+
+```bash
+adb kill-server
+adb -a -P 5038 nodaemon server
+```
+
+In der Windows-GUI **Remote – ADB-Server auf Raspberry Pi** auswählen, IP-Adresse und Port `5038` eintragen und **ADB prüfen** anklicken. Der Pi-Befehl bleibt im Vordergrund und wird anschließend mit **Strg+C** beendet.
+
+### Manuelle Alternative: ADB in PowerShell prüfen
+
+Wer die GUI nicht verwenden möchte, kann weiterhin direkt mit PowerShell arbeiten.
 
 Im Windows Explorer den entpackten Ordner `platform-tools` öffnen. Anschließend entweder:
 
@@ -99,15 +132,11 @@ List of devices attached
 XXXXXXXXXXXX    device
 ```
 
-Erscheint dort kein Gerät, zuerst noch einmal im Geräte-Manager prüfen, ob Windows das Modem korrekt erkannt und die Treiber geladen hat.
-
 Optional kann zusätzlich eine Shell auf dem LTE-Modem geöffnet werden:
 
 ```powershell
 .\adb.exe shell
 ```
-
-Wenn eine Kommandozeile des Modems erscheint, funktioniert die ADB-Verbindung.
 
 Mit
 
@@ -117,15 +146,39 @@ exit
 
 wird die Shell wieder verlassen.
 
-## 4. Firmware sichern
+## 4. Firmware sichern – unter Windows bevorzugt mit der GUI
 
-Die eigentliche Firmware-Datei liegt – sofern sie seit dem letzten Download noch nicht durch einen neuen OTA-Auftrag entfernt wurde – unter:
+Für Windows ist die grafische Backup-Funktion des FoxAir Updaters der empfohlene Weg.
+
+### Windows-GUI
+
+1. FoxAir Updater starten und unter **Verbindung** zuerst **ADB prüfen**.
+2. Registerkarte **Backup** öffnen.
+3. Gewünschten Zielordner mit **Zielordner…** auswählen.
+4. Mindestens **Firmware** aktiviert lassen. Optional zusätzlich `OTA_INFO`, Statistik und `phnixIot4G` auswählen.
+5. **Backup erstellen** anklicken.
+6. Nach erfolgreichem Abschluss **Zielordner öffnen** verwenden, um die gesicherten Dateien direkt im Windows-Explorer zu kontrollieren.
+
+Die Firmware wird – sofern sie seit dem letzten Download noch nicht durch einen neuen OTA-Auftrag entfernt wurde – von folgendem Pfad gelesen:
 
 ```text
 /cache/phnixIot_device_OTA
 ```
 
-Download in den aktuellen Ordner:
+Die GUI verwendet dafür ausschließlich `adb pull` und verändert die Quelldatei nicht.
+
+Bei Auswahl aller vier Optionen werden folgende Dateien gesichert:
+
+```text
+phnixIot_device_OTA
+phnixIot_device_OTA_INFO
+phnixIot_device_statisic
+phnixIot4G
+```
+
+### Manuelle PowerShell-Alternative
+
+Nur die Firmware in den aktuellen PowerShell-Ordner kopieren:
 
 ```powershell
 .\adb.exe pull /cache/phnixIot_device_OTA
@@ -135,11 +188,31 @@ Download in den aktuellen Ordner:
 
 ## 5. Zusätzliche Dateien sichern
 
-Zusätzlich können folgende Dateien bzw. Datenbereiche interessant sein.
+### Windows-GUI – empfohlen
+
+Die zusätzlichen Dateien können einfach auf der Registerkarte **Backup** mit angehakt und gemeinsam mit der Firmware heruntergeladen werden:
+
+```text
+/data/phnixIot4G
+/data/phnixIot_device_OTA_INFO
+/data/phnixIot_device_statisic
+```
+
+Nach dem Backup öffnet **Zielordner öffnen** den tatsächlich verwendeten Sicherungsordner im Explorer.
+
+### Manuell unter Windows
+
+```powershell
+.\adb.exe pull /data/phnixIot4G
+.\adb.exe pull /data/phnixIot_device_OTA_INFO
+.\adb.exe pull /data/phnixIot_device_statisic
+```
+
+Die Dateien werden jeweils in den Ordner heruntergeladen, in dem PowerShell aktuell geöffnet ist.
 
 ### Komfortweg mit installiertem FoxAir-Updater unter Linux / Raspberry Pi
 
-Wenn der FoxAir-Updater bereits installiert ist, können die Firmware aus dem LTE-Cache und alle unten aufgeführten Zusatzdateien mit einem einzigen **rein lesenden** Befehl gesichert werden:
+Wenn der FoxAir-Updater bereits installiert ist, können die Firmware aus dem LTE-Cache und alle Zusatzdateien mit einem einzigen **rein lesenden** Befehl gesichert werden:
 
 ```bash
 cd ~/FoxAir_updater
@@ -177,29 +250,21 @@ Der Ordner `downloaded_firmware/` ist bewusst vom normalen Update-Eingangsordner
 
 Fehlt `/cache/phnixIot_device_OTA` bereits, meldet der Befehl dies als Warnung und sichert die übrigen vorhandenen Diagnose-/Statusdateien trotzdem.
 
-### `/data/phnixIot4G`
-
-```powershell
-.\adb.exe pull /data/phnixIot4G
-```
-
-### `/data/phnixIot_device_OTA_INFO`
-
-```powershell
-.\adb.exe pull /data/phnixIot_device_OTA_INFO
-```
-
-### `/data/phnixIot_device_statisic`
-
-```powershell
-.\adb.exe pull /data/phnixIot_device_statisic
-```
-
-Die Dateien werden bei den manuellen Windows-Befehlen jeweils in den Ordner heruntergeladen, in dem PowerShell aktuell geöffnet ist. Auch hierbei werden die Originaldateien auf dem LTE-Modem nicht verändert.
-
 ## 6. Gesicherte Dateien prüfen
 
-Nach dem Backup sollten sich die heruntergeladenen Dateien im aktuellen `platform-tools`-Ordner beziehungsweise beim FoxAir-Updater im erzeugten Zeitstempel-Unterordner unter `downloaded_firmware/` befinden.
+### Windows-GUI
+
+Auf der Registerkarte **Backup** den Button **Zielordner öffnen** verwenden. Dadurch wird der eingestellte Sicherungsordner direkt im Windows-Explorer geöffnet.
+
+Der Button **Zielordner…** dient dagegen nur der Auswahl eines Ordners. Der dabei angezeigte Dialog ist kein normaler Explorer-Dateibrowser; deshalb ist **Zielordner öffnen** für die Kontrolle nach dem Backup vorgesehen.
+
+### Manuelle Windows-Befehle
+
+Bei den PowerShell-Befehlen liegen die Dateien im aktuellen `platform-tools`-Ordner beziehungsweise im selbst gewählten Arbeitsordner.
+
+### Linux / Raspberry Pi
+
+Beim Linux-Komfortbefehl befinden sich die Dateien im erzeugten Zeitstempel-Unterordner unter `downloaded_firmware/`.
 
 Zur Sicherheit empfiehlt es sich, die Originaldateien zunächst **unverändert zu archivieren**, bevor sie analysiert oder weiterverarbeitet werden.
 
@@ -211,7 +276,7 @@ Zur Sicherheit empfiehlt es sich, die Originaldateien zunächst **unverändert z
 # 7. Alternative: Linux / Raspberry Pi
 
 > [!IMPORTANT]
-> Dieser Abschnitt ist ein **alternativer Weg zur Windows-Anleitung**. Wer das Backup bereits unter Windows durchführt, braucht diesen Abschnitt nicht zusätzlich auszuführen.
+> Dieser Abschnitt ist ein **alternativer Weg zur Windows-GUI und zur manuellen Windows-Anleitung**. Wer das Backup bereits unter Windows durchführt, braucht diesen Abschnitt nicht zusätzlich auszuführen.
 
 Die folgenden Schritte wurden für einen **Raspberry Pi mit Raspberry Pi OS / Debian-basiertem Linux** vorgesehen. Dort sind für das LTE-Modem in der Regel keine zusätzlichen Windows-/SIMCom-Treiber notwendig.
 
@@ -255,36 +320,19 @@ adb shell
 
 Die Shell wird mit
 
-```bash
+```text
 exit
 ```
 
 wieder verlassen.
 
-## 7.2 Backup-Ordner anlegen
-
-Damit alle Dateien an einer Stelle landen, empfiehlt sich bei manueller Sicherung ein eigener Ordner, z. B. im Home-Verzeichnis:
-
-```bash
-mkdir -p ~/lte_backup
-cd ~/lte_backup
-```
-
-Alle folgenden `adb pull`-Befehle speichern die Dateien dann in diesem Ordner.
-
-## 7.3 Firmware sichern
+## 7.2 Firmware manuell sichern
 
 ```bash
 adb pull /cache/phnixIot_device_OTA
 ```
 
-Danach liegt die Datei unter:
-
-```text
-~/lte_backup/phnixIot_device_OTA
-```
-
-## 7.4 Zusätzliche Dateien sichern
+## 7.3 Zusätzliche Dateien manuell sichern
 
 ```bash
 adb pull /data/phnixIot4G
@@ -292,33 +340,16 @@ adb pull /data/phnixIot_device_OTA_INFO
 adb pull /data/phnixIot_device_statisic
 ```
 
-Danach befinden sich die Dateien bzw. Verzeichnisse ebenfalls unter:
+## 7.4 Dateien vom Raspberry Pi auf einen anderen Rechner kopieren
 
-```text
-~/lte_backup/
-```
+Wer die Dateien zunächst auf einem Raspberry Pi gesichert hat, kann sie anschließend beispielsweise mit `scp` auf einen Windows- oder Linux-Rechner kopieren.
 
-Zur Kontrolle:
+Beispiel vom Zielrechner aus:
 
 ```bash
-ls -lah ~/lte_backup
+scp -r dominik@IP_DES_RPI:~/FoxAir_updater/downloaded_firmware/ ./
 ```
 
-Auch unter Linux gilt: `adb pull` **liest und kopiert** die Dateien lediglich. Die Originaldateien auf dem LTE-Modem werden dadurch nicht verändert oder gelöscht.
+Alternativ kann unter Windows beispielsweise WinSCP verwendet werden.
 
-## 7.5 Dateien vom Raspberry Pi auf einen PC kopieren
-
-Wenn der Raspberry Pi per Netzwerk erreichbar ist, können die gesicherten Dateien beispielsweise mit **SCP** auf einen anderen Rechner übertragen werden.
-
-Beispiel: vom Windows-PC mit PowerShell den gesamten Backup-Ordner herunterladen:
-
-```powershell
-scp -r pi@192.168.1.100:/home/pi/lte_backup .
-```
-
-Dabei müssen Benutzername und IP-Adresse an den eigenen Raspberry Pi angepasst werden.
-
-Alternativ können unter Windows auch Programme wie **WinSCP** verwendet werden. Dort verbindet man sich per SFTP/SSH mit dem Raspberry Pi und kopiert den Ordner `lte_backup` auf den PC.
-
-> [!WARNING]
-> Auch die unter Linux ausgelesenen Dateien bitte **nicht öffentlich hochladen oder weiterveröffentlichen**.
+Auch hier gilt: Die ausgelesenen Originaldateien nicht öffentlich hochladen oder weiterverteilen.
