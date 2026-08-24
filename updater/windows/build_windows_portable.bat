@@ -7,6 +7,13 @@ set "APP_NAME=FoxAir_Updater"
 set "OUT=dist\%APP_NAME%"
 set "CACHE=build\windows-cache"
 
+where py >nul 2>nul
+if errorlevel 1 (
+  set "PY_CMD=python"
+) else (
+  set "PY_CMD=py"
+)
+
 rem Backend runtime intentionally pinned close to the tested Raspberry-Pi Python 3.11 line.
 set "PY_EMBED_VERSION=3.11.9"
 set "PY_EMBED_FILE=python-%PY_EMBED_VERSION%-embed-amd64.zip"
@@ -14,10 +21,10 @@ set "PY_EMBED_URL=https://www.python.org/ftp/python/%PY_EMBED_VERSION%/%PY_EMBED
 set "PY_EMBED_MD5=6d9aa08531d48fcc261ba667e2df17c4"
 
 echo [1/8] Build-Abhaengigkeiten pruefen/installieren ...
-py -m pip install -r updater\windows\requirements-build.txt || goto :err
+%PY_CMD% -m pip install -r updater\windows\requirements-build.txt || goto :err
 
 echo [2/8] PySide6-GUI als One-Folder-App bauen ...
-py -m PyInstaller ^
+%PY_CMD% -m PyInstaller ^
   --noconfirm ^
   --clean ^
   --windowed ^
