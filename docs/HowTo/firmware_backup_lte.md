@@ -85,6 +85,9 @@ Die aktuelle Windows-Version des FoxAir Updaters ist als **Portable-ZIP** und al
 
 - [FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)
 
+> [!NOTE]
+> Die Windows-Builds sind derzeit nicht mit einem kommerziellen Code-Signing-Zertifikat signiert. Beim ersten Start kann deshalb Windows SmartScreen **„Der Computer wurde durch Windows geschützt“** anzeigen. Wenn die Datei bewusst von der oben genannten offiziellen GitHub-Releases-Seite geladen wurde, zuerst **Weitere Informationen** und danach **Trotzdem ausführen** anklicken. Bei einer Datei aus einer anderen oder unbekannten Quelle nicht einfach fortfahren.
+
 Nach dem Start:
 
 1. Registerkarte **Verbindung** öffnen.
