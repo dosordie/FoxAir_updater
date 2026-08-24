@@ -7,6 +7,12 @@ UDEV_RULE_FILE="/etc/udev/rules.d/51-foxair-android.rules"
 UDEV_RULE='SUBSYSTEM=="usb", ATTR{idVendor}=="1e0e", ATTR{idProduct}=="9001", MODE="0666"'
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=10
+SPARSE_PATHS=(
+    updater/common
+    updater/linux
+    tools/phnix_ota
+    docs/HowTo
+)
 
 ok()   { printf '[OK] %s\n' "$*"; }
 info() { printf '[..] %s\n' "$*"; }
@@ -63,6 +69,10 @@ if ! python3 -c "import sys; raise SystemExit(0 if sys.version_info >= ($MIN_PYT
 fi
 ok "Python $python_version"
 
+if ! git sparse-checkout -h >/dev/null 2>&1; then
+    die "Die installierte Git-Version unterstützt 'git sparse-checkout' nicht. Bitte Git aktualisieren."
+fi
+
 if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
     die "$INSTALL_DIR existiert, ist aber kein Verzeichnis."
 fi
@@ -97,22 +107,44 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     else
         ok "FoxAir Updater aktualisiert: $old_commit -> $new_commit"
     fi
+
+    # Falls ein älterer Installer gerade das Update auf eine neue Installer-
+    # Version durchgeführt hat, die neue Version einmal übernehmen.
+    current_script="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || true)"
+    repo_installer="$INSTALL_DIR/updater/linux/install.sh"
+    if [[ "${FOX_AIR_INSTALLER_POST_UPDATE:-0}" != "1" && -f "$repo_installer" && -n "$current_script" ]] \
+       && ! cmp -s "$current_script" "$repo_installer"; then
+        info "Neue Installer-Version erkannt; setze Installation mit aktuellem Installer fort"
+        exec env FOX_AIR_INSTALLER_REEXEC=1 FOX_AIR_INSTALLER_POST_UPDATE=1 bash "$repo_installer" "$@"
+    fi
+
+    info "Reduziere Checkout auf die für Linux benötigten Dateien"
+    git -C "$INSTALL_DIR" sparse-checkout init --cone
+    git -C "$INSTALL_DIR" sparse-checkout set "${SPARSE_PATHS[@]}"
+    ok "Sparse-Checkout eingerichtet"
 elif [[ -d "$INSTALL_DIR" && -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
     die "$INSTALL_DIR existiert bereits und ist kein FoxAir-Updater-Git-Repository."
 else
     info "Lade FoxAir Updater nach $INSTALL_DIR"
-    git clone --branch main --single-branch "$REPO_URL" "$INSTALL_DIR"
+    git clone --filter=blob:none --no-checkout --branch main --single-branch "$REPO_URL" "$INSTALL_DIR"
     git -C "$INSTALL_DIR" config core.fileMode false
-    ok "Repository installiert"
+    git -C "$INSTALL_DIR" sparse-checkout init --cone
+    git -C "$INSTALL_DIR" sparse-checkout set "${SPARSE_PATHS[@]}"
+    git -C "$INSTALL_DIR" checkout main
+    ok "Repository als schlanker Linux-Checkout installiert"
 fi
 
-# Die Werkzeuge werden in der Dokumentation teils direkt aufgerufen. Die
-# Ausführungsrechte werden lokal gesetzt; core.fileMode=false verhindert, dass
-# dies spätere Updates als lokale Quellcodeänderung blockiert.
+mkdir -p "$INSTALL_DIR/firmware"
+ok "Lokaler Firmware-Ordner bereit: $INSTALL_DIR/firmware"
+
+# Die internen Werkzeuge bleiben direkt ausführbar; der Anwender verwendet im
+# Normalfall den Launcher im Projekt-Hauptverzeichnis.
 chmod 755 \
+    "$INSTALL_DIR/foxair-updater" \
     "$INSTALL_DIR/tools/phnix_ota/phnix_local_ota_controller.py" \
     "$INSTALL_DIR/tools/phnix_ota/create_firmware_manifest.py" \
-    "$INSTALL_DIR/tools/phnix_ota/phnix_ota_runtime_hook"
+    "$INSTALL_DIR/tools/phnix_ota/phnix_ota_runtime_hook" \
+    "$INSTALL_DIR/updater/linux/install.sh"
 ok "Dateirechte gesetzt"
 
 info "Richte USB-Zugriff für PHNIX LTE-Modem 1e0e:9001 ein"
@@ -141,8 +173,9 @@ info "Prüfe FoxAir-Updater-Dateien"
     cd "$INSTALL_DIR"
     python3 tools/phnix_ota/phnix_local_ota_controller.py --help >/dev/null
     python3 tools/phnix_ota/create_firmware_manifest.py --help >/dev/null
+    ./foxair-updater --help >/dev/null
 )
-ok "Python-Werkzeuge erfolgreich geprüft"
+ok "Updater und Launcher erfolgreich geprüft"
 
 info "Starte ADB neu"
 adb kill-server >/dev/null 2>&1 || true
@@ -162,7 +195,11 @@ printf '\nFoxAir Updater bereit.\n'
 printf 'Verzeichnis: %s\n' "$INSTALL_DIR"
 printf 'Branch:      main\n'
 printf 'Commit:      %s\n' "$commit"
-printf '\nStatusprüfung:\n'
+printf '\nFirmware und Manifest hier ablegen:\n'
+printf '  %s/firmware/\n' "$INSTALL_DIR"
+printf '\nStatus prüfen:\n'
 printf '  cd %q\n' "$INSTALL_DIR"
-printf '  python3 tools/phnix_ota/phnix_local_ota_controller.py --adb adb run --check status\n'
+printf '  ./foxair-updater status\n'
+printf '\nDry-Run mit Manifest, z. B.:\n'
+printf '  ./foxair-updater check FW3.4.json\n'
 printf '\nFirmwaredateien und OTA-Zustände werden vom Installer nicht heruntergeladen, verändert oder gelöscht.\n'
