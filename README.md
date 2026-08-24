@@ -50,13 +50,15 @@ Für Entwicklung und Abnahme existiert zusätzlich:
 ./foxair-updater same-version MANIFEST --confirm
 ```
 
-Zusätzlich existiert eine **experimentelle Windows-GUI v0.1.1**. Sie refaktoriert
+Zusätzlich existiert eine **experimentelle Windows-GUI v0.1.2**. Sie refaktoriert
 die OTA-Logik bewusst nicht, sondern startet denselben vorhandenen
 `phnix_local_ota_controller.py` als separates Backend. Details stehen unter
 [`updater/windows/README.md`](updater/windows/README.md).
 
-Öffentliche Windows-Builds werden als eindeutig bezeichnete **Prereleases** unter
-[GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases) veröffentlicht.
+Windows-Releases werden bewusst über einen separaten manuellen Actions-Workflow
+veröffentlicht. Unter **Actions → Release Windows** wird nur die Zielversion eingegeben;
+anschließend erscheinen Portable-ZIP und Setup-EXE auf der normalen
+[GitHub-Releases-Seite](https://github.com/dosordie/FoxAir_updater/releases).
 Die Windows-Tags verwenden das Schema `windows-v...`.
 
 Die eigentliche Sicherheits- und OTA-Logik bleibt im Controller
@@ -89,7 +91,7 @@ Ausführliche Updater-Anleitung:
 Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
 [`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
 
-## Windows GUI v0.1.1
+## Windows GUI v0.1.2
 
 Die Windows-Version verfolgt bewusst denselben Backend-Ansatz wie Linux:
 
@@ -111,6 +113,7 @@ einer vorhandenen `adb.exe`.
 
 Die GUI bietet unter anderem:
 
+- lokale ADB-Verbindung oder optional Remote-ADB über einen Raspberry Pi;
 - ADB-Erkennung und `adb reconnect` bei kurzzeitigem `offline`;
 - read-only LTE-Backup/Firmware-Download per `adb pull`;
 - Originalstatus;
@@ -119,12 +122,28 @@ Die GUI bietet unter anderem:
 - Restore über den bestehenden Controller;
 - Manifest-Vorschau mit der vorhandenen `--full --show`-Funktion;
 - automatische Full-Manifest-Erzeugung sowie manuellen Fallback;
+- Auswahl originaler Firmwaredateien auch **ohne `.bin`-Endung**;
 - Gleichversionstest im Bereich „Erweitert“;
-- Loganzeige, Logexport und Protokoll leeren.
+- Loganzeige, Logexport und Protokoll leeren;
+- dasselbe Programmlogo wie `FoxAir_Control` für EXE, Fenster und Setup.
 
 Beim Portable-Build werden Controller, Runtime-Helfer und `updater/common/*.py`
 bytegleich aus dem Repository kopiert und mit `fc /b` geprüft. Damit entsteht
 bewusst keine zweite Windows-OTA-Implementierung.
+
+### Remote ADB
+
+Für einen Raspberry Pi mit per USB angeschlossenem LTE-Modem kann der ADB-Server
+kurzfristig im lokalen LAN gestartet werden:
+
+```bash
+adb kill-server
+adb -a -P 5038 nodaemon server
+```
+
+Zum Beenden auf dem Raspberry Pi **Strg+C** drücken. In der Windows-GUI werden nur
+IP-Adresse und Port eingetragen. Intern setzt die GUI `ADB_SERVER_SOCKET`, sodass
+auch der unveränderte gemeinsame Controller den entfernten ADB-Server nutzt.
 
 Build-/Release-Anleitung:
 [`updater/windows/README.md`](updater/windows/README.md)
