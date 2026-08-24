@@ -27,12 +27,43 @@ Stand: 24. August 2026
 > oder Fehlfunktion dieses Tools entstehen.
 
 Diese Anleitung beschreibt den aktuellen Linux-/Raspberry-Pi-Ablauf des
-FoxAir-Updaters. Die Installation und der normale Betrieb erfolgen inzwischen
-über den Linux-Installer und den einfachen Launcher `./foxair-updater`.
+FoxAir-Updaters. Die Installation und der normale Betrieb erfolgen über den
+Linux-Installer und den Launcher `./foxair-updater`.
 
 Der vorherige Stand der Anleitung ist zur Referenz unter
 [`PHNIX_UPDATER_ENDANWENDER_OLD.md`](PHNIX_UPDATER_ENDANWENDER_OLD.md)
 archiviert.
+
+## LTE-Modem per USB / ADB verbinden
+
+Die mechanische Freilegung des Micro-USB-Anschlusses, der Anschluss des
+LTE-Modems sowie die Einrichtung und Prüfung von **ADB (Android Debug Bridge)**
+werden bewusst nicht in dieser Anleitung dupliziert.
+
+Die zentrale Anleitung dafür ist:
+
+**[Firmware-Backup des LTE-Modems über Micro-USB – Verbindung, ADB und Windows-/Linux-Anleitung](firmware_backup_lte.md)**
+
+Dort sind unter anderem beschrieben:
+
+- Micro-USB-Anschluss am LTE-Modem und Umgang mit vorhandener Vergussmasse;
+- Windows-Treiber und Android SDK Platform Tools / ADB;
+- Prüfung der Verbindung unter Windows;
+- der alternative Linux-/Raspberry-Pi-Weg ohne zusätzliche Windows-Treiber;
+- `adb devices -l`, `adb shell` und die grundlegende ADB-Verbindungsprüfung;
+- optional das Auslesen und Sichern vorhandener LTE-Dateien.
+
+Diese Datei ist für die Verbindungsherstellung die **maßgebliche Anleitung**.
+Änderungen an Treibern, Anschluss oder ADB-Grundsetup sollen dort gepflegt werden,
+damit dieselben Informationen nicht an mehreren Stellen synchron gehalten werden müssen.
+
+Für den FoxAir-Updater gilt anschließend nur noch: Das LTE-Modem muss bei
+
+```sh
+adb devices -l
+```
+
+im Status `device` erscheinen.
 
 ## Wichtige technische Sicherheitsgrenze
 
@@ -60,7 +91,7 @@ Benötigt werden:
 - Raspberry Pi OS, Debian oder Ubuntu;
 - Python 3.10 oder neuer;
 - USB-Verbindung zum PHNIX-LTE-Modem;
-- ADB (Android Debug Bridge);
+- ADB;
 - Git;
 - die geprüfte Firmwaredatei, zum Beispiel `FW3.4.bin`;
 - ein dazu passendes Manifest, zum Beispiel `FW3.4.json`.
@@ -162,9 +193,11 @@ Dabei wird nur per Fast-Forward aktualisiert. Lokale Änderungen an versionierte
 Projektdateien werden nicht automatisch überschrieben. Der Installer verwendet
 absichtlich weder `git reset --hard` noch ein Repository-Cleanup.
 
-## ADB-Verbindung prüfen
+## ADB-Verbindung kurz prüfen
 
-Nach der Installation kann die Verbindung direkt kontrolliert werden:
+Die vollständige Einrichtung steht in
+[`firmware_backup_lte.md`](firmware_backup_lte.md). Für den Updater genügt die
+kurze Kontrolle:
 
 ```sh
 adb devices -l
@@ -177,26 +210,9 @@ Normal ist zum Beispiel:
 ```
 
 Direkt nach einem ADB-Neustart kann das PHNIX-Modem kurzzeitig als `offline`
-erscheinen:
-
-```text
-0123456789ABCDEF       offline usb:1-1.1.3 transport_id:1
-```
-
-Das bedeutet normalerweise nicht, dass die USB-Berechtigung fehlt. Das Gerät
-wurde bereits erkannt, aber der ADB-Handshake ist noch nicht vollständig.
-
-Der aktuelle Installer berücksichtigt dieses Verhalten automatisch, wartet
-kurz und führt bei `offline` einmal `adb reconnect` aus. Manuell kann derselbe
-Vorgang so durchgeführt werden:
-
-```sh
-adb reconnect
-sleep 2
-adb devices -l
-```
-
-Für einen Updatevorgang muss das Gerät anschließend im Status `device` stehen.
+erscheinen. Der Installer wartet in diesem Fall und versucht einmal automatisch
+`adb reconnect`. Für einen Updatevorgang muss das Gerät anschließend im Status
+`device` stehen.
 
 ## Firmware und Manifest bereitstellen
 
@@ -231,7 +247,7 @@ Zuerst in das Installationsverzeichnis wechseln:
 cd ~/FoxAir_updater
 ```
 
-Die verfügbare Hilfe zeigt:
+Hilfe:
 
 ```sh
 ./foxair-updater --help
@@ -522,7 +538,20 @@ direkt verwendet werden. Dazu gehören unter anderem:
 Für den normalen Linux-Anwender sollten jedoch die Befehle über
 `./foxair-updater` verwendet werden.
 
+## Lizenz
+
+Der Quellcode dieses Repositorys steht unter der **GNU General Public License v3.0
+(GPL-3.0-only)**. Siehe [`LICENSE`](../../LICENSE).
+
+Die GPL-Lizenz ändert nichts an den oben beschriebenen technischen Risiken des
+experimentellen Firmware-Updaters und ist keine Zusage, dass ein Firmwareupdate
+auf realer Hardware funktioniert.
+
 ## Kurzfassung
+
+Verbindung zum LTE-Modem / ADB einrichten:
+
+[`firmware_backup_lte.md`](firmware_backup_lte.md)
 
 Installation:
 
