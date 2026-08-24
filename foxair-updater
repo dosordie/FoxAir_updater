@@ -9,6 +9,7 @@ STATE_DIR="$ROOT_DIR/phnix-ota-state"
 FIRMWARE_DIR="$ROOT_DIR/firmware"
 DOWNLOAD_DIR="$ROOT_DIR/downloaded_firmware"
 CACHE_BACKUP_DIR="$STATE_DIR/original-cache"
+CACHE_PENDING="$CACHE_BACKUP_DIR/cache.pending"
 REMOTE_CACHE="/cache/phnixIot_device_OTA"
 
 usage() {
@@ -58,6 +59,8 @@ Vor update und same-version wird eine eventuell vorhandene Originaldatei
 /cache/phnixIot_device_OTA zusaetzlich intern gesichert. same-version stellt sie
 nach erfolgreicher Gleichversionsablehnung wieder her; restore stellt sie nach
 einem bestaetigten Pre-C5A8-Recovery wieder auf den Ausgangszustand zurueck.
+Ein offener Sicherungszustand verhindert absichtlich, dass ein neuer Lauf das
+noch benoetigte Originalbackup ueberschreibt.
 
 Beim Manifest-Befehl wird ohne --show die JSON-Datei standardmaessig neben der
 Firmware mit dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json.
@@ -90,6 +93,10 @@ remote_file_exists() {
 }
 
 backup_update_cache() {
+    if [[ -f "$CACHE_PENDING" ]]; then
+        die "Es existiert bereits ein offener Cache-Sicherungszustand. Zuerst den laufenden Zustand klaeren bzw. bei bestaetigtem Pre-C5A8-Zustand ./foxair-updater restore ausfuehren."
+    fi
+
     mkdir -p "$CACHE_BACKUP_DIR"
     rm -f \
         "$CACHE_BACKUP_DIR/phnixIot_device_OTA" \
@@ -109,10 +116,15 @@ backup_update_cache() {
         touch "$CACHE_BACKUP_DIR/cache.absent"
         printf '[..] Vor dem OTA war keine Firmware unter %s vorhanden\n' "$REMOTE_CACHE"
     fi
+    touch "$CACHE_PENDING"
+}
+
+clear_update_cache_pending() {
+    rm -f "$CACHE_PENDING"
 }
 
 restore_update_cache() {
-    [[ -d "$CACHE_BACKUP_DIR" ]] || return 0
+    [[ -f "$CACHE_PENDING" ]] || return 0
 
     if [[ -f "$CACHE_BACKUP_DIR/cache.present" ]]; then
         local backup expected remote_hash
@@ -128,6 +140,7 @@ restore_update_cache() {
             || die "Cache-Firmware konnte nicht atomar wiederhergestellt werden"
         remote_hash="$("$ADB_BIN" shell "sha256sum '$REMOTE_CACHE' | awk '{print \$1}'" | tr -d '\r')"
         [[ "$remote_hash" == "$expected" ]] || die "SHA-256 der wiederhergestellten Cache-Firmware stimmt nicht"
+        clear_update_cache_pending
         printf '[OK] Urspruengliche LTE-Cache-Firmware wiederhergestellt\n'
         return 0
     fi
@@ -135,8 +148,12 @@ restore_update_cache() {
     if [[ -f "$CACHE_BACKUP_DIR/cache.absent" ]]; then
         "$ADB_BIN" shell "rm -f '$REMOTE_CACHE' /cache/.phnixIot_device_OTA.restore && sync" >/dev/null \
             || die "Urspruenglich leeren Cache-Zustand konnte nicht wiederhergestellt werden"
+        clear_update_cache_pending
         printf '[OK] Urspruenglicher leerer LTE-Cache-Zustand wiederhergestellt\n'
+        return 0
     fi
+
+    die "Offener Cache-Sicherungszustand ist inkonsistent: present/absent Marker fehlt"
 }
 
 download_device_files() {
@@ -333,13 +350,20 @@ case "$command" in
         fi
         require_adb
         backup_update_cache
-        exec python3 "$CONTROLLER" \
+        if python3 "$CONTROLLER" \
             --adb "$ADB_BIN" \
             run \
             --manifest "$manifest" \
             --execute \
             --confirm PHNIX-FULL-UPDATE \
-            --state-dir "$STATE_DIR"
+            --state-dir "$STATE_DIR"; then
+            clear_update_cache_pending
+            exit 0
+        else
+            rc=$?
+            warn "Update nicht erfolgreich terminal beendet; das Original-Cache-Backup bleibt fuer einen gegebenenfalls zulaessigen Pre-C5A8-Restore erhalten."
+            exit "$rc"
+        fi
         ;;
     same-version)
         [[ $# -eq 3 && "$3" == "--confirm" ]] || die "Verwendung: ./foxair-updater same-version MANIFEST --confirm"
