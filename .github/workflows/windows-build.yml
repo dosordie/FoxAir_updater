@@ -1,0 +1,51 @@
+name: Windows Updater Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "updater/windows/**"
+      - "updater/common/**"
+      - "tools/phnix_ota/**"
+      - ".github/workflows/windows-build.yml"
+      - "LICENSE"
+      - "README.md"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python for build
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build portable package
+        shell: cmd
+        run: updater\windows\build_windows_portable.bat
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y --no-progress
+
+      - name: Build setup
+        shell: cmd
+        run: updater\windows\build_windows_setup.bat
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: FoxAir_Updater_Portable_v0.1.0
+          path: dist/FoxAir_Updater_Portable_v0.1.0.zip
+          if-no-files-found: error
+
+      - name: Upload Windows setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: FoxAir_Updater_Setup_v0.1.0
+          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.0.exe
+          if-no-files-found: error
