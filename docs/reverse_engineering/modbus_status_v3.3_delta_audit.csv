@@ -1,0 +1,58 @@
+namespace,register,current_classification,v3_3_classification,status,source,scale_unit,software_action,confidence,notes
+MAIN,2019.bit0,Kompressor-Ausgang,Kompressor tatsächlich laufend / Istfrequenz != 0,correction,0x200168C4+0x06,boolean,rename_description,confirmed,Aus tatsächlicher Inverterfrequenz gebildet
+MAIN,2019.bit2,Lüfter Hochgeschwindigkeitsausgang,Mindestens ein Lüfter tatsächlich aktiv,correction,0x2001691C+0x0C/+0x0E,boolean,rename_description,confirmed,Aus Fan-Istrückmeldungen gebildet
+MAIN,2026,9,Inverter-Diagnose INV1:2113 High-Byte,correction,INV1:2113 high byte,raw,rename_and_add_provenance,confirmed,fachliche Semantik offen
+MAIN,2027,9,Inverter-Diagnose INV1:2113 Low-Byte,correction,INV1:2113 low byte,raw,rename_and_add_provenance,confirmed,fachliche Semantik offen
+MAIN,2028,9,Inverter-Diagnose INV1:2118,correction,INV1:2118,raw,rename_and_add_provenance,confirmed,fachliche Semantik offen
+MAIN,2054,Elektrische Leistung,Elektrische Gesamtleistung,confidence_upgrade,0x200161A4+0x14,raw/10 kW,confirm_scale,confirmed,P_total = P_WP + Zusatzanteil
+MAIN,2057,Livewert Bedeutung unbestätigt,T35 AC Input Current,correction,INV1:2106 -> 0x200168C4+0x0E,A,rename_and_add_provenance,confirmed,Nicht T34; T34 ist 2062
+MAIN,2059,Wärmeleistung / Unit Capacity,Thermische Gesamtleistung / Unit Capacity,confidence_upgrade,0x200161A4+0x18,raw/10 kW,confirm_scale,confirmed,Q_total = Q_WP + Zusatzanteil
+MAIN,2060,COP,Gesamt-COP,confidence_upgrade,0x200161A4+0x1C,raw/100,confirm_scale,confirmed,Q_total/P_total
+MAIN,2071,Kompressorfrequenz,Kompressor-Sollfrequenz,correction,0x20016AA4+0x08 -> INV1:1999,Hz,rename_description,confirmed,2072 ist die Istfrequenz
+MAIN,2080,Kandidat/Status,Inverter-/Driver-Statuswort INV1:2099,provenance_upgrade,INV1:2099 -> 0x200168C4+0x00,raw,rename_and_add_provenance,confirmed,fachliche Bitsemantik offen
+MAIN,2081,Fehler 7,Inverter-/Driver Fault Word 1,correction,INV1:2100 + lokales Comm-Bit,bitfield,rename_and_add_provenance,confirmed,Bit15 wird lokal aus Unit1-Watchdog erzeugt
+MAIN,2082,Fehler 8,Inverter-/Driver Fault Word 2,correction,INV1:2109,bitfield,rename_and_add_provenance,confirmed,ausgewählte Bits werden entprellt
+MAIN,2109,Reserviert,Intern beschriebener V3.3-Statuswert,correction,0x20016EF0,raw,remove_reserved_label,confirmed,fachliche Semantik offen
+MAIN,2117,Reserviert,High-Wort Energie elektrisch Heizen,correction,0x200161A4+0x58 high16,high16,combine_with_2118,confirmed,32-Bit-Zähler
+MAIN,2118,Energiezähler elektrisch Heizen,Low-Wort Energie elektrisch Heizen,structure_upgrade,0x200161A4+0x58 low16,low16,combine_with_2117,confirmed,value32=(2117<<16)|2118
+MAIN,2119,Reserviert,High-Wort Energie thermisch Heizen,correction,0x200161A4+0x60 high16,high16,combine_with_2120,confirmed,32-Bit-Zähler
+MAIN,2120,Energiezähler Wärmemenge Heizen,Low-Wort Energie thermisch Heizen,structure_upgrade,0x200161A4+0x60 low16,low16,combine_with_2119,confirmed,value32=(2119<<16)|2120
+MAIN,2121,Reserviert,High-Wort Energie elektrisch Kühlen,correction,0x200161A4+0x54 high16,high16,combine_with_2122,confirmed,32-Bit-Zähler
+MAIN,2122,Energiezähler elektrisch Kühlen,Low-Wort Energie elektrisch Kühlen,structure_upgrade,0x200161A4+0x54 low16,low16,combine_with_2121,confirmed,value32=(2121<<16)|2122
+MAIN,2123,Reserviert,High-Wort Energie thermisch Kühlen,correction,0x200161A4+0x64 high16,high16,combine_with_2124,confirmed,32-Bit-Zähler
+MAIN,2124,Energiezähler Wärmemenge Kühlen,Low-Wort Energie thermisch Kühlen,structure_upgrade,0x200161A4+0x64 low16,low16,combine_with_2123,confirmed,value32=(2123<<16)|2124
+MAIN,2125,Reserviert,High-Wort dritter elektrischer Energiezähler,new_semantic_candidate,0x200161A4+0x50 high16,high16,combine_with_2126,confirmed_structure,fachlich sehr wahrscheinlich DHW elektrisch
+MAIN,2126,Reserviert,Low-Wort dritter elektrischer Energiezähler,new_semantic_candidate,0x200161A4+0x50 low16,low16,combine_with_2125,confirmed_structure,fachlich sehr wahrscheinlich DHW elektrisch
+MAIN,2127,Reserviert,High-Wort dritter thermischer Energiezähler,new_semantic_candidate,0x200161A4+0x5C high16,high16,combine_with_2128,confirmed_structure,fachlich sehr wahrscheinlich DHW thermisch
+MAIN,2128,Reserviert,Low-Wort dritter thermischer Energiezähler,new_semantic_candidate,0x200161A4+0x5C low16,low16,combine_with_2127,confirmed_structure,fachlich sehr wahrscheinlich DHW thermisch
+MAIN,2136,Berechneter x0.1 Regel-/Modulwert,T04 Außentemperatur zweiter Veröffentlichungsweg,correction,helper 0x0808799C,raw/10 °C,rename,confirmed,Livewerte folgen 2048 mit Aktualisierungsversatz
+MAIN,2137,Elektrische Leistung Spiegel 2054 Kandidat,Elektrische WP-/Inverterleistung ohne Zusatzanteil,correction,0x200161A4+0x20,raw/10 kW,rename_and_confirm_scale,confirmed,Berechnet aus Netzspannung/Strömen; nicht identisch mit 2054
+MAIN,2138,Thermische Leistung Spiegel 2059 Kandidat,Thermische WP-Leistung ohne Zusatzanteil,correction,0x200161A4+0x10,raw/10 kW,rename_and_confirm_scale,confirmed,Volumenstrom*DeltaT*1.163; nicht identisch mit 2059
+MAIN,2140,Funktion unbekannt,High-Wort 32-Bit-Wert A,structure_upgrade,0x200161A4+0x6C high16,high16,pair_with_2141,confirmed_structure,fachliche Semantik offen
+MAIN,2141,Funktion unbekannt,Low-Wort 32-Bit-Wert A,structure_upgrade,0x200161A4+0x6C low16,low16,pair_with_2140,confirmed_structure,fachliche Semantik offen
+MAIN,2142,Funktion unbekannt,High-Wort 32-Bit-Wert B,structure_upgrade,0x200161A4+0x68 high16,high16,pair_with_2143,confirmed_structure,fachliche Semantik offen
+MAIN,2143,Funktion unbekannt,Low-Wort 32-Bit-Wert B,structure_upgrade,0x200161A4+0x68 low16,low16,pair_with_2142,confirmed_structure,fachliche Semantik offen
+MAIN,2146,Funktion unbekannt,V3.3 Capability-/Statusflags,correction,mehrere interne Flags,bitfield,change_type_and_add_bits,confirmed,Basisbits 2/3/5 ergeben 0x002C; Bits1/4/6 variabel
+MAIN,2147,Funktion unbekannt,Intern befüllter signed V3.3-Wert,provenance_upgrade,0x20015C68+0x110,int16,add_provenance,confirmed,Semantik offen
+MAIN,2150,nicht im Katalog,Reserve/anderer Pfad,new_register,kein Hauptbuilder-Writer,raw,add_register,confirmed_absence_in_builder,Live 0 im aktuellen Mitschnitt
+MAIN,2151,nicht im Katalog,V3.3 Diagnose 2151,new_register,0x20016A44+0x14,uint8,add_register,confirmed,Semantik offen
+MAIN,2152,nicht im Katalog,V3.3 Diagnose 2152,new_register,0x20016A44+0x1C,int16,add_register,confirmed,Livewert 1 beobachtet
+MAIN,2153,nicht im Katalog,V3.3 Diagnose 2153,new_register,0x20015EF0+0x06,int16,add_register,confirmed,Semantik offen
+MAIN,2154,nicht im Katalog,V3.3 Diagnose 2154,new_register,0x20015EF0+0x0A,uint16,add_register,confirmed,Semantik offen
+MAIN,2155,nicht im Katalog,V3.3 Diagnose 2155,new_register,0x20015EF0+0x0C,uint16,add_register,confirmed,Semantik offen
+MAIN,2156,nicht im Katalog,V3.3 Diagnose 2156,new_register,0x20015EF0+0x08,int16,add_register,confirmed,Semantik offen
+MAIN,2157,nicht im Katalog,V3.3 Diagnose 2157,new_register,0x20015EF0+0x10,uint16,add_register,confirmed,Semantik offen
+MAIN,2158,nicht im Katalog,V3.3 Diagnose 2158,new_register,0x20015EF0+0x12,uint16,add_register,confirmed,Semantik offen
+MAIN,2159,nicht im Katalog,Reserve/anderer Pfad,new_register,kein Hauptbuilder-Writer,raw,add_register,confirmed_absence_in_builder,Live 0 im aktuellen Mitschnitt
+MAIN,2160,nicht im Katalog,V3.3 Diagnose 2160,new_register,0x2001605C+0x66,uint16,add_register,confirmed,Semantik offen
+MAIN,2161,nicht im Katalog,V3.3 Diagnose 2161,new_register,0x20016100+0x78,uint16,add_register,confirmed,Semantik offen
+MAIN,2162,nicht im Katalog,V3.3 Diagnose 2162,new_register,0x20016100+0x66,uint16,add_register,confirmed,Semantik offen
+MAIN,2163,nicht im Katalog,V3.3 berechnete Prozent-/Verhältnisgröße,new_register,berechnet aus 0x20016100,float->integer max100,add_register,confirmed_structure,Semantik offen; auf 100 begrenzt
+MAIN,2164,nicht im Katalog,V3.3 Diagnose 2164,new_register,0x2001605C+0x7A,uint16,add_register,confirmed,Livewert 450 beobachtet
+MAIN,2165,nicht im Katalog,V3.3 Diagnose 2165,new_register,0x20016100+0x7A,uint16,add_register,confirmed,Livewert 350 beobachtet
+MAIN,2166,nicht im Katalog,V3.3 Diagnose 2166,new_register,0x20016100+0x46,int16,add_register,confirmed,Livewert 1 beobachtet
+MAIN,2167-2177,nicht im Katalog,Reserve/anderer Pfad,new_register_range,kein Hauptbuilder-Writer,raw,add_registers_conservatively,confirmed_absence_in_builder,im aktuellen Mitschnitt 0
+MAIN,2178,nicht im Katalog,V3.3 Diagnose 2178,new_register,0x20016DB4+0x00,uint16,add_register,confirmed,Semantik offen
+MAIN,2179,nicht im Katalog,V3.3 Diagnose 2179,new_register,0x20016DB4+0x02,uint16,add_register,confirmed,Semantik offen
+MAIN,2180,nicht im Katalog,V3.3 Diagnose 2180,new_register,0x20016DB4+0x04,uint16,add_register,confirmed,Semantik offen
+INV1,2002,Semantik bisher offen,Maximalstrom-/Current-Limit-Vorgabe,correction,MAIN:1343 A39 Max. Current Value,current limit,update_unit1_docs,confirmed,Quelle 0x200162D8+0x5C
