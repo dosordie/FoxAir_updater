@@ -78,7 +78,15 @@ require_adb() {
 }
 
 remote_file_exists() {
-    "$ADB_BIN" shell "test -f '$1'" >/dev/null 2>&1
+    local remote="$1"
+    local state
+    state="$("$ADB_BIN" shell "if [ -f '$remote' ]; then echo PRESENT; else echo ABSENT; fi" 2>/dev/null | tr -d '\r')" \
+        || die "ADB-Verbindung zum LTE-Modem ist beim Pruefen von $remote fehlgeschlagen"
+    case "$state" in
+        PRESENT) return 0 ;;
+        ABSENT) return 1 ;;
+        *) die "Unerwartete ADB-Antwort beim Pruefen von $remote: ${state:-<leer>}" ;;
+    esac
 }
 
 backup_update_cache() {
@@ -360,8 +368,10 @@ case "$command" in
         if python3 "$CONTROLLER" --adb "$ADB_BIN" run --restore original; then
             restore_update_cache
             exit 0
+        else
+            rc=$?
+            exit "$rc"
         fi
-        exit $?
         ;;
     download)
         [[ $# -eq 1 ]] || die "download benoetigt keine weiteren Argumente"
