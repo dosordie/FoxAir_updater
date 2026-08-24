@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import NoReturn
 
 REMOTE_CACHE = "/cache/phnixIot_device_OTA"
 REMOTE_RESTORE_STAGE = "/cache/.phnixIot_device_OTA.restore"
@@ -40,7 +41,7 @@ COMPARE_FIELDS = (
 )
 
 
-def fail(message: str, code: int = 2) -> "NoReturn":
+def fail(message: str, code: int = 2) -> NoReturn:
     print(f"[Windows-Sicherheitswrapper] FEHLER: {message}", file=sys.stderr, flush=True)
     raise SystemExit(code)
 
@@ -266,13 +267,13 @@ def main() -> int:
     if not manifest_tool.is_file():
         fail(f"Manifest-Tool fehlt: {manifest_tool}")
 
-    base = adb_command(args)
     is_execute = "--execute" in args
     is_full_update = is_execute and "run" in args and "PHNIX-FULL-UPDATE" in args
     is_same = is_execute and "same-version-test" in args
     is_restore = "run" in args and "--restore" in args and value_after(args, "--restore") == "original"
 
     if is_full_update:
+        base = adb_command(args)
         manifest_value = value_after(args, "--manifest")
         if not manifest_value:
             fail("--manifest fehlt beim Update")
@@ -290,6 +291,7 @@ def main() -> int:
         return rc
 
     if is_same:
+        base = adb_command(args)
         backup_update_cache(base)
         rc = run_core(core, args)
         if rc == 0:
@@ -301,6 +303,7 @@ def main() -> int:
         return rc
 
     if is_restore:
+        base = adb_command(args)
         rc = run_core(core, args)
         if rc == 0:
             restore_update_cache(base)
