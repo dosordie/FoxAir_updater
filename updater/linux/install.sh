@@ -19,6 +19,15 @@ info() { printf '[..] %s\n' "$*"; }
 warn() { printf '[WARNUNG] %s\n' "$*" >&2; }
 die()  { printf '[FEHLER] %s\n' "$*" >&2; exit 1; }
 
+configure_sparse_checkout() {
+    if ! git -C "$INSTALL_DIR" sparse-checkout init --cone; then
+        die "git sparse-checkout konnte nicht initialisiert werden ($(git --version))."
+    fi
+    if ! git -C "$INSTALL_DIR" sparse-checkout set "${SPARSE_PATHS[@]}"; then
+        die "Die Linux-Dateiauswahl per git sparse-checkout konnte nicht eingerichtet werden."
+    fi
+}
+
 if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
     die "Bitte den Installer als normaler Benutzer starten. sudo wird bei Bedarf automatisch verwendet."
 fi
@@ -68,15 +77,7 @@ if ! python3 -c "import sys; raise SystemExit(0 if sys.version_info >= ($MIN_PYT
     die "Python $python_version gefunden. Benötigt wird Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}."
 fi
 ok "Python $python_version"
-
-# `git sparse-checkout -h` liefert bei unterstützten Git-Versionen je nach
-# Version trotzdem einen von 0 verschiedenen Rückgabecode. Deshalb nicht den
-# Exit-Code der Hilfe auswerten, sondern die tatsächliche Usage-Ausgabe.
-sparse_help="$(git sparse-checkout -h 2>&1 || true)"
-if [[ "$sparse_help" != *"usage: git sparse-checkout"* ]]; then
-    die "Die installierte Git-Version unterstützt 'git sparse-checkout' nicht. Bitte Git aktualisieren."
-fi
-ok "Git sparse-checkout verfügbar ($(git --version))"
+ok "Git verfügbar ($(git --version))"
 
 if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
     die "$INSTALL_DIR existiert, ist aber kein Verzeichnis."
@@ -124,8 +125,7 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     fi
 
     info "Reduziere Checkout auf die für Linux benötigten Dateien"
-    git -C "$INSTALL_DIR" sparse-checkout init --cone
-    git -C "$INSTALL_DIR" sparse-checkout set "${SPARSE_PATHS[@]}"
+    configure_sparse_checkout
     ok "Sparse-Checkout eingerichtet"
 elif [[ -d "$INSTALL_DIR" && -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
     die "$INSTALL_DIR existiert bereits und ist kein FoxAir-Updater-Git-Repository."
@@ -133,8 +133,7 @@ else
     info "Lade FoxAir Updater nach $INSTALL_DIR"
     git clone --filter=blob:none --no-checkout --branch main --single-branch "$REPO_URL" "$INSTALL_DIR"
     git -C "$INSTALL_DIR" config core.fileMode false
-    git -C "$INSTALL_DIR" sparse-checkout init --cone
-    git -C "$INSTALL_DIR" sparse-checkout set "${SPARSE_PATHS[@]}"
+    configure_sparse_checkout
     git -C "$INSTALL_DIR" checkout main
     ok "Repository als schlanker Linux-Checkout installiert"
 fi
