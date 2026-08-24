@@ -26,13 +26,38 @@ Stand: 24. August 2026
 > Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung
 > oder Fehlfunktion dieses Tools entstehen.
 
-Diese Anleitung beschreibt den aktuellen Linux-/Raspberry-Pi-Ablauf des
-FoxAir-Updaters. Die Installation und der normale Betrieb erfolgen über den
+Diese Anleitung beschreibt im Hauptteil den aktuellen Linux-/Raspberry-Pi-Ablauf des
+FoxAir-Updaters. Die Installation und der normale Linux-Betrieb erfolgen über den
 Linux-Installer und den Launcher `./foxair-updater`.
+
+Für Windows steht zusätzlich eine grafische Version als Portable-ZIP und Setup-EXE zur Verfügung.
 
 Der vorherige Stand der Anleitung ist zur Referenz unter
 [`PHNIX_UPDATER_ENDANWENDER_OLD.md`](PHNIX_UPDATER_ENDANWENDER_OLD.md)
 archiviert.
+
+## Windows-GUI als alternative Endanwender-Version
+
+Die Windows-Version kann über die normale GitHub-Releases-Seite heruntergeladen werden:
+
+**[FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)**
+
+Der aktuelle Repository-Entwicklungsstand der Windows-GUI ist **v0.1.4**. ADB wird bewusst nicht mitgeliefert; die GUI verlinkt die offiziellen Android SDK Platform Tools und erlaubt anschließend die Auswahl einer vorhandenen `adb.exe`.
+
+> [!IMPORTANT]
+> Unter Windows wurden **ADB-Verbindung, Remote-ADB über Raspberry Pi, Originalstatus und das read-only LTE-Backup/Firmware-Download real getestet**.
+>
+> Ein **echtes Firmwareupdate auf eine andere Mainboard-Version wurde mit der Windows-GUI noch nicht live durchgeführt**. Die Update-, Recovery- und Same-Version-Funktionen bleiben daher experimentell.
+
+Die Windows-GUI verwendet weiterhin dieselbe gemeinsame OTA-Logik. Der gemeinsame Controller wird beim Build bytegleich übernommen; eine kleine Windows-Sicherheitshülle bildet nur die zusätzlichen Linux-Launcher-Funktionen für Full-Abgleich und LTE-Cache-Sicherung nach.
+
+Für Backup und ADB-Einrichtung ist die zentrale Anleitung maßgeblich:
+
+[`firmware_backup_lte.md`](firmware_backup_lte.md)
+
+Die Windows-Build-/Release-Details stehen unter:
+
+[`../../updater/windows/README.md`](../../updater/windows/README.md)
 
 ## LTE-Modem per USB / ADB verbinden
 
@@ -48,10 +73,12 @@ Dort sind unter anderem beschrieben:
 
 - Micro-USB-Anschluss am LTE-Modem und Umgang mit vorhandener Vergussmasse;
 - Windows-Treiber und Android SDK Platform Tools / ADB;
-- Prüfung der Verbindung unter Windows;
+- die **empfohlene Windows-GUI für Backup und Firmware-Download**;
+- die manuelle PowerShell-Alternative unter Windows;
+- optionaler Remote-ADB-Betrieb über einen Raspberry Pi;
 - der alternative Linux-/Raspberry-Pi-Weg ohne zusätzliche Windows-Treiber;
 - `adb devices -l`, `adb shell` und die grundlegende ADB-Verbindungsprüfung;
-- optional das Auslesen und Sichern vorhandener LTE-Dateien.
+- das Auslesen und Sichern vorhandener LTE-Dateien.
 
 Diese Datei ist für die Verbindungsherstellung die **maßgebliche Anleitung**.
 Änderungen an Treibern, Anschluss oder ADB-Grundsetup sollen dort gepflegt werden,
@@ -84,7 +111,7 @@ Der Controller arbeitet absichtlich fail-closed: unbekannte oder nicht sicher
 terminale Zustände führen nicht zu einem aggressiven automatischen Cleanup,
 sondern zu einem geschützten Halt.
 
-## Voraussetzungen
+## Voraussetzungen für den folgenden Linux-/Raspberry-Pi-Weg
 
 Benötigt werden:
 
@@ -432,6 +459,8 @@ Danach sollte immer zuerst ein Dry-Run erfolgen:
 ./foxair-updater check FW3.4.json
 ```
 
+Unter Windows steht dieselbe Manifest-Logik komfortabel auf der Registerkarte **Manifest** zur Verfügung. Empfohlen sind dort **Vorschau aus Firmware (Full / Show)** und anschließend **Manifest automatisch erzeugen (Full)**. Die originale Firmwaredatei muss dafür keine `.bin`-Endung besitzen.
+
 ## Gleichversionstest – nur für Entwicklung und Abnahme
 
 Der bekannte V3.3-Gleichversionstest ist **kein normaler Endanwenderbefehl**.
@@ -536,7 +565,7 @@ direkt verwendet werden. Dazu gehören unter anderem:
 - die weiterhin bewusst eingeschränkten Cancel-Pfade.
 
 Für den normalen Linux-Anwender sollten jedoch die Befehle über
-`./foxair-updater` verwendet werden.
+`./foxair-updater` verwendet werden. Für Windows-Endanwender ist die GUI der vorgesehene Bedienweg; die technischen Laborbefehle bleiben separate Entwicklungswerkzeuge.
 
 ## Lizenz
 
@@ -548,6 +577,20 @@ experimentellen Firmware-Updaters und ist keine Zusage, dass ein Firmwareupdate
 auf realer Hardware funktioniert.
 
 ## Kurzfassung
+
+### Windows
+
+Windows-Version herunterladen:
+
+[GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)
+
+ADB/Backup einrichten:
+
+[`firmware_backup_lte.md`](firmware_backup_lte.md)
+
+Real bestätigt sind derzeit ADB-Verbindung, Originalstatus und Backup. **Ein echtes Versionsupdate unter Windows ist noch nicht live getestet.**
+
+### Linux / Raspberry Pi
 
 Verbindung zum LTE-Modem / ADB einrichten:
 
