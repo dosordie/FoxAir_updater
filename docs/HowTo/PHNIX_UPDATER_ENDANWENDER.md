@@ -42,14 +42,14 @@ Die Windows-Version kann über die normale GitHub-Releases-Seite heruntergeladen
 
 **[FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)**
 
-Der aktuelle Repository-Entwicklungsstand der Windows-GUI ist **v0.1.4**. ADB wird bewusst nicht mitgeliefert; die GUI verlinkt die offiziellen Android SDK Platform Tools und erlaubt anschließend die Auswahl einer vorhandenen `adb.exe`.
+Der aktuelle Repository-Entwicklungsstand der Windows-GUI ist **v0.1.5**. ADB wird bewusst nicht mitgeliefert; die GUI verlinkt die offiziellen Android SDK Platform Tools und erlaubt anschließend die Auswahl einer vorhandenen `adb.exe`.
 
 > [!IMPORTANT]
 > Unter Windows wurden **ADB-Verbindung, Remote-ADB über Raspberry Pi, Originalstatus und das read-only LTE-Backup/Firmware-Download real getestet**.
 >
 > Ein **echtes Firmwareupdate auf eine andere Mainboard-Version wurde mit der Windows-GUI noch nicht live durchgeführt**. Die Update-, Recovery- und Same-Version-Funktionen bleiben daher experimentell.
 
-Die Windows-GUI verwendet weiterhin dieselbe gemeinsame OTA-Logik. Der gemeinsame Controller wird beim Build bytegleich übernommen; eine kleine Windows-Sicherheitshülle bildet nur die zusätzlichen Linux-Launcher-Funktionen für Full-Abgleich und LTE-Cache-Sicherung nach.
+Die Windows-GUI verwendet denselben verifizierten Controller-Core und dieselbe plattformübergreifende Full-Update-Safety-Schicht wie Linux. Eine zusätzliche Windows-Sicherheitshülle bildet nur die Launcher-Funktionen für Full-Abgleich, LTE-Cache-Sicherung und den stabilen Windows-Zustandsordner nach.
 
 Für Backup und ADB-Einrichtung ist die zentrale Anleitung maßgeblich:
 
@@ -107,9 +107,11 @@ zur sicheren Gleichversionsablehnung getestet. Ein erstes echtes Update auf
 eine neuere Mainboard-Firmware bleibt ein beaufsichtigter Test mit stabiler
 Stromversorgung und vorbereitetem Recoveryweg.
 
-Der Controller arbeitet absichtlich fail-closed: unbekannte oder nicht sicher
-terminale Zustände führen nicht zu einem aggressiven automatischen Cleanup,
-sondern zu einem geschützten Halt.
+Vor dem ersten C5A8 arbeitet der Updater absichtlich fail-closed: unbekannte oder
+nicht sicher terminale Zustände führen zu einem geschützten Halt. Sobald der erste
+C5A8-Firmwareblock begonnen hat, gilt dagegen der Originaldienst `phnixIot4G` als
+autoritativ. Ein Host-/USB-/ADB-/Helperfehler darf ihn dann nicht mehr automatisch
+anhalten; der Host beobachtet und protokolliert nur.
 
 ## Voraussetzungen für den folgenden Linux-/Raspberry-Pi-Weg
 
@@ -157,7 +159,7 @@ Der Installer:
 - installiert eine udev-Regel für das PHNIX-LTE-Modem `1e0e:9001`;
 - lädt die udev-Regeln neu;
 - startet den ADB-Server neu;
-- berücksichtigt ein kurzzeitig `offline` erscheinendes ADB-Gerät und versucht einmal `adb reconnect`;
+- berücksichtigt ein kurzzeitig `offline` erscheinendes ADB-Gerät und versucht einmal automatisch `adb reconnect`;
 - prüft Controller, Manifestwerkzeug und Launcher;
 - zeigt den erkannten ADB-Status und den installierten Git-Commit an.
 
@@ -285,7 +287,7 @@ Die normalen Befehle sind:
 ```text
 ./foxair-updater status
 ./foxair-updater check MANIFEST
-./foxair-updater update MANIFEST --confirm
+./foxair-updater update MANIFEST --full --confirm
 ./foxair-updater restore
 ./foxair-updater manifest FIRMWARE --software-code CODE --display-version VERSION --target-ssid SSID
 ./foxair-updater version
@@ -344,11 +346,12 @@ Der Dry-Run prüft insbesondere:
 - ADB-Verbindung;
 - geprüften Originaldienst;
 - benötigte Werkzeuge auf dem LTE-Modem;
-- Speicherplatz;
 - OTA_INFO;
 - lokalen Runtime-Helfer.
 
-Vor einem echten Update sollte dieser Dry-Run erfolgreich sein.
+Der zusätzliche harte freie-Speicher-Check für `/data` und `/cache` erfolgt direkt im
+Full-Update-Preflight unmittelbar vor einem echten Lauf. Vor einem echten Update sollte
+auch dieser Dry-Run erfolgreich sein.
 
 ## 3. Vollständiges Firmwareupdate starten
 
@@ -360,8 +363,14 @@ Vor einem echten Update sollte dieser Dry-Run erfolgreich sein.
 Beispiel:
 
 ```sh
-./foxair-updater update FW3.4.json --confirm
+./foxair-updater update FW3.4.json --full --confirm
 ```
+
+`--full` ist bei einem echten Linux-Update verpflichtend. Der Launcher analysiert die
+Firmware unmittelbar vor ADB-/Busaktivität erneut und verlangt, dass extrahierte Identität,
+Dateigröße, MD5 und SHA-256 exakt zum Manifest passen. Zusätzlich gilt die bestätigte
+C357-Maximalgröße von `307200` Byte und es wird ausreichend freier Speicher auf `/data`
+und `/cache` verlangt.
 
 Der Launcher setzt intern die notwendige explizite Freigabe
 `PHNIX-FULL-UPDATE` und verwendet den lokalen Zustandsordner
@@ -370,16 +379,28 @@ Der Launcher setzt intern die notwendige explizite Freigabe
 Der Controller führt dabei automatisch aus:
 
 1. Firmware, Manifest, Modem und Originaldienst prüfen;
-2. Runtime-Helfer lokal prüfen;
-3. Helfer unter einem temporären Namen übertragen;
-4. SHA-256 prüfen, Rechte setzen und Helfer atomar aktivieren;
-5. OTA_INFO und Statistik auf dem Rechner sichern;
-6. Firmware zum LTE-Modem kopieren;
-7. Firmware lokal über `127.0.0.1:8081` bereitstellen;
-8. Originaldienst kontrolliert in den lokalen OTA-Pfad führen;
-9. Status und Fortschritt beobachten;
-10. nach sicher bestätigtem Abschluss Originaldienst, Watchdogs und Cloud prüfen;
-11. temporäre Firmwareablage, Marker und Runtime-Helfer wieder entfernen.
+2. Full-Firmwareidentität und Speicherplatz prüfen;
+3. Runtime-Helfer lokal prüfen;
+4. Helfer unter einem temporären Namen übertragen;
+5. SHA-256 prüfen, Rechte setzen und Helfer atomar aktivieren;
+6. OTA_INFO und Statistik auf dem Rechner sichern;
+7. einen persistenten Host-Run-State anlegen;
+8. Firmware zum LTE-Modem kopieren;
+9. Firmware lokal über `127.0.0.1:8081` bereitstellen;
+10. Originaldienst kontrolliert in den lokalen OTA-Pfad führen;
+11. Status und bestätigten `OTA_INFO`-Fortschritt beobachten;
+12. nach sicher bestätigtem Abschluss Originaldienst, Watchdogs und Cloud prüfen;
+13. temporäre Firmwareablage, Marker und Runtime-Helfer wieder entfernen.
+
+Ab dem ersten C5A8 wird im Host-Run-State `point_of_no_return=true` festgehalten. Geht
+danach die Host-/USB-/ADB-Überwachung verloren, wird `phnixIot4G` nicht automatisch
+angehalten. Der bereits lokal laufende Original-OTA soll selbständig weiterlaufen.
+
+Wenn der bestätigte C5A8-Offset mindestens 60 Sekunden nicht steigt, zeigt der Updater
+nur eine Warnung. Es wird weder ein Timeout-Abbruch noch ein eigener Cancel ausgelöst.
+
+Bei 100 % ist zunächst die Firmwareübertragung abgeschlossen. Das Mainboard kann danach
+intern noch prüfen, programmieren und committen; die Anzeige weist ausdrücklich darauf hin.
 
 Ein externer Buslogger ist für den normalen Vollupdate-Aufruf nicht erforderlich.
 Bei einem ersten Test einer neuen Firmware kann er trotzdem als zusätzliche
@@ -501,7 +522,7 @@ Support- oder Testmeldungen hilfreich.
 
 ## Was geschieht bei einem Fehler?
 
-Es gibt zwei grundsätzlich unterschiedliche Fehlerklassen.
+Es gibt drei praktisch relevante Fälle.
 
 ### Sicher terminal beendet
 
@@ -514,23 +535,33 @@ Beispiele sind:
 In einem eindeutig terminalen Zustand kann der Controller automatisch
 aufräumen und den Runtime-Helfer wieder entfernen.
 
-### Guarded Hold
+### Fehler vor dem ersten C5A8 – Guarded Hold
 
-Bei einem unerwarteten oder nicht eindeutig terminalen Zustand hält der
-Controller den Ablauf geschützt an.
+Bei einem unerwarteten oder nicht eindeutig terminalen Zustand **vor** dem ersten
+Firmwareblock hält der Controller den Ablauf geschützt an.
 
 Dabei können Cloud-Sperre, Diagnosezustand und Runtime-Helfer absichtlich
 bestehen bleiben, damit keine unkontrollierte Zustandsänderung erfolgt.
 
 Dann gilt:
 
-- LTE-Modem und Wärmepumpe **nicht** stromlos machen;
+- LTE-Modem und Wärmepumpe nicht unnötig verändern;
 - keinen neuen Updatebefehl starten;
 - Konsolenausgabe und gegebenenfalls Buslog sichern;
 - Status nur gezielt prüfen;
 - anschließend den passenden Recoveryweg verwenden.
 
 `./foxair-updater restore` ist nur vor begonnenem C5A8-Firmwaretransfer zulässig.
+
+### Host-/ADB-Fehler nach begonnenem C5A8
+
+Ab dem ersten C5A8 wird der Originaldienst **nicht** mehr wegen eines Hostfehlers per
+`SIGSTOP`/`hold` angehalten. Der Host-Run-State markiert den Point-of-no-return und,
+soweit noch lokal möglich, den Verlust der Überwachung. Der originale `phnixIot4G`-
+Dienst bleibt für den weiteren Boardtransfer zuständig.
+
+In diesem Zustand soll kein generischer Restore oder automatisch erfundener Cancel in
+die laufende Original-State-Machine eingreifen.
 
 ## Konsolenausgabe
 
@@ -545,16 +576,27 @@ Bei einem vollständigen Transfer zeigt der Controller den vom Originaldienst
 gemeldeten Fortschritt an. Die Fortschrittsanzeige selbst löst keine Eingriffe
 in einen laufenden C5A8-Transfer aus.
 
+Ein unveränderter bestätigter Offset löst nach 60 Sekunden nur eine Warnung aus.
+Bei 100 % wird ausdrücklich angezeigt, dass die Bytes übertragen sind, das Mainboard
+aber intern noch programmieren/verifizieren kann.
+
 ## Experten- und Laborzugriff
 
-Der Launcher ist nur eine komfortable Hülle. Die eigentliche Sicherheits- und
-OTA-Logik bleibt vollständig im bestehenden Controller:
+Der Launcher verwendet für Full-Updates eine gemeinsame Safety-Schicht vor dem
+unveränderten Protokoll-Core:
 
 ```text
+tools/phnix_ota/phnix_local_ota_controller_hardened.py
+        ↓
 tools/phnix_ota/phnix_local_ota_controller.py
 ```
 
-Für Entwicklung und Diagnose können dessen vollständige Optionen weiterhin
+Die Safety-Schicht enthält nur Host-Sicherheitslogik wie Speicherplatzprüfung,
+persistenten Run-State, passive Stallwarnung und die Post-C5A8-Regel. Die bekannten
+Runtime-Breakpoints und die eigentliche PHNIX-OTA-State-Machine bleiben im bestehenden
+Controller/Runtime-Helfer unverändert.
+
+Für Entwicklung und Diagnose können die vollständigen Optionen des Controllers weiterhin
 direkt verwendet werden. Dazu gehören unter anderem:
 
 - rohe `status`-Ausgabe;
@@ -616,7 +658,7 @@ Danach:
 cd ~/FoxAir_updater
 ./foxair-updater status
 ./foxair-updater check FW3.4.json
-./foxair-updater update FW3.4.json --confirm
+./foxair-updater update FW3.4.json --full --confirm
 ```
 
 Bei Bedarf vor begonnenem Firmwaretransfer:
