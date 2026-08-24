@@ -146,8 +146,9 @@ else
     ok "Repository als schlanker Linux-Checkout installiert"
 fi
 
-mkdir -p "$INSTALL_DIR/firmware"
+mkdir -p "$INSTALL_DIR/firmware" "$INSTALL_DIR/downloaded_firmware"
 ok "Lokaler Firmware-Ordner bereit: $INSTALL_DIR/firmware"
+ok "Lokaler Download-/Backup-Ordner bereit: $INSTALL_DIR/downloaded_firmware"
 
 # Die internen Werkzeuge bleiben direkt ausführbar; der Anwender verwendet im
 # Normalfall den Launcher im Projekt-Hauptverzeichnis.
@@ -231,9 +232,13 @@ printf 'Branch:      main\n'
 printf 'Commit:      %s\n' "$commit"
 printf '\nFirmware und Manifest hier ablegen:\n'
 printf '  %s/firmware/\n' "$INSTALL_DIR"
+printf '\nVom LTE-Modem geladene Backups landen hier:\n'
+printf '  %s/downloaded_firmware/\n' "$INSTALL_DIR"
 printf '\nStatus prüfen:\n'
 printf '  cd %q\n' "$INSTALL_DIR"
 printf '  ./foxair-updater status\n'
+printf '\nFirmware/Diagnosedateien vom LTE-Modem sichern:\n'
+printf '  ./foxair-updater download\n'
 printf '\nDry-Run mit Manifest, z. B.:\n'
 printf '  ./foxair-updater check FW3.4.json\n'
 printf '\nFirmwaredateien und OTA-Zustände werden vom Installer nicht heruntergeladen, verändert oder gelöscht.\n'
