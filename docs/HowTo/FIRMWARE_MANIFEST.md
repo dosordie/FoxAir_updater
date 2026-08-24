@@ -1,5 +1,10 @@
 # Firmwaremanifest
 
+> [!NOTE]
+> Für Windows steht dieselbe Manifest-Logik inzwischen direkt in der **FoxAir-Updater-GUI** zur Verfügung. Öffentliche Windows-Versionen gibt es unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases).
+>
+> Unter Windows sind ADB-Verbindung, Originalstatus und Backup real getestet. Ein **echtes Firmwareupdate auf eine andere Mainboard-Version ist weiterhin nicht live validiert**.
+
 Jeder Firmwarelauf verwendet eine Manifestdatei als zentrale Quelle für die
 Firmwaremetadaten, die der Updater für Prüfung, Vorbereitung und OTA-Handshake
 verwendet.
@@ -28,6 +33,24 @@ Firmware vollständig lesend analysieren, ohne eine JSON-Datei anzulegen.
 
 Der Vollmodus arbeitet fail-closed: Wird keine eindeutige Firmwareidentität
 gefunden, wird weder ein Manifest geschrieben noch eine Vorschau ausgegeben.
+
+## Windows-GUI
+
+Auf der Registerkarte **Manifest** stehen die gleichen Funktionen ohne Python-/PowerShell-Bedienung bereit:
+
+1. originale Firmwaredatei auswählen – die Datei muss keine `.bin`-Endung besitzen;
+2. **Vorschau aus Firmware (Full / Show)** ausführen;
+3. erkannte Werte prüfen;
+4. **Manifest automatisch erzeugen (Full)** verwenden.
+
+Intern werden weiterhin unverändert dieselben Aufrufe verwendet:
+
+```text
+create_firmware_manifest.py --firmware FIRMWARE --full --show
+create_firmware_manifest.py --firmware FIRMWARE --full --output FIRMWARE.json
+```
+
+Falls die automatische Analyse nicht möglich ist, bleibt in der GUI als letzter Fallback die manuelle Manifest-Erzeugung mit Software-Code, Display-Version und Target-SSID erhalten.
 
 ## Aufbau
 
@@ -229,6 +252,8 @@ Manifest geprüft werden:
 
 Diese Vollprüfung findet vor ADB- und Busaktivität statt.
 
+Unter Windows v0.1.4 wird dieser Full-Abgleich von der Windows-Sicherheitshülle automatisch unmittelbar vor einem echten Update durchgeführt. Auch das ändert nichts daran, dass der Windows-Firmware-Schreibpfad noch nicht live validiert wurde.
+
 ## Warum diese Trennung beim OTA wichtig ist
 
 Beim Mainboard-OTA sind mindestens drei verschiedene Informationsquellen zu
@@ -266,6 +291,8 @@ Für neue Firmwarestände ist ein sinnvoller erster, vollständig lokaler Schrit
 ```bash
 ./foxair-updater manifest DATEI.bin --full --show
 ```
+
+oder unter Windows der gleichnamige GUI-Schritt **Vorschau aus Firmware (Full / Show)**.
 
 Erst wenn die erkannten Werte plausibel sind, kann anschließend mit demselben
 Analysemotor eine echte Manifestdatei erzeugt werden:
