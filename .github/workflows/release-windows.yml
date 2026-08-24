@@ -1,0 +1,158 @@
+name: Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Windows release version, for example 0.1.2"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark GitHub Release as prerelease"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  release-windows:
+    name: Build and publish Windows release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Validate version and tag
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version must use x.y.z, for example 0.1.2"
+          }
+          git fetch origin main --tags
+          $tag = "windows-v$env:VERSION"
+          if (git tag --list $tag) {
+            throw "Tag $tag already exists. Choose a new version."
+          }
+
+      - name: Set Windows release version
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $guiFile = 'updater/windows/foxair_updater_gui.py'
+          $gui = Get-Content $guiFile -Raw
+          $gui = $gui -replace '(?m)^APP_VERSION\s*=\s*"[^"]+"', "APP_VERSION = `"$env:VERSION`""
+          Set-Content -Path $guiFile -Value $gui -NoNewline -Encoding utf8
+
+          $buildFile = 'updater/windows/build_windows_portable.bat'
+          $build = Get-Content $buildFile -Raw
+          $build = $build -replace '(?m)^set "APP_VERSION=[^"]+"', "set `"APP_VERSION=$env:VERSION`""
+          Set-Content -Path $buildFile -Value $build -NoNewline -Encoding ascii
+
+          $issFile = 'updater/windows/installer/FoxAir_Updater.iss'
+          $iss = Get-Content $issFile -Raw
+          $iss = $iss -replace '(?m)^#define MyAppVersion "[^"]+"', "#define MyAppVersion `"$env:VERSION`""
+          Set-Content -Path $issFile -Value $iss -NoNewline -Encoding utf8
+
+      - name: Verify synchronized Windows version
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gui = Select-String -Path updater/windows/foxair_updater_gui.py -Pattern '^APP_VERSION\s*=\s*"(.+)"$'
+          $bat = Select-String -Path updater/windows/build_windows_portable.bat -Pattern '^set "APP_VERSION=([^"]+)"$'
+          $iss = Select-String -Path updater/windows/installer/FoxAir_Updater.iss -Pattern '^#define MyAppVersion "([^"]+)"$'
+          if (-not $gui -or $gui.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'GUI version mismatch' }
+          if (-not $bat -or $bat.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'Portable build version mismatch' }
+          if (-not $iss -or $iss.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'Installer version mismatch' }
+
+      - name: Setup Python for build
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile Windows GUI source
+        shell: powershell
+        run: python -m py_compile updater/windows/foxair_updater_gui.py
+
+      - name: Build portable package
+        shell: cmd
+        run: updater\windows\build_windows_portable.bat
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y --no-progress
+
+      - name: Build setup
+        shell: cmd
+        run: updater\windows\build_windows_setup.bat
+
+      - name: Verify release assets
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $portable = "dist/FoxAir_Updater_Portable_v$env:VERSION.zip"
+          $setup = "updater/windows/installer/Output/FoxAir_Updater_Setup_v$env:VERSION.exe"
+          if (-not (Test-Path $portable)) { throw "Portable ZIP missing: $portable" }
+          if (-not (Test-Path $setup)) { throw "Setup EXE missing: $setup" }
+
+      - name: Commit release version and push tag
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updater/windows/foxair_updater_gui.py updater/windows/build_windows_portable.bat updater/windows/installer/FoxAir_Updater.iss
+
+          $PSNativeCommandUseErrorActionPreference = $false
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "Release Windows v$env:VERSION"
+            git push origin HEAD:main
+          } else {
+            Write-Host 'Version files already contain the requested version.'
+          }
+
+          $tag = "windows-v$env:VERSION"
+          git tag $tag
+          git push origin $tag
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-v${{ inputs.version }}
+          name: FoxAir Updater Windows v${{ inputs.version }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          body: |
+            Experimentelle Windows-Version des FoxAir Updaters.
+
+            - Portable ZIP und Setup EXE
+            - ADB ist nicht enthalten; die GUI verweist auf die offiziellen Android Platform Tools.
+            - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi.
+            - Die Windows-GUI verwendet weiterhin den bestehenden gemeinsamen Python-OTA-Controller unverändert.
+            - Ein echter Firmware-Versionswechsel ist weiterhin noch nicht live validiert.
+          files: |
+            dist/FoxAir_Updater_Portable_v${{ inputs.version }}.zip
+            updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ inputs.version }}.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
