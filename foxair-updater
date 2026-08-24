@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTROLLER="$ROOT_DIR/tools/phnix_ota/phnix_local_ota_controller.py"
+ADB_BIN="${FOX_AIR_ADB:-adb}"
+STATE_DIR="$ROOT_DIR/phnix-ota-state"
+
+usage() {
+    cat <<'TXT'
+FoxAir Updater
+
+Verwendung:
+  ./foxair-updater status
+  ./foxair-updater check MANIFEST
+  ./foxair-updater update MANIFEST --confirm
+  ./foxair-updater restore
+  ./foxair-updater version
+
+MANIFEST kann als Pfad angegeben werden. Wird nur ein Dateiname angegeben,
+wird automatisch im lokalen Ordner ./firmware/ gesucht.
+
+Beispiele:
+  ./foxair-updater status
+  ./foxair-updater check FW3.4.json
+  ./foxair-updater update FW3.4.json --confirm
+TXT
+}
+
+die() {
+    printf '[FEHLER] %s\n' "$*" >&2
+    exit 1
+}
+
+resolve_manifest() {
+    local input="${1:-}"
+    [[ -n "$input" ]] || die "Manifest fehlt. Beispiel: ./foxair-updater check FW3.4.json"
+
+    if [[ -f "$input" ]]; then
+        readlink -f "$input"
+        return
+    fi
+    if [[ -f "$ROOT_DIR/firmware/$input" ]]; then
+        readlink -f "$ROOT_DIR/firmware/$input"
+        return
+    fi
+    die "Manifest nicht gefunden: $input (auch nicht unter $ROOT_DIR/firmware/)"
+}
+
+[[ -f "$CONTROLLER" ]] || die "Controller fehlt: $CONTROLLER"
+command -v python3 >/dev/null 2>&1 || die "python3 wurde nicht gefunden"
+command -v "$ADB_BIN" >/dev/null 2>&1 || die "ADB wurde nicht gefunden: $ADB_BIN"
+
+command="${1:---help}"
+case "$command" in
+    -h|--help|help)
+        usage
+        ;;
+    status)
+        [[ $# -eq 1 ]] || die "status benötigt keine weiteren Argumente"
+        exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --check status
+        ;;
+    check)
+        [[ $# -eq 2 ]] || die "Verwendung: ./foxair-updater check MANIFEST"
+        manifest="$(resolve_manifest "$2")"
+        exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --manifest "$manifest"
+        ;;
+    update)
+        [[ $# -eq 3 && "$3" == "--confirm" ]] || die "Verwendung: ./foxair-updater update MANIFEST --confirm"
+        manifest="$(resolve_manifest "$2")"
+        exec python3 "$CONTROLLER" \
+            --adb "$ADB_BIN" \
+            run \
+            --manifest "$manifest" \
+            --execute \
+            --confirm PHNIX-FULL-UPDATE \
+            --state-dir "$STATE_DIR"
+        ;;
+    restore)
+        [[ $# -eq 1 ]] || die "restore benötigt keine weiteren Argumente"
+        exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --restore original
+        ;;
+    version)
+        [[ $# -eq 1 ]] || die "version benötigt keine weiteren Argumente"
+        printf 'FoxAir Updater %s\n' "$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+        ;;
+    *)
+        die "Unbekannter Befehl: $command. Hilfe: ./foxair-updater --help"
+        ;;
+esac
