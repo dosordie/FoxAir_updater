@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+FOX_AIR_TARGET_SSID = "0063"
+
+
 class ManifestError(ValueError):
     pass
 
@@ -48,8 +51,10 @@ class FirmwareManifest:
         derived = f"00{self.display_version[1]}{self.display_version[3]}"
         if self.wire_version != derived:
             raise ManifestError(f"wire_version must be {derived} for {self.display_version}")
-        if not re.fullmatch(r"[0-9A-F]{4}", self.target_ssid):
-            raise ManifestError("target_ssid must contain exactly 4 uppercase hex digits")
+        if self.target_ssid != FOX_AIR_TARGET_SSID:
+            raise ManifestError(
+                f"target_ssid must be {FOX_AIR_TARGET_SSID} (FoxAir Modbus unit address 0x63)"
+            )
         if not isinstance(self.size, int) or self.size <= 0:
             raise ManifestError("size must be a positive integer")
         if not re.fullmatch(r"[0-9A-F]{32}", self.md5):
@@ -76,4 +81,3 @@ class FirmwareManifest:
             raise ManifestError("firmware MD5 does not match manifest")
         if sha256 != self.sha256:
             raise ManifestError("firmware SHA256 does not match manifest")
-
