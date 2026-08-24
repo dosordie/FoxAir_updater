@@ -1,11 +1,13 @@
-# Windows Updater v0.1.4 (experimentell)
+# Windows Updater v0.1.5 (experimentell)
 
 Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden gemeinsamen OTA-Backend** gebaut.
 
 > [!IMPORTANT]
-> **Real getestet sind derzeit:** lokale/Remote-ADB-Verbindung, Originalstatus und das read-only LTE-Backup/Firmware-Download per `adb pull`.
+> **Real getestet sind derzeit:** lokale/Remote-ADB-Verbindung, Originalstatus, das read-only LTE-Backup/Firmware-Download per `adb pull` und der Dry-Run.
 >
-> Ein **echtes Firmwareupdate auf eine andere Mainboard-Version wurde unter Windows noch nicht live durchgeführt und bestätigt**. Die Update-, Recovery- und Same-Version-Funktionen bleiben deshalb experimentell.
+> Zusätzlich wurde mit Windows v0.1.3 der normale **Firmware-Update**-Button über Remote-ADB real mit **V3.3 → V3.3** ausgeführt. Das Mainboard erkannte die bereits installierte Firmware und beendete den Ablauf sicher mit `same-version`; `C357` und `C5A8` wurden nicht erreicht und der Originalbetrieb wurde danach wieder bestätigt. Es wurden keine Firmwaredaten übertragen.
+>
+> Die seit v0.1.4 vorgeschaltete Windows-Sicherheitshülle mit zusätzlichem Full-Abgleich und LTE-Cache-Sicherung ist noch nicht in genau diesem Live-Test nachgetestet worden. Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung wurde unter Windows weiterhin noch nicht live durchgeführt und bestätigt**.
 
 Öffentliche Windows-Versionen stehen als Portable-ZIP und Setup-EXE auf der normalen GitHub-Releases-Seite bereit:
 
@@ -26,10 +28,16 @@ tools/phnix_ota/phnix_ota_runtime_hook
 
 bytegleich in das Windows-Paket und prüft die Kopien mit `fc /b`.
 
-Seit v0.1.4 liegt davor zusätzlich eine kleine Windows-Sicherheitshülle:
+Seit v0.1.4 liegt davor zusätzlich eine kleine Windows-Sicherheitshülle. Seit v0.1.5 liegt darüber außerdem nur eine Windows-UI-Schicht für die lesbare Statusdarstellung:
 
 ```text
 FoxAir_Updater.exe
+        ↓
+foxair_updater_app.py
+  lesbare Ablauf-/Ergebnisdarstellung
+        ↓
+foxair_updater_gui.py
+  Basis-GUI
         ↓
 private Python Runtime
         ↓
@@ -47,7 +55,7 @@ Der Wrapper bildet ausschließlich die Linux-Launcher-Funktionen nach, die **au�
 - Erhalt dieses Backups bei nicht sicher terminalem Updatezustand;
 - Wiederherstellung des Cachezustands nach erfolgreichem Same-Version-Test bzw. nach einem vom Controller freigegebenen Restore.
 
-Entscheidungen über Preflight, Update, Guarded Hold, C5A8-Grenze und Zulässigkeit eines Restore verbleiben weiterhin im bestehenden gemeinsamen Controller.
+Die neue v0.1.5-UI-Schicht interpretiert nur die bereits vorhandenen JSON-Ereignisse für den Benutzer. Entscheidungen über Preflight, Update, Guarded Hold, C5A8-Grenze und Zulässigkeit eines Restore verbleiben weiterhin im bestehenden gemeinsamen Controller.
 
 ## ADB
 
@@ -103,7 +111,7 @@ Dadurch verwenden GUI, Windows-Sicherheitswrapper, gemeinsamer Controller und `a
 
 Auch im Remote-Modus wird auf Windows weiterhin eine lokale `adb.exe` als ADB-Client benötigt. Der Remote-Port sollte nur kurzfristig in einem vertrauenswürdigen LAN offen sein.
 
-## Funktionen der GUI v0.1.4
+## Funktionen der GUI v0.1.5
 
 ### Verbindung
 
@@ -141,7 +149,7 @@ Der Originalzustand kann über den bestehenden Controller geprüft werden. Erfol
 
 Restore bleibt an die Sicherheitsentscheidung des bestehenden Controllers gebunden. Sobald die C5A8-Grenze überschritten wurde, darf die Windows-Hülle diese Entscheidung nicht umgehen.
 
-### Firmware Update
+### Firmware Update / Dry-Run
 
 Die GUI verwendet für den eigentlichen OTA-Ablauf weiterhin den bytegleichen gemeinsamen Controller-Core.
 
@@ -162,8 +170,48 @@ image_base
 
 Erst wenn diese Prüfung erfolgreich ist, wird der ursprüngliche LTE-Firmware-Cache gesichert und anschließend der gemeinsame Controller mit `PHNIX-FULL-UPDATE` gestartet.
 
+v0.1.5 zeigt die vorhandenen Controller-Ereignisse zusätzlich als lesbaren Ablauf an:
+
+- **grüne Punkte** für erfolgreiche Prüfungen und sicher bestätigte Zustände;
+- **gelbe Punkte** für Warte-/Transferzustände und erwartete Warnungen wie gleiche Firmware;
+- **rote Punkte** für Fehler, Guarded Hold oder notwendigen manuellen Recovery-Schritt.
+
+Beispiele für lesbare Zustände sind:
+
+```text
+● Firmwaredatei und Manifest sind konsistent.
+● ADB-Verbindung zum LTE-Modem ist bereit.
+● Geprüfter PHNIX-Originaldienst ist aktiv und unverändert.
+● OTA-Statusdatei ist gültig und CRC-geprüft.
+● Vorprüfung vollständig bestanden.
+● Firmware wurde auf dem LTE-Modem bereitgestellt.
+● Gleiche Firmware erkannt – keine Firmwaredaten übertragen.
+● Originaldienst, Watchdogs und Cloud/MQTT laufen wieder.
+```
+
+Das technische Rohprotokoll mit allen JSON-Zeilen bleibt unverändert darunter erhalten und kann weiterhin gespeichert werden.
+
+Abschluss-Popups zeigen keine bloßen technischen `Exit 0`-Texte mehr, sondern unterscheiden unter anderem:
+
+- **Dry-Run erfolgreich – nichts wurde verändert**;
+- **Update nicht durchgeführt – gleiche Firmware**;
+- **Firmwareupdate erfolgreich**;
+- **Update sicher angehalten / Guarded Hold**;
+- **Firmwareupdate wegen Fehler abgebrochen**;
+- **Wiederherstellung erfolgreich/fehlgeschlagen**.
+
+### Fortschrittsbalken
+
+Ein Fortschrittsbalken ist vorhanden. Sobald der Controller während der C5A8-Phase eine gültige `OTA_INFO` mit `offset > 0` und `length > 0` meldet, zeigt die GUI:
+
+```text
+67 % – 192.000 / 287.598 Byte
+```
+
+Die Prozentzahl wird ausschließlich aus den vom Originaldienst gemeldeten `offset/length`-Werten berechnet. Bei einer Gleichversionsablehnung bleibt der Balken bewusst bei 0 und zeigt **Keine Übertragung – gleiche Firmware**, weil keine C5A8-Firmwaredaten gesendet wurden.
+
 > [!WARNING]
-> Dieser echte Firmware-Schreibpfad wurde unter Windows **noch nicht live mit einem Versionswechsel validiert**. Ein erfolgreicher Statuscheck oder ein funktionierendes Backup beweist nicht, dass ein echtes Update fehlerfrei abgeschlossen wird.
+> Die C5A8-Fortschrittsanzeige ist softwareseitig implementiert, konnte aber noch nicht an einem echten Windows-Versionswechsel beobachtet werden, weil ein solcher Transfer bislang nicht live ausgeführt wurde.
 
 ### Manifest
 
@@ -209,9 +257,9 @@ verwendet wird. Das Logo wird als EXE-Icon, Fenster-Icon und Setup-Icon verwende
 
 ## Experimenteller Stand
 
-Ein echter Versionswechsel wurde weiterhin **nicht live bestätigt**. Bisher wurde auf realer Hardware nur V3.3 → V3.3 bis zur erwarteten Gleichversionsablehnung getestet; dabei wurden keine Firmwareblöcke geschrieben.
+Ein echter Versionswechsel wurde weiterhin **nicht live bestätigt**. Bisher wurde auf realer Hardware V3.3 → V3.3 bis zur erwarteten Gleichversionsablehnung getestet; dabei wurden keine Firmwareblöcke geschrieben.
 
-Für Windows sind ADB, Remote-ADB, Originalstatus und Backup bestätigt. Die GUI macht den OTA-Ablauf komfortabler bedienbar, ersetzt aber keine noch ausstehende Live-Validierung des Firmware-Schreibpfads.
+Für Windows sind ADB, Remote-ADB, Originalstatus, Backup und Dry-Run bestätigt. Zusätzlich wurde unter Windows v0.1.3 der normale Update-Aufruf über Remote-ADB bis zur sicheren Gleichversionsablehnung real bestätigt. Die später ergänzte Windows-Sicherheitshülle muss in diesem Pfad noch nachgetestet werden; die C5A8-Schreibphase einer anderen Firmware bleibt weiterhin ungetestet.
 
 ## GitHub Actions: Build und Release getrennt
 
@@ -237,15 +285,15 @@ Actions → Release Windows → Run workflow
 Dort wird nur die Zielversion eingetragen, zum Beispiel:
 
 ```text
-0.1.4
+0.1.5
 ```
 
 Optional kann festgelegt werden, ob das Release als Prerelease markiert wird.
 
 Der Workflow:
 
-1. setzt die eingegebene Version synchron in GUI, Portable-Build und Inno-Setup-Datei;
-2. prüft die Python-Syntax der GUI;
+1. setzt die eingegebene Version synchron in GUI-Einstieg, Basis-GUI, Portable-Build und Inno-Setup-Datei;
+2. prüft die Python-Syntax beider GUI-Dateien;
 3. baut Portable und Setup;
 4. prüft, dass beide Release-Dateien vorhanden sind;
 5. committed eine eventuell geänderte Versionsnummer nach `main`;
@@ -255,15 +303,15 @@ Der Workflow:
 Beispiel:
 
 ```text
-Tag:     windows-v0.1.4
-Release: FoxAir Updater Windows v0.1.4
+Tag:     windows-v0.1.5
+Release: FoxAir Updater Windows v0.1.5
 ```
 
 Release-Assets:
 
 ```text
-FoxAir_Updater_Portable_v0.1.4.zip
-FoxAir_Updater_Setup_v0.1.4.exe
+FoxAir_Updater_Portable_v0.1.5.zip
+FoxAir_Updater_Setup_v0.1.5.exe
 ```
 
 Diese Dateien sind bei einem öffentlichen Repository auch ohne GitHub-Anmeldung über die normale Releases-Seite herunterladbar.
@@ -287,7 +335,7 @@ Der Build:
 
 1. installiert PySide6/PyInstaller für den Build-PC;
 2. lädt und verifiziert das FoxAir-Control-Programmlogo;
-3. baut `FoxAir_Updater.exe` als PyInstaller-One-Folder-Anwendung;
+3. baut `FoxAir_Updater.exe` aus `foxair_updater_app.py` als PyInstaller-One-Folder-Anwendung;
 4. kopiert den gemeinsamen Controller bytegleich als `phnix_local_ota_controller_core.py`;
 5. legt davor den Windows-Sicherheitswrapper unter dem von der GUI erwarteten Controller-Dateinamen ab;
 6. prüft Wrapper und gemeinsamen Backend-Code mit `fc /b`;
@@ -299,7 +347,7 @@ Ergebnis:
 
 ```text
 dist/FoxAir_Updater/
-dist/FoxAir_Updater_Portable_v0.1.4.zip
+dist/FoxAir_Updater_Portable_v0.1.5.zip
 ```
 
 Der Endanwender benötigt **keine Python-Installation**. ADB ist ausdrücklich nicht Bestandteil des Pakets.
@@ -315,18 +363,18 @@ updater\windows\build_windows_setup.bat
 Ergebnis:
 
 ```text
-updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.4.exe
+updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.5.exe
 ```
 
 Das Setup installiert denselben Inhalt wie die Portable-Version nach `Program Files`. Laufzeitdaten und OTA-State werden von der GUI bzw. der Windows-Sicherheitshülle in das lokale Benutzer-Anwendungsdatenverzeichnis geschrieben, nicht in `Program Files`.
 
 ## Entwicklungsstart ohne Packaging
 
-Für GUI-Entwicklung kann die Datei direkt aus dem Repository gestartet werden, wenn PySide6 installiert ist:
+Für GUI-Entwicklung können Basis-GUI und Erweiterung direkt aus dem Repository gestartet werden, wenn PySide6 installiert ist:
 
 ```bat
 py -m pip install -r updater\windows\requirements-build.txt
-py updater\windows\foxair_updater_gui.py
+py updater\windows\foxair_updater_app.py
 ```
 
 Im Entwicklungsmodus läuft die GUI direkt gegen die Repository-Dateien. Die Release-Builds verwenden zusätzlich die oben beschriebene Windows-Sicherheitshülle, ohne die gemeinsame OTA-Logik zu verändern.
