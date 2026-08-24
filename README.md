@@ -55,7 +55,7 @@ Für Entwicklung und Abnahme existiert zusätzlich:
 ### Windows
 
 Zusätzlich gibt es eine **experimentelle Windows-GUI** als Portable-ZIP und Setup-EXE.
-Die aktuelle Entwicklungsfassung ist **v0.1.4**.
+Die aktuelle Entwicklungsfassung ist **v0.1.5**.
 
 Öffentliche Windows-Versionen werden hier bereitgestellt:
 
@@ -63,12 +63,16 @@ Die aktuelle Entwicklungsfassung ist **v0.1.4**.
 
 > [!IMPORTANT]
 > Der Windows-Pfad wurde bereits real für **ADB-Verbindung, Remote-ADB über Raspberry Pi,
-> Originalstatus und read-only LTE-Backup/Firmware-Download** getestet. Diese Funktionen
-> arbeiten wie vorgesehen.
+> Originalstatus, read-only LTE-Backup/Firmware-Download und Dry-Run** getestet.
 >
-> Ein **echtes Firmwareupdate auf eine andere Mainboard-Version wurde mit der Windows-GUI
-> noch nicht live durchgeführt**. Dry-Run, Update-, Recovery- und Same-Version-Funktionen
-> bleiben daher experimentell, auch wenn sie denselben gemeinsamen Controller verwenden.
+> Zusätzlich wurde der normale Windows-**Firmware-Update**-Aufruf über Remote-ADB real mit
+> **V3.3 → V3.3** ausgeführt. Das Mainboard erkannte die bereits installierte Firmware,
+> beendete den Ablauf sicher mit `same-version`, `C357=false` und `C5A8=false`, und der
+> Originalbetrieb wurde anschließend wieder bestätigt. Es wurden dabei **keine Firmwaredaten
+> übertragen**.
+>
+> Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung
+> wurde mit der Windows-GUI weiterhin noch nicht live durchgeführt**.
 
 Die Windows-Version refaktoriert die gemeinsame OTA-Logik bewusst nicht. Details stehen unter
 [`updater/windows/README.md`](updater/windows/README.md).
@@ -105,12 +109,14 @@ Ausführliche Updater-Anleitung:
 Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
 [`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
 
-## Windows GUI v0.1.4
+## Windows GUI v0.1.5
 
 Die Windows-Version verwendet die gemeinsame OTA-Quelle weiterhin unverändert:
 
 ```text
 FoxAir_Updater.exe
+        ↓
+Windows-GUI / lesbare Statusdarstellung
         ↓
 private Python Runtime
         ↓
@@ -140,8 +146,12 @@ Die GUI bietet unter anderem:
 - **real getestetes read-only LTE-Backup/Firmware-Download per `adb pull`**;
 - frei wählbaren Backup-Zielordner und **Zielordner öffnen** im Windows-Explorer;
 - Originalstatus mit farbiger OK-/Fehleranzeige;
-- Dry-Run;
-- vollständigen, weiterhin **nicht live validierten** Update-Aufruf über den bestehenden Controller;
+- **real getesteten Dry-Run**;
+- normalen Update-Aufruf, real bestätigt bis zur sicheren **V3.3→V3.3-Gleichversionsablehnung**;
+- weiterhin **nicht live validierte C5A8-Firmwareübertragung einer anderen Version**;
+- benutzerfreundliche Ablaufanzeige mit grünen Prüfpunkten, gelben Warnungen und roten Fehlern;
+- verständliche Abschlussmeldungen statt technischer `Exit 0`-Popups;
+- Fortschrittsbalken für einen späteren echten C5A8-Transfer auf Basis von `OTA_INFO offset/length`;
 - Restore über den bestehenden Controller;
 - Full-Firmware-/Manifest-Abgleich unmittelbar vor einem echten Update;
 - Sicherung des ursprünglichen LTE-Firmware-Caches analog zum Linux-Launcher;
