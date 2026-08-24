@@ -1,6 +1,6 @@
-# Windows Updater v0.1 (experimentell)
+# Windows Updater v0.1.1 (experimentell)
 
-Die erste Windows-Version ist bewusst als **dünne GUI vor dem bestehenden Linux-/Raspberry-Pi-Backend** gebaut.
+Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden Linux-/Raspberry-Pi-Backend** gebaut.
 
 ## Wichtig: keine Refaktorierung der OTA-Logik
 
@@ -42,7 +42,7 @@ LTE-/USB-Anleitung:
 
 https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md
 
-## Funktionen der GUI v0.1
+## Funktionen der GUI v0.1.1
 
 ### Verbindung
 
@@ -83,19 +83,71 @@ Die GUI zeigt die vom Controller ausgegebenen JSON-Events und OTA-Fortschritte a
 
 ### Manifest
 
-Die GUI verwendet unverändert:
+Die GUI verwendet weiterhin unverändert:
 
 ```text
 create_firmware_manifest.py
 ```
 
-und erzeugt `wire_version`, Dateigröße, MD5 und SHA-256 weiterhin mit demselben Tool wie Linux.
+Der empfohlene Ablauf entspricht der Linux-Funktionalität:
+
+1. Firmwaredatei auswählen;
+2. **Vorschau aus Firmware (Full / Show)** ausführen;
+3. die automatisch erkannten und berechneten Werte prüfen;
+4. **Manifest automatisch erzeugen (Full)** verwenden.
+
+Intern entsprechen diese beiden Aktionen:
+
+```text
+create_firmware_manifest.py --firmware FW.bin --full --show
+create_firmware_manifest.py --firmware FW.bin --full --output FW.json
+```
+
+Die Full-Variante validiert das Cortex-M-Image, sucht die Firmware-Identität im Image, liest daraus Software-Code und Wire-/Display-Version und berechnet Dateigröße, MD5 und SHA-256. Feste FoxAir-Werte wie Target-SSID und Image-Basis werden weiterhin durch dasselbe gemeinsame Tool geprüft.
+
+Wenn die automatische Firmwareanalyse nicht möglich ist, bleibt als letzter Fallback **Manifest manuell erzeugen** mit Software-Code, Display-Version und Target-SSID erhalten. Die eigentliche Manifestvalidierung erfolgt auch dabei weiterhin im gemeinsamen Tool.
+
+### Protokoll
+
+Das Protokoll kann gespeichert oder mit **Protokoll leeren** direkt in der GUI geleert werden.
 
 ## Experimenteller Stand
 
 Ein echter Versionswechsel wurde weiterhin **nicht live bestätigt**. Bisher wurde auf realer Hardware nur V3.3 -> V3.3 getestet; das Mainboard hat diese gleiche Version erwartungsgemäß abgelehnt.
 
 Die GUI ändert daran nichts. Sie macht den bestehenden Ablauf nur komfortabler bedienbar.
+
+## Automatische Windows Releases
+
+Der Workflow `.github/workflows/windows-build.yml` baut die Windows-Version nach relevanten Änderungen auf `main` automatisch.
+
+Nach einem erfolgreichen Build wird für die in `foxair_updater_gui.py` eingetragene `APP_VERSION` automatisch ein öffentliches GitHub-**Prerelease** erzeugt, sofern das Release noch nicht existiert.
+
+Namensschema:
+
+```text
+Tag:     windows-v0.1.1
+Release: FoxAir Updater Windows v0.1.1
+```
+
+Damit sind Windows-Versionen in der gemeinsamen GitHub-Release-Liste klar an `windows-v...` und dem Release-Titel erkennbar. GitHub bietet innerhalb eines Repositorys keine getrennte eigene Release-Kategorie nur für Windows.
+
+Das Release enthält direkt:
+
+```text
+FoxAir_Updater_Portable_v0.1.1.zip
+FoxAir_Updater_Setup_v0.1.1.exe
+```
+
+Diese Release-Dateien sind bei einem öffentlichen Repository auch ohne GitHub-Anmeldung herunterladbar.
+
+### Warum das Actions-Portable vorher doppelt gezippt erschien
+
+GitHub Actions verpackt jedes heruntergeladene Artifact selbst als ZIP. Zuvor wurde darin noch unser bereits erzeugtes Portable-ZIP abgelegt. Dadurch entstand beim Download aus **Actions** effektiv ZIP-in-ZIP.
+
+Der Workflow lädt dort jetzt stattdessen direkt den Portable-Ordner als Artifact hoch. Ein Actions-Download enthält dadurch nur noch die eine von GitHub erzeugte ZIP-Hülle.
+
+Für **Releases** wird weiterhin das eigentliche einmal gepackte `FoxAir_Updater_Portable_v0.1.1.zip` direkt als Release-Asset veröffentlicht.
 
 ## Portable Build
 
@@ -126,7 +178,7 @@ Ergebnis:
 
 ```text
 dist/FoxAir_Updater/
-dist/FoxAir_Updater_Portable_v0.1.0.zip
+dist/FoxAir_Updater_Portable_v0.1.1.zip
 ```
 
 Der Endanwender benötigt **keine Python-Installation**.
@@ -144,7 +196,7 @@ updater\windows\build_windows_setup.bat
 Ergebnis:
 
 ```text
-updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.0.exe
+updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.1.exe
 ```
 
 Das Setup installiert denselben Inhalt wie die Portable-Version nach `Program Files`. Laufzeitdaten und OTA-State werden von der GUI in das lokale Benutzer-Anwendungsdatenverzeichnis geschrieben, nicht in `Program Files`.
