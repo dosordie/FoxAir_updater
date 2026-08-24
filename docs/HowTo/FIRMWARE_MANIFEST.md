@@ -4,7 +4,7 @@ Jeder Firmwarelauf verwendet eine Manifestdatei als zentrale Quelle für die
 Firmwaremetadaten, die der Updater für Prüfung, Vorbereitung und OTA-Handshake
 verwendet.
 
-Für FoxAir gibt es jetzt zwei Erzeugungs-/Prüfmodi:
+Für FoxAir gibt es jetzt drei sinnvolle Arbeitsweisen:
 
 ```text
 Standardmodus
@@ -16,11 +16,18 @@ Standardmodus
   -> Display-Version wird daraus abgeleitet
   -> Cortex-M-Image wird plausibilisiert
   -> Größe, MD5 und SHA-256 werden berechnet
+
+--show
+  -> erzeugt exakt dieselben Manifestdaten nur im Speicher
+  -> gibt das JSON auf der Konsole aus
+  -> schreibt keine Manifestdatei
 ```
 
-Der Vollmodus ist für neue, unbekannte Firmwarestände der bevorzugte Weg. Er
-arbeitet fail-closed: Wird keine eindeutige Firmwareidentität gefunden, wird
-kein Manifest erzeugt.
+`--full` und `--show` können kombiniert werden. Damit lässt sich eine neue
+Firmware vollständig lesend analysieren, ohne eine JSON-Datei anzulegen.
+
+Der Vollmodus arbeitet fail-closed: Wird keine eindeutige Firmwareidentität
+gefunden, wird weder ein Manifest geschrieben noch eine Vorschau ausgegeben.
 
 ## Aufbau
 
@@ -112,92 +119,98 @@ Version wird aus der Wire-Version erzeugt:
 0034 -> V3.4
 ```
 
-Damit stammen im Vollmodus sowohl SoftwareCode als auch die eigentliche
-Firmware-Wire-Version aus dem Image; die menschenlesbare Schreibweise wird nur
-abgeleitet.
-
 ## `target_ssid = 0063` ist die Modbus-Adresse
 
-Die bisher als `target_ssid` bezeichnete Manifestangabe ist beim FoxAir-Pfad
-keine aus der Firmware zu extrahierende Versionsinformation. Sie entspricht der
-festen Modbus-Unit-ID des Mainboards:
+Die als `target_ssid` bezeichnete Manifestangabe entspricht beim FoxAir-Pfad
+der festen Modbus-Unit-ID des Mainboards:
 
 ```text
 0x63 -> Manifest/0033-Darstellung "0063"
 ```
 
-Das passt zu den rekonstruierten OTA-Telegrammen. C350, C357, C36E, C371,
-C5A8, C36A und C37B werden auf dem FoxAir-LTE-RS485-Pfad mit Unit-ID `0x63`
-gesendet bzw. empfangen.
-
-Deshalb gilt für dieses Repository jetzt:
+Deshalb gilt für dieses Repository:
 
 ```text
 target_ssid muss 0063 sein
 ```
 
-Der Manifest-Validator lehnt andere Werte ab. Auch der Generator verwendet
-`0063` automatisch; `--target-ssid` ist nur noch aus Kompatibilitätsgründen
-vorhanden und darf keinen anderen Wert enthalten.
+## Vollmodus: Manifest aus einer Source-Firmware erzeugen
 
-## Vollmodus: Manifest direkt aus einer Source-Firmware erzeugen
-
-Liegt eine neue Firmware im lokalen Ordner `firmware/`, kann das Manifest über
-den Quick-Setup-Befehl erzeugt werden:
+Liegt eine neue Firmware im lokalen Ordner `firmware/`:
 
 ```bash
 ./foxair-updater manifest FW3.4.bin --full
 ```
 
-Wird nur der Dateiname angegeben, sucht `foxair-updater` automatisch in:
-
-```text
-./firmware/
-```
-
-Das Ergebnis wird standardmäßig neben der Firmware mit gleichem Basisnamen
-geschrieben:
+Das Ergebnis wird standardmäßig neben der Firmware geschrieben:
 
 ```text
 firmware/FW3.4.bin
 -> firmware/FW3.4.json
 ```
 
-Der direkte Python-Aufruf lautet:
+## Read-only Vorschau mit `--show`
+
+Soll die Firmware nur analysiert und das resultierende Manifest angesehen
+werden, ohne eine Datei zu erzeugen:
+
+```bash
+./foxair-updater manifest FW3.4.bin --full --show
+```
+
+Der Befehl liest ausschließlich die lokale Firmwaredatei, führt dieselbe
+Firmwareanalyse wie beim echten Manifest-Erstellen aus und gibt anschließend
+das vollständige JSON auf stdout aus.
+
+Beispielausgabe:
+
+```json
+{
+  "schema": "foxair-firmware-v1",
+  "firmware_file": "FW3.4.bin",
+  "software_code": "82400644",
+  "display_version": "V3.4",
+  "wire_version": "0034",
+  "target_ssid": "0063",
+  "size": 123456,
+  "md5": "...",
+  "sha256": "...",
+  "image_base": "0x08050000"
+}
+```
+
+Dabei wird **keine `.json`-Datei geschrieben**. `--show` ist damit besonders
+geeignet, um eine unbekannte Firmware zunächst nur lesend zu prüfen.
+
+Auch der Standardmodus kann so nur als Vorschau verwendet werden:
+
+```bash
+./foxair-updater manifest FW3.4.bin \
+  --software-code 82400644 \
+  --display-version V3.4 \
+  --show
+```
+
+Der direkte Python-Aufruf funktioniert ebenfalls:
 
 ```bash
 python3 tools/phnix_ota/create_firmware_manifest.py \
   --firmware firmware/FW3.4.bin \
   --full \
-  --output firmware/FW3.4.json
+  --show
 ```
 
-Der Generator meldet dabei die erkannte Identität samt Fundstelle, z. B.:
+`--show` und `--output` schließen sich gegenseitig aus.
 
-```text
-detected firmware identity: software_code=82400644 wire_version=0033 display_version=V3.3 offset=0x42780
-```
-
-### Zusätzliche Sollwerte im Vollmodus
+## Zusätzliche Sollwerte im Vollmodus
 
 `--software-code` und `--display-version` dürfen zusammen mit `--full`
-angegeben werden. Sie werden dann **nicht als Override** benutzt, sondern als
-zusätzliche Erwartungswerte.
-
-Beispiel:
-
-```bash
-./foxair-updater manifest FW3.4.bin --full \
-  --software-code 82400644 \
-  --display-version V3.4
-```
-
-Weicht die BIN davon ab, bricht das Tool ab.
+angegeben werden. Sie werden dann nicht als Override benutzt, sondern als
+zusätzliche Erwartungswerte. Weicht die BIN davon ab, bricht das Tool ab.
 
 ## Cortex-M-Plausibilisierung im Vollmodus
 
-Vor der Identitätsextraktion prüft `--full` zusätzlich die ersten beiden
-Vektortabellenwerte:
+Vor der Identitätsextraktion prüft `--full` zusätzlich:
 
 ```text
 Initial Stack Pointer -> plausibler SRAM-Bereich 0x20000000...
@@ -205,65 +218,16 @@ Reset Vector          -> Thumb-Adresse innerhalb des Images
 Image Base            -> 0x08050000
 ```
 
-Damit soll vermieden werden, dass eine falsche Datei nur aufgrund eines
-zufälligen ASCII-Treffers ein scheinbar gültiges Manifest erhält.
-
-Die Prüfung ersetzt keine vollständige Firmwareanalyse, ist aber eine weitere
-fail-closed Hürde.
-
-## Standardmodus bleibt kompatibel
-
-Ein Manifest kann weiterhin explizit erzeugt werden:
-
-```bash
-./foxair-updater manifest FW3.4.bin \
-  --software-code 82400644 \
-  --display-version V3.4
-```
-
-`target_ssid` muss nicht mehr angegeben werden; für FoxAir wird automatisch
-`0063` verwendet.
-
-Der direkte Python-Aufruf funktioniert analog.
-
 ## Vollprüfung unmittelbar vor einem Update
 
-Zusätzlich zum Erzeugen eines Manifests kann der Quick-Setup-Updater die
-Firmwareidentität unmittelbar vor einem echten Lauf nochmals unabhängig gegen
-das vorhandene Manifest prüfen:
+Die Firmwareidentität kann vor einem echten Lauf nochmals gegen das vorhandene
+Manifest geprüft werden:
 
 ```bash
 ./foxair-updater update FW3.4.json --full --confirm
 ```
 
-Der Ablauf ist dann:
-
-```text
-Manifest laden
--> firmware_file aus Manifest bestimmen
--> Firmware neben dem Manifest oder unter ./firmware/ suchen
--> create_firmware_manifest.py --full auf genau diese BIN anwenden
--> alle Manifestfelder vergleichen:
-     schema
-     firmware_file
-     software_code
-     display_version
-     wire_version
-     target_ssid
-     size
-     md5
-     sha256
-     image_base
--> nur bei vollständiger Übereinstimmung ADB-/Updatepfad starten
-```
-
-Die Vollprüfung findet damit **vor ADB- und Busaktivität** statt.
-
-Ohne `--full` bleibt der bisherige Aufruf erhalten:
-
-```bash
-./foxair-updater update FW3.4.json --confirm
-```
+Diese Vollprüfung findet vor ADB- und Busaktivität statt.
 
 ## Warum diese Trennung beim OTA wichtig ist
 
@@ -283,29 +247,11 @@ unterscheiden:
    -> stammt aus dem laufenden Mainboard-Firmwarecode
 ```
 
-Der C350-Vorhandshake entscheidet anhand der angebotenen Metadaten, ob das
-Mainboard die angebotene Version als identisch oder abweichend betrachtet.
-Deshalb ist die `--full`-Prüfung sinnvoll: Ein normales Produktionsmanifest
-soll nicht versehentlich eine andere Version behaupten als die zugehörige BIN.
-
 ## `0033` ist nicht die Firmwareversion
 
-Der oberste JSON-Code:
-
-```text
-0033
-```
-
-ist eine Protokollkonstante für einen Mainboard-OTA-Auftrag.
-
-Er darf nicht mit:
-
-```text
-wire_version = 0033
-```
-
-für Firmware V3.3 verwechselt werden. Im V3.3-Beispiel sehen beide Werte nur
-zufällig gleich aus.
+Der oberste JSON-Code `0033` ist eine Protokollkonstante für einen
+Mainboard-OTA-Auftrag. Er darf nicht mit `wire_version = 0033` für Firmware
+V3.3 verwechselt werden.
 
 ## Referenzmanifest
 
@@ -315,12 +261,15 @@ Das bestätigte V3.3-Referenzmanifest liegt unter:
 firmware_manifests/FW3.3.json
 ```
 
-Für neue Firmwarestände ist der bevorzugte erste Schritt:
+Für neue Firmwarestände ist ein sinnvoller erster, vollständig lokaler Schritt:
+
+```bash
+./foxair-updater manifest DATEI.bin --full --show
+```
+
+Erst wenn die erkannten Werte plausibel sind, kann anschließend mit demselben
+Analysemotor eine echte Manifestdatei erzeugt werden:
 
 ```bash
 ./foxair-updater manifest DATEI.bin --full
 ```
-
-Ein bewusstes Überschreiben der C350-Angebotsversion für Labor-/Regressionstests
-sollte weiterhin als separater expliziter Testmodus behandelt werden und nicht
-über ein normales Produktionsmanifest erfolgen.
