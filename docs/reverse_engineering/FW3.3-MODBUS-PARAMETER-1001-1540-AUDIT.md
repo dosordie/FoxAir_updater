@@ -4,11 +4,12 @@ Stand: 24. August 2026
 
 Diese Datei dokumentiert den strukturellen Audit des kompletten öffentlichen Parameterbereichs der Mainboard-Firmware `82400644 / V3.3`.
 
-Verglichen wurde gegen den aktuellen Softwarestand in `dosordie/FoxAir_Control/data`, insbesondere `foxair_phnix_registers.json` und `foxair_phnix_knowledge.json`. Primärquelle für Verhalten und Adressierung ist das untersuchte V3.3-Binary.
+Verglichen wurde gegen den aktuellen Softwarestand in `dosordie/FoxAir_Control/data`, insbesondere `foxair_phnix_registers.json` und `foxair_phnix_knowledge.json`. Primärquelle für Verhalten und Adressierung ist das untersuchte V3.3-Binary; zentrale SG-Ready-Ergebnisse wurden zusätzlich am realen Gerät live bestätigt.
 
 ## Bewertungsstufen
 
 - **bestätigt** – direkt im V3.3-Binary nachgewiesen
+- **live bestätigt** – zusätzlich am realen Gerät praktisch verifiziert
 - **sehr wahrscheinlich** – Datenfluss geschlossen, Herstellerbezeichnung noch nicht vollständig belegt
 - **offen** – Register/Struktur existiert, fachliche Bedeutung noch nicht belastbar benannt
 
@@ -34,7 +35,7 @@ Für Register 1001–1540 gilt:
 RAM = 0x20012788 + 0x3E8 + 2 × (Register - 1001)
 ```
 
-**Wichtig:** Die in älteren Display-/Paketdaten vorhandenen Register `1541–1550` gehören in dieser V3.3 **nicht** mehr zum normalen Mainboard-FC03/FC06-Bereich. Sie sind deshalb als Display-/Kompatibilitäts-/Paketnamespace zu behandeln und nicht als normale V3.3-Mainboardparameter.
+**Wichtig:** Die in älteren Display-/Paketdaten vorhandenen Register `1541–1550` gehören in dieser V3.3 nicht mehr zum normalen Mainboard-FC03/FC06-Bereich. Sie sind als Display-/Kompatibilitäts-/Paketnamespace zu behandeln.
 
 ---
 
@@ -57,30 +58,24 @@ FC06 akzeptiert den Parameterbereich, schließt aber sechs Paketkopfblöcke ausd
 1451–1460
 ```
 
-Diese Blöcke sollen in Software deshalb weiterhin als **read-only Paket-/Blockköpfe** behandelt werden.
+Diese Blöcke sollen in Software weiterhin als **read-only Paket-/Blockköpfe** behandelt werden.
 
 ## FC10
 
-Der FC10-Pfad akzeptiert technisch den kompletten Bereich `1001–1540` und wiederholt die FC06-Sperre der Paketköpfe **nicht**.
-
-Damit gilt:
+Der FC10-Pfad akzeptiert technisch den kompletten Bereich `1001–1540` und wiederholt die FC06-Sperre der Paketköpfe nicht.
 
 | Bereich | FC03 | FC06 | FC10 | empfohlene Softwarepolicy |
 |---|---|---|---|---|
 | normale Parameter | ja | ja | ja | R/W |
-| Paketköpfe s. oben | ja | nein | technisch ja | **read-only** |
+| Paketköpfe | ja | nein | technisch ja | **read-only** |
 
-Die asymmetrische Implementierung ist **bestätigt**. Dass FC10 die Paketköpfe technisch beschreiben kann, ist kein Grund, dies in `FoxAir_Control` freizugeben.
-
-Für einen FC10-Schreibvorgang auf Register `1012` mit genau einem Wort existiert zusätzlich ein unmittelbarer Apply-/Modus-Hook bei `0x080839A4`.
+Für FC10 auf Register `1012` mit genau einem Wort existiert zusätzlich ein unmittelbarer Apply-/Modus-Hook bei `0x080839A4`.
 
 ---
 
 # 3. Architektur: kein flaches Parameterarray
 
-V3.3 hält die Parameter nicht nur im Modbusspiegel. Die Firmware synchronisiert die Register blockweise in eigene Live-Strukturen. Das erlaubt eine wesentlich belastbarere Zuordnung als allein aus Displaytabellen.
-
-Die wichtigsten Live-Strukturen sind:
+V3.3 hält die Parameter nicht nur im Modbusspiegel. Die Firmware synchronisiert die Register blockweise in eigene Live-Strukturen.
 
 | Funktionsgruppe | Live-RAM | Hauptregister |
 |---|---:|---|
@@ -99,7 +94,7 @@ Die wichtigsten Live-Strukturen sind:
 | ältere Timer-/Displaylogik | `0x200167A4` | 1256–1270, 1239–1243, 1025/26, 1216 |
 | neue 6-Timer-Struktur | `0x200162D8` | 1281–1325, 1343, 1356 |
 | Rücklauf-/Zirkulationspumpentimer | `0x20016C8C` | 1326–1332 |
-| SG Ready | `0x20016CAC` | 1334–1341 |
+| **SG Ready** | `0x20016CAC` | **1334–1341** |
 | C12/C13/C14/C15/E20/E21 + Erweiterungen | `0x20016C9C` | 1342–1352, 1402, 1437 |
 | Factory Test | `0x20016C10` | 1371–1380 |
 | neuer V3.3-Erweiterungsblock | `0x20016278` | 1381ff, 1404, 1429, 1431–1438, 1444–1448, 1462–1467 |
@@ -112,8 +107,6 @@ Die wichtigsten Live-Strukturen sind:
 # 4. Blockweise Registerzuordnung
 
 ## 4.1 H-/Grundkonfiguration `0x20016774`
-
-Bestätigte direkte Felder:
 
 ```text
 1018 -> +0x04
@@ -145,7 +138,7 @@ Weitere Sonderfelder:
 - 1015/1016 aus `0x20016D9C`
 - 1022 aus `0x20016C7C+0x0C`
 - 1047 aus `0x200166A0+0x34`
-- 1011, 1012, 1013, 1017 und 1046 laufen über Sonder-/Steuerlogik und sind nicht nur einfache Backcopy-Felder.
+- 1011, 1012, 1013, 1017 und 1046 über Sonder-/Steuerlogik
 
 ## 4.2 A-Parameter `0x20016744`
 
@@ -165,8 +158,6 @@ Weitere Sonderfelder:
 1089 +0x10   1103 +0x12   1104 +0x14   1074 +0x18
 1101 +0x1A   1102 +0x1C
 ```
-
-Die funktionale Lüfterregelung ist separat in `FW3.3-LUEFTERREGELUNG.md` dokumentiert.
 
 ## 4.4 Zone/Mischer `0x20016894`
 
@@ -195,9 +186,7 @@ Die funktionale Lüfterregelung ist separat in `FW3.3-LUEFTERREGELUNG.md` dokume
 
 ## 4.5 Abtauung `0x200166A0`
 
-`1105–1130` bilden einen zusammenhängenden D-Parameterblock in 2-Byte-Schritten ab `+0x00`. Zusätzlich liegt Register 1047 bei `+0x34`.
-
-Damit ist die strukturelle D01ff-Zuordnung in V3.3 geschlossen.
+`1105–1130` bilden einen zusammenhängenden D-Parameterblock in 2-Byte-Schritten ab `+0x00`. Register 1047 liegt bei `+0x34`.
 
 ## 4.6 EEV `0x200169E4`
 
@@ -212,8 +201,6 @@ Zusätzlich:
 
 - 1141 aus `0x20016B68+0x12`
 - 1145 aus `0x20016F16`
-
-Die Smart-/Auto-Regelung ist in `FW3.3-EEV-SMART-REGELUNG.md` dokumentiert.
 
 ## 4.7 R-/Kurvenblock `0x2001656C`
 
@@ -268,8 +255,6 @@ Register 1204/P08 wird über eine abweichende Struktur/Sonderlogik geführt.
 1211     +0x14
 ```
 
-C03, C10 und C11 sind bereits funktional in der Kompressorregelung nachgewiesen.
-
 ## 4.10 Silent-Timer `0x20016B68`
 
 ```text
@@ -320,9 +305,11 @@ Neue 6-Timer-Struktur `0x200162D8`:
 
 ## 4.12 SG Ready `0x20016CAC`
 
+Direkte Parameterfelder:
+
 ```text
-1334 SG01 +0x00
-1335 SG02 +0x02
+1334 SG01 +0x00   SG-Quellenauswahl
+1335 SG02 +0x02   Mode-1-Schlafzeit
 1336 SG03 +0x04
 1337 SG04 +0x06
 1341 SG08 +0x08
@@ -335,6 +322,48 @@ Zusätzlich:
 - 1338/SG05 aus `0x20016DFC+0x00` byte
 - 1333 aus `0x20016DFC+0x02`
 
+### Neu geschlossen: MAIN:1334 besitzt Wert 3
+
+V3.3 behandelt explizit:
+
+```text
+1334 = 0  Aus
+1334 = 1  1-Kontakt-Modus
+1334 = 2  2 physische SG-Kontakte
+1334 = 3  virtueller SG-Ready-Eingang über Modbus
+```
+
+Bei `1334 = 3` wird als Zustand nicht der physische Kontaktstatus benutzt, sondern:
+
+```text
+ENG:CTRL:8801
+```
+
+mit:
+
+```text
+8801=1 -> Mode 1
+8801=2 -> Mode 2
+8801=3 -> Mode 3
+8801=4 -> Mode 4
+```
+
+`8801` liegt nicht in der 1xxx-Parameterstruktur, sondern im Engineering-Control-Fenster bei `0x20016970`; die Kopplung wird von der SG-State-Machine hergestellt.
+
+### Live-Verifikation
+
+Am realen Gerät ist bestätigt:
+
+- `1334 = 3` aktiviert den virtuellen Pfad.
+- `8801` ist auf dem direkten User-Modbus les- und schreibbar.
+- Die SG-Wirkung der Werte 1..4 entspricht dem rekonstruierten Mapping.
+- Nach einer akzeptierten SG-Modusänderung gilt ein fester 10-Minuten-Hold.
+- **Eine Änderung von `1334` setzt diesen Hold zurück; Binary + live bestätigt.**
+
+Der Hold-Timer liegt in der SG-Runtime-Struktur, nicht im Parameterregister selbst. Details:
+
+[`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md)
+
 ---
 
 # 5. C12–C15 / E20–E21: in V3.3 echte aktive Parameter
@@ -345,9 +374,7 @@ Der Liveblock liegt bei:
 0x20016C9C
 ```
 
-Bestätigte Zuordnung:
-
-| Register | Bezeichnung aus aktuellem Softwarestand | Liveoffset | Typ |
+| Register | Bezeichnung | Liveoffset | Typ |
 |---:|---|---:|---|
 | 1347 | C12 | `+0x00` | byte |
 | 1348 | C13 | `+0x01` | signed byte |
@@ -362,7 +389,7 @@ Bestätigte Zuordnung:
 | 1402 | V3.3-Erweiterung | `+0x0C` | byte |
 | 1437 | D30 | `+0x0D` | byte |
 
-Bei ungültiger/fehlender Parametrierung initialisiert V3.3 den Block unter anderem mit:
+V3.3-Defaults unter anderem:
 
 ```text
 C12 = 90
@@ -374,7 +401,7 @@ E21 = 1
 H41 = 66
 ```
 
-Damit sind **C13–C15 und E20/E21 definitiv keine bloßen Display-Platzhalter**. Ihre genaue Herstellerfunktion ist noch offen, ihre Existenz, Breite, Signedness, Defaultwerte und Live-RAM-Zuordnung sind bestätigt.
+Damit sind C13–C15 und E20/E21 definitiv keine bloßen Display-Platzhalter.
 
 ---
 
@@ -385,8 +412,6 @@ Live-RAM:
 ```text
 0x20016C10
 ```
-
-Bestätigt:
 
 ```text
 1371 +0x04 byte   Factory Test Mode
@@ -401,17 +426,11 @@ Bestätigt:
 1379 +0x12
 ```
 
-Die bereits in `FoxAir_Control` vorhandenen Factory-Test-Bezeichnungen für 1371–1380 passen strukturell zur V3.3.
-
 ---
 
 # 7. V3.3-Erweiterungsblock ab 1381
 
-Der aktuelle `FoxAir_Control`-Katalog besitzt in diesem Bereich große Lücken. V3.3 befüllt jedoch nachweislich zahlreiche Felder.
-
 ## `0x20016278`
-
-Bestätigte Registerquellen:
 
 ```text
 1381 -> +0x48
@@ -444,7 +463,7 @@ Bestätigte Registerquellen:
 1467 -> +0x5C byte
 ```
 
-Die Felder `1387–1389` werden in temperatur-/zustandsabhängiger Regelung benutzt; `1462–1467` werden als zusammengehöriger Parametersatz an Laufzeitlogik übergeben. Die exakten Herstellerlabels sind noch offen.
+`1387–1389` werden in temperatur-/zustandsabhängiger Regelung benutzt; `1462–1467` werden als zusammengehöriger Parametersatz an Laufzeitlogik übergeben.
 
 ## `0x20016A24`
 
@@ -460,8 +479,6 @@ Die Felder `1387–1389` werden in temperatur-/zustandsabhängiger Regelung benu
 1481 -> +0x0C byte
 ```
 
-Diese Felder sind echte V3.3-Laufzeitparameter. Unter anderem wird `+0x0C` als Feature-/Freigabebedingung ausgewertet; `+0x0B` beeinflusst einen berechneten Soll-/Grenzwert.
-
 Weitere bestätigte V3.3-Felder:
 
 ```text
@@ -470,13 +487,9 @@ Weitere bestätigte V3.3-Felder:
 1476 -> 0x2001656C+0x2E
 ```
 
-**Folge für FoxAir_Control:** Diese Adressen sollten nicht länger implizit als „nicht existent“ behandelt werden. Wo der Herstellername noch fehlt, ist ein neutraler V3.3-Kandidat mit RAM-Provenance sinnvoller als eine erfundene Bezeichnung.
-
 ---
 
 # 8. Adressierbar, aber ohne geschlossenen V3.3-Livepfad
-
-Nach Abzug der Paketköpfe sind folgende Slots im öffentlichen Protokoll adressierbar, besitzen aber im untersuchten Backcopy-/Livepfad keinen gleichartigen direkten Treffer:
 
 ```text
 1011, 1012, 1013, 1017, 1046,
@@ -492,30 +505,33 @@ Nach Abzug der Paketköpfe sind folgende Slots im öffentlichen Protokoll adress
 1482–1540
 ```
 
-Das bedeutet **nicht automatisch „unbenutzt“**. Ein Teil davon besitzt Sonderlogik oder transformierte Datenpfade. Für den großen Schwanz `1482–1540` wurde jedoch bisher kein direkter Live-Backcopy-Verbraucher gefunden.
+Das bedeutet nicht automatisch „unbenutzt“. Ein Teil besitzt Sonderlogik oder transformierte Datenpfade.
 
 Saubere Klassifikation:
 
-- **Protokolladresse bestätigt**
-- **direkter Liveparameter nicht bestätigt**
-- bis zum Nachweis nicht als frei nutzbaren Parameter deklarieren.
+- Protokolladresse bestätigt
+- direkter Liveparameter nicht bestätigt
+- bis zum Nachweis nicht als frei nutzbar deklarieren
 
 ---
 
 # 9. Wichtigste Deltas zu `FoxAir_Control/data`
 
-1. `1541–1550` aus dem normalen Mainboard-Namespace herauslösen; V3.3 FC03/FC06 endet bei 1540.
-2. Paketköpfe softwareseitig read-only lassen, obwohl FC10 sie technisch schreiben kann.
-3. C13/C14/C15/E20/E21 von „Displayparameter unbekannt“ auf **echter V3.3-Liveparameter, Semantik offen** hochstufen.
-4. Für C13/C14/C15/E20/E21 Breite/Signedness und V3.3-Defaults ergänzen.
-5. V3.3-Felder `1381–1389`, `1402`, `1404/1405`, `1422–1431`, `1445–1448`, `1461–1469`, `1476/1477`, `1481` in den Wissenskatalog aufnehmen – zunächst mit neutraler Provenance, wenn das Herstellerlabel noch offen ist.
-6. 1024 ausdrücklich als Ziel des speziellen 60000/60010-Modbus-Adressmechanismus dokumentieren; Details stehen im Service-/Engineering-Audit.
+1. `1541–1550` aus dem normalen Mainboard-Namespace herauslösen; V3.3 endet bei 1540.
+2. Paketköpfe softwareseitig read-only lassen, obwohl FC10 technisch schreiben kann.
+3. **`1334` um Wert `3 = virtueller SG-Ready-Eingang über Modbus` ergänzen.**
+4. **`8801` als zugehöriges Engineering-Control-Register mit live bestätigter Funktion verknüpfen.**
+5. **10-Minuten-Hold und Reset des Holds bei Änderung von 1334 als Laufzeitverhalten dokumentieren.**
+6. C13/C14/C15/E20/E21 auf echte V3.3-Liveparameter hochstufen.
+7. Breite/Signedness und V3.3-Defaults für diese Felder ergänzen.
+8. V3.3-Felder `1381–1389`, `1402`, `1404/1405`, `1422–1431`, `1445–1448`, `1461–1469`, `1476/1477`, `1481` in den Wissenskatalog aufnehmen.
+9. 1024 als Ziel des speziellen 60000/60010-Modbus-Adressmechanismus dokumentieren.
 
 ---
 
 # 10. Ergebnis
 
-Der öffentliche Parameterbereich ist damit **strukturell vollständig auditiert**:
+Der öffentliche Parameterbereich ist damit strukturell vollständig auditiert:
 
 - FC03-Bereich: geschlossen
 - FC06-Rechte: geschlossen
@@ -524,6 +540,9 @@ Der öffentliche Parameterbereich ist damit **strukturell vollständig auditiert
 - zentraler Spiegel: geschlossen
 - große Live-Strukturen: geschlossen
 - aktive V3.3-Erweiterungsfelder: identifiziert
+- SG-Ready-Parameterquelle `1334=3`: **Binary + live bestätigt**
+- Verbindung zu `ENG:CTRL:8801`: **Binary + live bestätigt**
+- SG-Hold-Reset durch Änderung von `1334`: **Binary + live bestätigt**
 - Sonder-/Lückenfelder: explizit getrennt
 
-Noch offen sind bei einem Teil der neu identifizierten Felder ausschließlich die **Herstellerbezeichnungen bzw. die letzte fachliche Semantik**, nicht mehr ihre Existenz oder Modbus-Provenance.
+Noch offen sind bei einem Teil der neu identifizierten Felder ausschließlich Herstellerbezeichnungen bzw. die letzte fachliche Semantik, nicht mehr ihre Existenz oder Modbus-Provenance.
