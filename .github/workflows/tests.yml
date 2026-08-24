@@ -20,6 +20,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m unittest discover -s tests -p "test_*.py"
+      - run: python -m py_compile updater/windows/foxair_updater_gui.py updater/windows/foxair_updater_app.py updater/windows/release_check.py
 
   vm-matrix:
     runs-on: ubuntu-latest
