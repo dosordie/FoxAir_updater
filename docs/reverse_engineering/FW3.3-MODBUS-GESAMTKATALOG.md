@@ -4,11 +4,11 @@ Stand: 24. August 2026
 
 Diese Datei ist der **zentrale Einstiegspunkt für alle Modbus-Register der untersuchten FoxAir-/PHNIX-Mainboard-Firmware V3.3**.
 
-Sie trennt bewusst die verschiedenen Busrollen und Slaves. Eine nackte Registernummer reicht bei dieser Anlage nicht aus.
+Sie trennt bewusst Register-Namespaces, Busrollen und Zugriffswege. Eine nackte Registernummer reicht bei dieser Anlage nicht aus – und seit den Live-Tests gilt zusätzlich: **dieselbe Registernummer kann je nach physischem/seriellen Zugriffspfad unterschiedlich erreichbar sein.**
 
 ---
 
-# 1. Wichtigste Regel: immer Namespace + Slavekontext angeben
+# 1. Wichtigste Regel: Namespace + Slave-/Buskontext angeben
 
 Beispiel:
 
@@ -21,10 +21,12 @@ DIAG:6040 = Engineering-/Diagnosespiegel derselben Istfrequenz
 Daher gilt künftig in Dokumentation und Software:
 
 ```text
-<Namespace>:<Register>
+<Namespace>:<Register> + Bus-/Slavekontext
 ```
 
 statt nur einer Zahl.
+
+Ein aktuelles Beispiel ist `ENG:CTRL:8801`: auf dem direkten User-/Mainboard-Modbus ist es live R/W bestätigt; auf dem Warmlink-/LTE-Pfad mit Slave `0x63` ist FC03 dagegen nicht verfügbar und ein FC16-ACK beweist dort nicht, dass der echte Mainboardwert übernommen wurde.
 
 ---
 
@@ -32,14 +34,14 @@ statt nur einer Zahl.
 
 | Namespace | Slave-/Buskontext | Register | Rolle | Status |
 |---|---|---:|---|---|
-| `MAIN:P` | Mainboard als Slave | 1001–1540 | öffentliche Parameter | vollständig strukturell auditiert |
+| `MAIN:P` | direkter Mainboard/User-Slave | 1001–1540 | öffentliche Parameter | vollständig strukturell auditiert |
 | `MAIN:S` | Mainboardstatus / interner Broadcast | 2001–2180 | öffentliche Laufzeit-/Statuswerte | vollständig strukturell auditiert |
-| `ENG:A` | Mainboard Service | 5001–5090 | Engineering-Parameter-Schatten | Rolle/RAM/RW geschlossen |
-| `ENG:B` | Mainboard Service | 5091–5180 | Konfig-/Synchronisationsfenster | Rolle/RAM/RW geschlossen |
-| `DIAG` | Mainboard Service | 6001–6090 | Live-Diagnosesnapshot | Rolle/RAM/RW geschlossen |
-| `ENG:CTRL` | Mainboard Service | 8801–8820 | Engineering-Control | 8801 funktional geschlossen; Rest klassifiziert offen |
-| `SPECIAL` | Mainboard Service | 60000 | Modbus-Adresse auf 1 zurücksetzen | geschlossen |
-| `SPECIAL` | Mainboard Service | 60010 | UID-gebundene Adress-Provisionierung | geschlossen |
+| `ENG:A` | direkter Mainboard-Service/Engineeringdispatcher | 5001–5090 | Engineering-Parameter-Schatten | Rolle/RAM/RW geschlossen |
+| `ENG:B` | direkter Mainboard-Service/Engineeringdispatcher | 5091–5180 | Konfig-/Synchronisationsfenster | Rolle/RAM/RW geschlossen |
+| `DIAG` | direkter Mainboard-Service/Engineeringdispatcher | 6001–6090 | Live-Diagnosesnapshot | Rolle/RAM/RW geschlossen |
+| `ENG:CTRL` | direkter Mainboard-Service/Engineeringdispatcher | 8801–8820 | Engineering-Control | **8801 live funktional geschlossen; Rest klassifiziert offen** |
+| `SPECIAL` | Mainboard-Service | 60000 | Modbus-Adresse auf 1 zurücksetzen | geschlossen |
+| `SPECIAL` | Mainboard-Service | 60010 | UID-gebundene Adress-Provisionierung | geschlossen |
 | `INV1:TX` | interner USART3-Bus, Unit 0x01 | 1999–2014 | Verdichter-/Fan-Solltelegramm | weitgehend geschlossen |
 | `INV1:RX` | interner USART3-Bus, Unit 0x01 | 2099–2149 | Inverter-/Fan-Telemetrie | zentrale Felder/Fehler geschlossen |
 | `FAN4` | interner USART3-Bus, Unit 0x04 | 1011–1024 | separater Fan-Driver | strukturell geschlossen |
@@ -47,7 +49,10 @@ statt nur einer Zahl.
 | `HMI2` | interner USART3-Bus, Unit 0x02 | 3001–3021 | optionaler zweiter HMI-Kanal | Rolle sehr wahrscheinlich |
 | `HYD5` | interner USART3-Bus, Unit 0x05 | 1001ff/2000ff | Hydraulik-/Erweiterungsmodul | Busrolle geschlossen, Einzelregister offen |
 | `HYD61` | interner USART3-Bus, Unit 0x61 | 1001ff/2001ff | alternative H30-Modulvariante | Busrolle geschlossen |
-| `OTA63` | separater Service-/Warmlinkpfad | `0xCxxx` | OTA/IAP-Protokoll | separat dokumentiert |
+| `WARMLINK63` | Warmlink-/LTE-RS485, Slave 0x63 | ausgewählte MAIN-/Serviceadressen | gefilterter Service-/Gatewayzugriff | **live als eigener Zugriffspfad bestätigt** |
+| `OTA63` | Warmlink-/Servicepfad, Slave 0x63 | `0xCxxx` | OTA/IAP-Protokoll | separat dokumentiert |
+
+Wichtig: `WARMLINK63` und der direkte User-/Mainboard-Modbus dürfen nicht als identische R/W-Oberfläche behandelt werden.
 
 ---
 
@@ -94,6 +99,18 @@ Softwarepolicy: **read-only**, obwohl FC10 technisch schreiben kann.
 
 `1541–1550` gehört nicht in den normalen V3.3-MAIN-Parameterdispatcher.
 
+## SG-Ready-Quelle MAIN:1334
+
+V3.3 besitzt zusätzlich zum bisher dokumentierten 0/1/2-Schema:
+
+```text
+1334 = 3
+```
+
+Dieser Wert aktiviert den virtuellen SG-Ready-Pfad über `ENG:CTRL:8801`.
+
+Die Funktion ist inzwischen **Binary + live bestätigt**.
+
 ---
 
 # 4. MAIN:S – öffentliche Statusregister 2001–2180
@@ -128,12 +145,15 @@ Besonders wichtige geschlossene Register:
 | 2080 | Inverter-/Driver-Status aus INV1:2099 |
 | 2081 | Inverter-/Driver Fault Word 1 |
 | 2082 | Inverter-/Driver Fault Word 2 |
+| **2133** | **tatsächlich aktiver SG-Ready-Modus 0..4** |
 | 2136 | zweiter T04-/Außentemperaturpfad |
 | 2137 | reine WP-/Inverter-Eingangsleistung vor Zusatzanteil |
 | 2138 | reine thermische WP-Leistung vor Zusatzanteil |
 | 2146 | Capability-/Statusbitfeld |
 
 V3.3 baut und broadcastet tatsächlich bis **2180**.
+
+Bei der untersuchten Anlage ist `2133` insbesondere bei eingeschalteter/aktiver WP als Live-Rückmeldung des SG-Modus relevant. Beim Umschalten greift zusätzlich der unten dokumentierte 10-Minuten-Hold.
 
 ---
 
@@ -188,6 +208,8 @@ in einer separaten Kommunikationsinstanz weitergeleitet.
 
 Nicht als normales User-Parameterfenster behandeln.
 
+Die Zahl `0x63` allein beweist dabei nicht, dass dieser interne Forwardingpfad exakt dieselbe Semantik wie jede manuelle Warmlink-/LTE-Anfrage besitzt.
+
 ---
 
 # 7. DIAG – 6001–6090
@@ -198,7 +220,7 @@ RAM:
 6001 → 0x200152C0
 ```
 
-Normaler Dispatcher:
+Direkter Mainboard-/Engineeringdispatcher:
 
 ```text
 FC03 = ja
@@ -237,15 +259,9 @@ RAM:
 8801 → 0x20016970
 ```
 
-## 8801
+## 8.1 8801 – virtueller SG-Ready-Zustand
 
-Bestätigt:
-
-```text
-virtual SG Ready state command
-```
-
-wird aktiv, wenn:
+Voraussetzung:
 
 ```text
 MAIN:1334 == 3
@@ -254,27 +270,104 @@ MAIN:1334 == 3
 Mapping:
 
 ```text
-8801=1 → SG contacts (1,0)
-8801=2 → SG contacts (0,0)
-8801=3 → SG contacts (0,1)
-8801=4 → SG contacts (1,1)
+8801=1 → SG contacts (1,0) → Mode 1
+8801=2 → SG contacts (0,0) → Mode 2
+8801=3 → SG contacts (0,1) → Mode 3
+8801=4 → SG contacts (1,1) → Mode 4
 ```
 
-Damit besitzt MAIN:1334 einen in der bisherigen Software fehlenden vierten Auswahlwert:
+Damit besitzt MAIN:1334 den in der bisherigen Software fehlenden vierten Auswahlwert:
 
 ```text
 3 = virtueller/Modbus SG-Ready-Eingang
 ```
 
-## 8802–8820
+### Live bestätigt
 
-R/W-Adresse bestätigt, direkte V3.3-Laufzeitsemantik nicht geschlossen.
+Über den direkten User-/Mainboard-Modbus:
+
+```text
+8801 initial 0
+FC03 lesen -> funktioniert
+0..4 schreiben -> funktioniert
+Rücklesen -> funktioniert
+Wert bleibt stehen
+```
+
+Die SG-Wirkung ist ebenfalls praktisch bestätigt. Unter anderem:
+
+```text
+8801=1 -> Mode 1 / Schlafmodus, WP startet nicht
+8801=4 -> Mode 4 / High Power, WP startet
+```
+
+Die virtuelle SG-Steuerung ist damit praktisch geschlossen.
+
+## 8.2 Fester 10-Minuten-Hold
+
+Nach jeder tatsächlich akzeptierten SG-Modusänderung setzt V3.3:
+
+```text
+Runtime 0x2001696C = 0x04B0 = 1200 Zyklen
+```
+
+Die SG-Routine läuft alle ca. `0,5 s`:
+
+```text
+1200 × 0,5 s = 600 s = 10 min
+```
+
+Während des Holds:
+
+```text
+8801 kann sofort geändert werden
+8801 ist sofort rücklesbar
+2133 bleibt zunächst auf dem zuletzt akzeptierten Mode
+```
+
+Nach Ablauf wird der dann aktuell anliegende gewünschte SG-Zustand übernommen.
+
+## 8.3 Änderung von 1334 resettiert den Hold
+
+Ändert sich `MAIN:1334`, setzt V3.3 den Hold-Timer und interne Übergangszustände zurück.
+
+Dies wurde **nicht nur im Binary rekonstruiert, sondern am 24.08.2026 live am Gerät bestätigt**.
+
+Damit kann ein Quellenwechsel für kontrollierte Tests eine sofortige neue Modeannahme ermöglichen. Für normale Automatisierung sollte dieser Mechanismus nicht zum künstlich schnellen Umschalten missbraucht werden.
+
+## 8.4 8802–8820
+
+R/W-Adresse im direkten Dispatcher bestätigt, direkte V3.3-Laufzeitsemantik nicht geschlossen.
 
 Softwarepolicy: **nicht generisch beschreibbar machen**.
 
 ---
 
-# 9. SPECIAL – 60000 / 60010
+# 9. Warmlink-/LTE-0x63 versus direkter User-Modbus
+
+Die Live-Tests zeigen eine wichtige Zugriffspfad-Asymmetrie.
+
+Auf dem Warmlink-/LTE-Bus mit Slave `0x63`:
+
+```text
+1334 lesen       -> funktioniert
+1334 schreiben   -> funktioniert
+2133 lesen       -> funktioniert
+8801 FC03        -> Timeout / keine Antwort
+8801 FC16        -> formal korrekter ACK beobachtet
+```
+
+Der FC16-ACK auf `8801` konnte im Cross-Bus-Gegencheck **nicht als tatsächliche Änderung des direkten User-Modbus-Registers 8801 bestätigt werden**.
+
+Daraus folgt:
+
+> Die FC03/FC06/FC10-Rechte des direkten Engineeringdispatchers dürfen nicht pauschal auf den Warmlink-/LTE-0x63-Pfad übertragen werden.
+
+`WARMLINK63` ist daher als gefilterter Service-/Gatewayzugang separat zu behandeln.
+
+---
+
+# 10. SPECIAL – 60000 / 60010
 
 ## 60000
 
@@ -308,7 +401,7 @@ Dies ist ein Provisionierungsmechanismus, keine starke Authentifizierung.
 
 ---
 
-# 10. INV1 – Unit 0x01 Leistungs-/Inverterboard
+# 11. INV1 – Unit 0x01 Leistungs-/Inverterboard
 
 Interner Bus:
 
@@ -331,8 +424,6 @@ Reale Anlage: H33-integrierte Variante.
 
 ## TX 1999–2014
 
-Wichtige Felder:
-
 ```text
 1999 = Kompressor-Sollfrequenz
 2000 = Run-/Mode-Wort
@@ -343,8 +434,6 @@ Wichtige Felder:
 ```
 
 ## RX 2099–2149
-
-Wichtige Felder:
 
 ```text
 2100 → MAIN:2081 Driver Fault Word 1
@@ -364,7 +453,7 @@ Details:
 
 ---
 
-# 11. FAN4 – Unit 0x04 separater Fan-Driver
+# 12. FAN4 – Unit 0x04 separater Fan-Driver
 
 ```text
 FC03
@@ -383,7 +472,7 @@ Der Pfad unterstützt Hardwarevarianten mit separatem Fan-Motor-Driver. In der u
 
 ---
 
-# 12. HMI / Hydraulikmodule
+# 13. HMI / Hydraulikmodule
 
 ## Unit 0x03
 
@@ -406,13 +495,13 @@ H30 != 3 → Unit 0x05
 H30 == 3 → Unit 0x61
 ```
 
-Die Busarchitektur ist geschlossen; die vollständige Einzelregistersemantik dieser Remote-Module ist noch nicht erforderlich für den Mainboard-Modbuskatalog.
+Die Busarchitektur ist geschlossen; die vollständige Einzelregistersemantik dieser Remote-Module ist für den Mainboard-Modbuskatalog nicht erforderlich.
 
 ---
 
-# 13. OTA63 – eigener Service-/OTA-Namespace
+# 14. OTA63 – Service-/OTA-Namespace
 
-Der bereits reverse-engineerte OTA-Pfad verwendet Register im `0xCxxx`-Bereich, unter anderem:
+Der reverse-engineerte OTA-Pfad verwendet auf dem Service-/Warmlinkkontext Register im `0xCxxx`-Bereich, unter anderem:
 
 ```text
 0xC350
@@ -427,11 +516,11 @@ Der bereits reverse-engineerte OTA-Pfad verwendet Register im `0xCxxx`-Bereich, 
 
 Dieser Namespace gehört **nicht** in die normalen 1xxx/2xxx/5xxx/6xxx/8xxx-Registertabellen.
 
-Die OTA-Kommunikation ist separat dokumentiert.
+Dass derselbe Slavekontext `0x63` zusätzlich ausgewählte normale Mainboardregister transportieren kann, bedeutet nicht, dass alle direkten Mainboard-Dispatcherrechte dort verfügbar sind; `8801` ist der konkrete Gegenbeweis.
 
 ---
 
-# 14. Vollständige Rechteübersicht des Mainboard-Dispatchers
+# 15. Rechteübersicht des direkten Mainboard-Dispatchers
 
 | Namespace | Start | Ende | FC03 | FC06 | FC10 |
 |---|---:|---:|---|---|---|
@@ -446,15 +535,17 @@ Die OTA-Kommunikation ist separat dokumentiert.
 
 \* FC06 schützt Paketköpfe.
 
+**Diese Tabelle beschreibt den direkten Mainboard-/Engineeringdispatcher. Sie ist keine Garantie für identische Rechte über `WARMLINK63`.**
+
 ---
 
-# 15. Was bedeutet „Modbus-Thema abgeschlossen“?
+# 16. Was bedeutet „Modbus-Thema abgeschlossen“?
 
-Nach den Audits sind für die V3.3 nun geschlossen:
+Nach den Audits und Live-Tests sind für V3.3 geschlossen:
 
 - öffentliche Parameteradressierung
 - öffentliche Statusadressierung
-- FC03/FC06/FC10-Rechte
+- FC03/FC06/FC10-Rechte des direkten Mainboarddispatchers
 - Paketkopf-Ausnahmen
 - zentrale RAM-Spiegel
 - wichtige Live-Strukturen
@@ -462,23 +553,27 @@ Nach den Audits sind für die V3.3 nun geschlossen:
 - Inverter-/Fan-Transport
 - Service-/Engineering-Fenster
 - Diagnosefenster
-- SG-Ready-Engineeringsteuerung
+- **SG-Ready-Engineeringsteuerung über 8801, einschließlich 10-Minuten-Hold**
+- **Reset des SG-Holds bei Änderung von 1334 – Binary + live bestätigt**
+- **Zugriffspfad-Unterschied direkter User-Modbus versus Warmlink/LTE 0x63**
 - Unit-Address-Provisionierung
 - OTA-Namespace-Abgrenzung
 
-Es bleiben einzelne **fachliche Namen** proprietärer/undokumentierter Rohfelder offen. Diese sind aber nicht mehr „unbekannte Modbusbereiche“, sondern eindeutig als RAW mit Namespace, RAM-Quelle und Funktionengruppe klassifiziert.
+Es bleiben einzelne fachliche Namen proprietärer/undokumentierter Rohfelder offen. Diese sind aber keine unbekannten Modbusbereiche mehr, sondern eindeutig als RAW mit Namespace, RAM-Quelle und Funktionengruppe klassifiziert.
 
 Damit ist die **Modbus-Architektur der Mainboard-Firmware V3.3 als abgeschlossen zu betrachten**.
 
 ---
 
-# 16. Dokumentationshierarchie
+# 17. Dokumentationshierarchie
 
 1. **Diese Datei** – Gesamtindex / Namespace-Modell
 2. [`FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md`](FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md)
 3. [`FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md`](FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md)
 4. [`FW3.3-MODBUS-SERVICE-ENGINEERING-AUDIT.md`](FW3.3-MODBUS-SERVICE-ENGINEERING-AUDIT.md)
-5. [`FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md`](FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md)
-6. [`FW3.3-INTERNER-MODBUS-UART-HARDWARE.md`](FW3.3-INTERNER-MODBUS-UART-HARDWARE.md)
-7. [`FW3.3-UNIT1-INVERTER-PROTOKOLL.md`](FW3.3-UNIT1-INVERTER-PROTOKOLL.md)
-8. [`FW3.3-MODBUS-KORREKTUREN-FOXAIR_CONTROL.md`](FW3.3-MODBUS-KORREKTUREN-FOXAIR_CONTROL.md)
+5. [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md)
+6. [`FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md`](FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md)
+7. [`FW3.3-INTERNER-MODBUS-UART-HARDWARE.md`](FW3.3-INTERNER-MODBUS-UART-HARDWARE.md)
+8. [`FW3.3-UNIT1-INVERTER-PROTOKOLL.md`](FW3.3-UNIT1-INVERTER-PROTOKOLL.md)
+9. [`FW3.3-MODBUS-KORREKTUREN-FOXAIR_CONTROL.md`](FW3.3-MODBUS-KORREKTUREN-FOXAIR_CONTROL.md)
+10. [`FW3.3-MODBUS-FINALE-DELTA-FOXAIR_CONTROL.md`](FW3.3-MODBUS-FINALE-DELTA-FOXAIR_CONTROL.md)
