@@ -1,52 +1,161 @@
-# Planned Windows updater
+# Windows Updater v0.1 (experimentell)
 
-This directory reserves the Windows frontend. No Windows updater or GUI is
-implemented yet.
+Die erste Windows-Version ist bewusst als **dünne GUI vor dem bestehenden Linux-/Raspberry-Pi-Backend** gebaut.
 
-## Target workflow
+## Wichtig: keine Refaktorierung der OTA-Logik
+
+Die sicherheitsrelevanten Dateien werden beim Windows-Build **nicht in eine zweite Implementierung übertragen und nicht für Windows umgeschrieben**. Der Build kopiert insbesondere diese vorhandenen Repository-Dateien bytegleich in das Windows-Paket:
 
 ```text
-Windows PC
-  -> USB cable
-  -> ADB / adb.exe
-  -> original PHNIX LTE modem
-  -> original phnixIot4G service
-  -> RS485
-  -> heat-pump mainboard
+tools/phnix_ota/phnix_local_ota_controller.py
+tools/phnix_ota/create_firmware_manifest.py
+tools/phnix_ota/phnix_ota_runtime_hook
+updater/__init__.py
+updater/common/*.py
 ```
 
-The user should later be able to connect the LTE modem via USB, select a
-firmware file and run preflight, update, status and recovery without a
-Raspberry Pi.
+`build_windows_portable.bat` prüft die kopierten Backend-Dateien mit `fc /b`. Bei einer Abweichung wird der Build abgebrochen.
 
-## Planned implementation
+Die Windows-GUI startet den bestehenden Controller lediglich als separaten Prozess und wertet dessen vorhandene JSON-Ausgabe aus. Entscheidungen über Preflight, Update, Guarded Hold, C5A8-Grenze oder Restore verbleiben ausschließlich im bestehenden Controller.
 
-- Python 3 application, packaged as a signed standalone executable;
-- shared `updater/common` validation and state-machine code;
-- selected or bundled, version-pinned `adb.exe`;
-- automatic ADB device discovery with explicit selection if multiple devices
-  are connected;
-- driver/setup diagnostics without silently installing drivers;
-- structured log export and state backup in the user's application-data
-  directory;
-- CLI first, optional GUI only after the live protocol is stable;
-- no duplicated safety logic in the GUI.
-- use the same `foxair-firmware-v1` manifest validation as Linux/Raspberry Pi;
+Damit gilt für Linux und Windows weiterhin dieselbe OTA-Quelle.
 
-## Packaging boundary
+## ADB
 
-Windows-specific code may handle executable discovery, USB/driver guidance,
-paths, elevation messages and packaging. It must call the same common updater
-core used on Linux. The modem-side paths such as `/data/phnix_local_ota` remain
-unchanged because they belong to the Linux LTE modem, not to the Windows host.
+**ADB wird nicht mitgeliefert.**
 
-## Explicitly not built yet
+Die GUI bietet:
 
-- no GUI;
-- no installer;
-- no bundled ADB binary;
-- no driver package;
-- no live update button.
+- automatische Suche nach einer bereits vorhandenen `adb.exe`;
+- manuelle Auswahl der `adb.exe`;
+- Link zur offiziellen Google-Seite für Android SDK Platform Tools;
+- Link zur zentralen LTE-/USB-Anleitung;
+- `adb devices -l`;
+- bei `offline` einen einmaligen automatischen `adb reconnect`;
+- manuellen `adb reconnect`.
 
-These pieces wait until cancel/recovery and the first controlled live transfer
-are validated.
+Offizielle Downloadseite:
+
+https://developer.android.com/tools/releases/platform-tools?hl=de#downloads
+
+LTE-/USB-Anleitung:
+
+https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md
+
+## Funktionen der GUI v0.1
+
+### Verbindung
+
+- ADB-Pfad auswählen und lokal merken;
+- ADB-Gerät prüfen;
+- `offline` erkennen und einmal `adb reconnect` versuchen.
+
+### Backup / Firmware Downloader
+
+Read-only Backup per `adb pull`:
+
+```text
+/cache/phnixIot_device_OTA
+/data/phnixIot_device_OTA_INFO
+/data/phnixIot_device_statisic
+/data/phnixIot4G
+```
+
+Der Originaldienst ist standardmäßig nicht angehakt; Firmware, OTA_INFO und Statistik sind vorausgewählt.
+
+### Firmware Update
+
+Die GUI verwendet direkt:
+
+```text
+phnix_local_ota_controller.py
+```
+
+für:
+
+- Originalstatus;
+- Dry-Run;
+- vollständiges Update mit `PHNIX-FULL-UPDATE`;
+- Restore `original`;
+- Gleichversionstest mit den bekannten V3.3-Bestätigungen.
+
+Die GUI zeigt die vom Controller ausgegebenen JSON-Events und OTA-Fortschritte an. Ein `Guarded Hold` wird deutlich angezeigt. Die GUI enthält keine eigene Recovery- oder OTA-State-Machine.
+
+### Manifest
+
+Die GUI verwendet unverändert:
+
+```text
+create_firmware_manifest.py
+```
+
+und erzeugt `wire_version`, Dateigröße, MD5 und SHA-256 weiterhin mit demselben Tool wie Linux.
+
+## Experimenteller Stand
+
+Ein echter Versionswechsel wurde weiterhin **nicht live bestätigt**. Bisher wurde auf realer Hardware nur V3.3 -> V3.3 getestet; das Mainboard hat diese gleiche Version erwartungsgemäß abgelehnt.
+
+Die GUI ändert daran nichts. Sie macht den bestehenden Ablauf nur komfortabler bedienbar.
+
+## Portable Build
+
+Voraussetzungen auf dem **Build-PC**:
+
+- Windows x64;
+- installierte Python-Version mit `py` Launcher;
+- Internetzugriff beim ersten Build.
+
+Aus dem Repository-Root:
+
+```bat
+updater\windows\build_windows_portable.bat
+```
+
+Der Build:
+
+1. installiert PySide6/PyInstaller für den Build-PC;
+2. baut `FoxAir_Updater.exe` als PyInstaller-One-Folder-Anwendung;
+3. kopiert das bestehende Backend bytegleich nach `dist\FoxAir_Updater\backend`;
+4. lädt von `python.org` die offizielle Python-3.11.9-Embeddable-Runtime;
+5. prüft die gepinnte MD5 `6d9aa08531d48fcc261ba667e2df17c4`;
+6. prüft Controller und Manifest-Tool mit dieser privaten Runtime;
+7. legt GPL-/Python-Lizenzen und HowTo-Dokumentation bei;
+8. erzeugt ein Portable-ZIP.
+
+Ergebnis:
+
+```text
+dist/FoxAir_Updater/
+dist/FoxAir_Updater_Portable_v0.1.0.zip
+```
+
+Der Endanwender benötigt **keine Python-Installation**.
+
+Die private Runtime ist nur dazu da, die unveränderten Backend-`.py`-Dateien auszuführen. ADB ist ausdrücklich nicht Bestandteil des Pakets.
+
+## Setup bauen
+
+Nach erfolgreichem Portable-Build wird zusätzlich **Inno Setup 6** benötigt.
+
+```bat
+updater\windows\build_windows_setup.bat
+```
+
+Ergebnis:
+
+```text
+updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.0.exe
+```
+
+Das Setup installiert denselben Inhalt wie die Portable-Version nach `Program Files`. Laufzeitdaten und OTA-State werden von der GUI in das lokale Benutzer-Anwendungsdatenverzeichnis geschrieben, nicht in `Program Files`.
+
+## Entwicklungsstart ohne Packaging
+
+Für GUI-Entwicklung kann die Datei direkt aus dem Repository gestartet werden, wenn PySide6 installiert ist:
+
+```bat
+py -m pip install -r updater\windows\requirements-build.txt
+py updater\windows\foxair_updater_gui.py
+```
+
+In diesem Modus verwendet die GUI denselben Repository-Controller direkt und den aktuell gestarteten Python-Interpreter als Backend-Runtime.
