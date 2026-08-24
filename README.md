@@ -75,8 +75,11 @@ Der Installer:
 - erstellt den lokalen Firmwareordner `~/FoxAir_updater/firmware`;
 - prüft Controller, Manifestwerkzeug und Launcher.
 
-Ausführliche Anleitung:
+Ausführliche Updater-Anleitung:
 [`docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)
+
+Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
+[`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
 
 ## Firmware bereitstellen
 
@@ -164,5 +167,15 @@ Nicht Schwerpunkt dieses Repositorys sind:
 
 ## Lizenz
 
-Für dieses Repository ist aktuell noch keine Open-Source-Lizenz festgelegt.
-Vor einer breiteren Weitergabe sollte eine `LICENSE`-Datei ergänzt werden.
+Dieses Repository steht unter der **GNU General Public License v3.0**,
+SPDX-Kennung **`GPL-3.0-only`**.
+
+Siehe [`LICENSE`](LICENSE).
+
+Weitergabe und Änderungen sind damit erlaubt, abgeleitete Werke müssen bei
+Weitergabe jedoch ebenfalls unter den Bedingungen der GPLv3 stehen und der
+zugehörige Quellcode muss gemäß den Lizenzbedingungen verfügbar gemacht werden.
+
+Die GPL enthält ausdrücklich einen Gewährleistungs- und Haftungsausschluss. Die
+zusätzlichen technischen Warnhinweise oben bleiben davon unabhängig wichtig, weil
+dieses Projekt einen experimentellen Firmware-Schreibpfad für reale Hardware enthält.
