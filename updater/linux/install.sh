@@ -69,7 +69,7 @@ if ! python3 -c "import sys; raise SystemExit(0 if sys.version_info >= ($MIN_PYT
 fi
 ok "Python $python_version"
 
-if ! git sparse-checkout -h >/dev/null 2>&1; then
+if ! git help -a | grep -q '^[[:space:]]*sparse-checkout[[:space:]]'; then
     die "Die installierte Git-Version unterstützt 'git sparse-checkout' nicht. Bitte Git aktualisieren."
 fi
 
