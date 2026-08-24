@@ -54,6 +54,7 @@ Zusätzlich ist bestätigt:
 - `8801` selbst ändert sich während des Holds sofort; `MAIN:2133` bleibt bis zur nächsten erlaubten Übernahme auf dem vorherigen Modus.
 - **Eine Änderung von `MAIN:1334` setzt den 10-Minuten-Hold zurück. Dieses Verhalten wurde am realen Gerät getestet und bestätigt.**
 - User-Modbus und Warmlink-/LTE-Modbus verhalten sich für `8801` unterschiedlich.
+- Der Grund für den LTE-Unterschied ist inzwischen statisch geschlossen: **der separate `0x63`-Dispatcher enthält `8801–8820` nicht.**
 
 ---
 
@@ -160,7 +161,7 @@ Mode 4 -> High PV / starke Anforderung
 
 # 4. User-Modbus: 8801 live bestätigt
 
-Der normale Mainboard-Dispatcher besitzt für `8801–8820` FC03-, FC06- und FC10-Pfade.
+Der direkte Mainboard-Dispatcher besitzt für `8801–8820` FC03-, FC06- und FC10-Pfade.
 
 Am realen Gerät wurde für `8801` über den direkten User-/Mainboard-Modbus bestätigt:
 
@@ -399,48 +400,125 @@ müssen diese Bits nicht der Vorgabe aus `8801` folgen. Die Firmware erzeugt die
 
 # 13. User-Modbus versus Warmlink-/LTE-0x63
 
-Ein wichtiger Livebefund ist die Trennung der beiden Buszugänge.
+Die beiden Zugänge besitzen **unterschiedliche Dispatcher**.
 
-## Direkter User-/Mainboard-Modbus
+## 13.1 Direkter User-/Mainboard-Modbus
 
-Für `8801` bestätigt:
-
-```text
-FC03 / Lesen     -> funktioniert
-Schreiben        -> funktioniert
-0..4             -> bleiben im Register
-Rücklesen        -> funktioniert
-SG-Wirkung       -> bestätigt
-```
-
-## Warmlink-/LTE-Bus, Slave 0x63
-
-Live beobachtet:
+Direkter Dispatcher ungefähr:
 
 ```text
-1334 lesen       -> funktioniert
-1334 schreiben   -> funktioniert
-2133 lesen       -> funktioniert
-8801 FC03        -> Timeout / keine Antwort
-8801 FC16        -> formal passender ACK
+0x080664C8
 ```
 
-Der FC16-ACK auf `8801` sah protokollseitig korrekt aus, beispielsweise als Antwort auf:
+Für `ENG:CTRL:8801–8820` besitzt er:
+
+```text
+FC03 = ja
+FC06 = ja
+FC10 = ja
+```
+
+Für `8801` live bestätigt:
+
+```text
+Lesen          -> funktioniert
+Schreiben      -> funktioniert
+0..4           -> bleiben im Register
+Rücklesen      -> funktioniert
+SG-Wirkung     -> bestätigt
+```
+
+## 13.2 Separater Warmlink-/LTE-Dispatcher 0x63
+
+Der Warmlink-Servicepfad läuft auf einem separaten Dispatcher ungefähr bei:
+
+```text
+0x08067548
+```
+
+Normale FC03-Bereiche:
+
+```text
+1001–1540
+2001–2180
+8001–8090
+```
+
+Normale FC06-Bereiche:
+
+```text
+1001–1540
+8001–8090
+```
+
+Normale FC10-Bereiche:
+
+```text
+1001–1540
+5091–5180
+7001–7090
+7091–7180
+8001–8090
+```
+
+plus spezielle OTA-/Servicehandler im `0xCxxx`-Bereich.
+
+**`8801–8820` ist in diesem normalen `0x63`-Dispatcher nicht enthalten.**
+
+Das erklärt die Livebeobachtung:
+
+```text
+0x63:1334 lesen       -> funktioniert
+0x63:1334 schreiben   -> funktioniert
+0x63:2133 lesen       -> funktioniert
+0x63:8801 FC03        -> Timeout / keine Antwort
+```
+
+## 13.3 Zwei unterschiedliche 8xxx-Namespaces
+
+```text
+WARMLINK:SVC:8001–8090
+    = Warmlink-/0x63-spezifischer Serviceblock
+    = RAM ab 0x20015EF0
+
+ENG:CTRL:8801–8820
+    = direkter Mainboard-/User-Engineeringblock
+    = 8801 virtueller SG-Ready-Zustand
+```
+
+Die beiden Bereiche dürfen nicht zusammengeführt werden.
+
+## 13.4 Der beobachtete LTE-FC16-ACK auf 8801
+
+Im Realtest wurde auf:
+
+```text
+63 10 22 61 00 01 02 00 02 9C 80
+```
+
+also:
 
 ```text
 Slave 0x63
-FC16
-Start 0x2261 / 8801
+FC10
+Start 8801
 Qty 1
+Value 2
 ```
 
-Der Cross-Bus-Gegencheck zeigte jedoch **keinen belastbaren Nachweis, dass dieser ACK das echte User-Modbus-Register `8801` tatsächlich verändert**.
+ein formal passender ACK beobachtet.
 
-Daher gilt derzeit:
+Der statische `0x63`-Dispatcher enthält `8801` aber weder als normalen FC03- noch als normalen FC10-Bereich. Außerdem zeigte der Cross-Bus-Gegencheck keinen belastbaren Apply auf das echte User-Modbus-`8801`.
 
-> Für die reale SG-Ready-Steuerung über `8801` ist der direkte User-/Mainboard-Modbus bestätigt. Der Warmlink-/LTE-0x63-Pfad darf für `8801` nicht allein aufgrund des ACKs als funktionaler Schreibpfad betrachtet werden.
+Daher lautet die korrekte Bewertung:
 
-Damit muss die frühere pauschale Aussage „wenn 1334 über eine Schnittstelle erreichbar ist, ist dort auch 8801 vollständig erreichbar“ verworfen werden.
+> **ACK gesehen, aber kein Apply auf ENG:CTRL:8801 bestätigt.** Die genaue ACK-Quelle bzw. ein möglicher weiterer Proxy-/Gatewaypfad bleibt offen.
+
+Für SG Ready ist der direkte User-/Mainboard-Modbus der bestätigte `8801`-Zugang.
+
+Details:
+
+[`FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md`](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md)
 
 ---
 
@@ -450,7 +528,7 @@ Empfohlenes Verhalten:
 
 ```text
 1. MAIN:1334 = 3 setzen/konfigurieren
-2. ENG:CTRL:8801 = 1..4 schreiben
+2. ENG:CTRL:8801 = 1..4 über den direkten User-/Mainboard-Modbus schreiben
 3. 8801 zurücklesen
 4. MAIN:2133 als effektive Rückmeldung beobachten
 5. bei Änderungen den festen 10-Minuten-Hold berücksichtigen
@@ -463,6 +541,7 @@ Wichtig:
 - 1334-Änderungen resetten den Hold
 - 1334-Hold-Reset nicht für schnelle normale Regelung missbrauchen
 - nach Mainboard-Neustart den gewünschten Zustand erneut prüfen; keine ungetestete Persistenzannahme treffen
+- Warmlink-/LTE-`0x63` nicht als Ersatz für den direkten 8801-Pfad behandeln
 
 ---
 
@@ -486,6 +565,7 @@ Name: Virtueller SG-Ready-Zustand
 Werte: 1..4
 User-Modbus: R/W live bestätigt
 Wirksam: nur wenn MAIN:1334 == 3
+Feedback: MAIN:2133
 ```
 
 Zusätzliche UI-Information:
@@ -495,7 +575,12 @@ SG-Moduswechsel können bis zu 10 Minuten gesperrt sein.
 Eine Änderung von 1334 setzt diese Sperre zurück.
 ```
 
-Für das Warmlink-/LTE-Backend darf `8801` nicht automatisch als gleichwertig zum direkten User-Modbus behandelt werden.
+Backend-spezifisch:
+
+```text
+Direkter User-Modbus -> 8801 verfügbar
+Warmlink/LTE 0x63    -> 8801 nicht im normalen Dispatcher
+```
 
 ---
 
@@ -511,7 +596,10 @@ Für das Warmlink-/LTE-Backend darf `8801` nicht automatisch als gleichwertig zu
 | 10-Minuten-Hold | **Binary bestätigt + live konsistent** |
 | 1334-Änderung resettiert Hold | **Binary + live bestätigt** |
 | 2133 als aktiver Zustand | **bestätigt** |
-| LTE 0x63 FC03 auf 8801 | **nicht verfügbar / Timeout beobachtet** |
-| LTE 0x63 FC16-ACK auf 8801 | **ACK bestätigt, Apply auf echtes 8801 nicht bestätigt** |
+| separater Warmlink-0x63-Dispatcher | **bestätigt** |
+| 0x63 FC03 8801 | **statisch nicht unterstützt + Live-Timeout bestätigt** |
+| 0x63 normaler FC10 8801 | **statisch nicht unterstützt** |
+| LTE-FC16-ACK auf 8801 | **ACK beobachtet; Apply/Quelle offen** |
+| Warmlink 8001–8090 als eigener Namespace | **bestätigt** |
 
-Damit ist der virtuelle SG-Ready-Modbuspfad der V3.3 einschließlich seiner Umschaltzeitlogik **strukturell und praktisch geschlossen**.
+Damit ist der virtuelle SG-Ready-Modbuspfad der V3.3 einschließlich seiner Umschaltzeitlogik **strukturell und praktisch geschlossen**, und auch der Unterschied zwischen User-Modbus und Warmlink/LTE ist auf Dispatcher-Ebene erklärt.
