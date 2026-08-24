@@ -10,7 +10,7 @@ from PySide6.QtGui import QIcon
 import foxair_updater_gui as base
 
 
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.1.6"
 
 GREEN = "#16803a"
 YELLOW = "#b26a00"
