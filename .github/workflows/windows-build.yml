@@ -49,6 +49,7 @@ jobs:
         run: |
           python -m py_compile updater/windows/foxair_updater_gui.py
           python -m py_compile updater/windows/foxair_updater_app.py
+          python -m py_compile updater/windows/release_check.py
 
       - name: Build portable package
         shell: cmd
