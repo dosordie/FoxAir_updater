@@ -1,8 +1,8 @@
 # PHNIX `phnixIot4G` – OTA-Persistenz, `sys_para` und Resume
 
-Stand: 2026-08-23
+Stand: 2026-08-24
 
-Grundlage: statische Analyse des bereitgestellten ARM-ELF `phnixIot4G`.
+Grundlage: statische Analyse des bereitgestellten ARM-ELF `phnixIot4G` sowie Abgleich mit einer gesicherten originalen `phnixIot_device_OTA_INFO`-Datei und der gesicherten V3.3-Mainboard-Firmware.
 
 ## Kurzfazit
 
@@ -18,6 +18,21 @@ Die erste Datei enthält `statistic_para` (128 Byte) und u. a. die zuletzt gespe
 Die zweite Datei enthält `sys_para` (220 Byte) und ist die eigentliche OTA-/Resume-Persistenz mit CRC, Firmware-MD5, Dateilänge und bestätigtem Dateioffset.
 
 `board_ota_step` selbst wird **nicht** persistent gespeichert.
+
+Zusätzlich ist inzwischen ein realer Abgleich möglich: Eine gesicherte originale `phnixIot_device_OTA_INFO` enthält den Board-Firmware-MD5
+
+```text
+CEB6A4BF386FF644E23E410023E74673
+```
+
+und die Identität
+
+```text
+softwareCode = 82400644
+softwareVer  = 0033
+```
+
+Diese Werte stimmen exakt mit der gesicherten V3.3-Mainboard-Firmware überein. Damit ist die V3.3-Referenzfirmware gegen die vom Originaldienst persistent gespeicherten PHNIX-OTA-Metadaten verifiziert.
 
 ---
 
@@ -103,6 +118,20 @@ Erst danach folgen:
 
 Damit ist die SSID bereits in der Statistikdatei persistent, bevor die OTA_INFO-Datei bewusst geleert wird.
 
+### Reale Bestätigung der Board-OTA-SSID
+
+Die gesicherte originale `phnixIot_device_statisic` enthält am Board-OTA-SSID-Feld den Wert:
+
+```text
+99 dezimal = 0x63
+```
+
+Damit ist zusätzlich bestätigt:
+
+```text
+target_ssid "0063" <-> Modbus Unit-ID 0x63
+```
+
 ---
 
 # 2. `/data/phnixIot_device_OTA_INFO`
@@ -159,6 +188,10 @@ if (*(uint32_t *)&tmp[0] != calc)
 
 Nur bei korrekter CRC wird der komplette 220-Byte-Block nach `sys_para @ 0x98820` kopiert.
 
+### Reale CRC-Prüfung
+
+Die gesicherte originale `phnixIot_device_OTA_INFO` besteht die rekonstruierte CRC-16/X-25-Prüfung vollständig. Damit ist nicht nur das Feldlayout, sondern auch der praktische Parser/CRC-Ansatz anhand einer echten Datei bestätigt.
+
 ---
 
 # 4. Bestätigte `sys_para`-Felder
@@ -192,6 +225,12 @@ Wenn `/data/phnixIot_device_OTA_INFO` beim Start leer/nicht vorhanden ist, setzt
 ```
 
 als initiale Version.
+
+Die gesicherte reale Datei enthält ebenfalls:
+
+```text
+V1.2
+```
 
 ---
 
@@ -297,7 +336,68 @@ Jeder Setter kann die gesamte 220-Byte-Datei neu schreiben. Der persistente OTA-
 
 ---
 
-# 7. `board_ota_step` ist nicht persistent
+# 7. Reale V3.3-Integritätsbestätigung
+
+Aus der gesicherten originalen `phnixIot_device_OTA_INFO` wurden folgende Werte dekodiert:
+
+```text
+CRC              gültig
+Systemversion    V1.2
+Firmware-MD5     CEB6A4BF386FF644E23E410023E74673
+SoftwareCode     82400644
+SoftwareVersion  0033
+Offset           0
+Länge            0
+```
+
+Die gesicherte V3.3-Mainboard-Firmware besitzt lokal:
+
+```text
+Dateigröße  287598 Byte
+MD5         CEB6A4BF386FF644E23E410023E74673
+SHA-256     6C635D8E9A1E7246EA492B81ACFF5B748E85CC86C0FE0DEF35C2F0A597E4389A
+```
+
+Entscheidend ist:
+
+```text
+OTA_INFO Soll-MD5
+CEB6A4BF386FF644E23E410023E74673
+
+Cache-Firmware Ist-MD5
+CEB6A4BF386FF644E23E410023E74673
+
+=> exakt identisch
+```
+
+Auch die Identität stimmt überein:
+
+```text
+OTA_INFO: 82400644 / 0033
+BIN:      82400644 / 0033
+          -> V3.3
+```
+
+Damit gilt für die vorhandene V3.3-Referenzdatei wesentlich belastbarer als zuvor:
+
+> Die gesicherte Firmware stimmt bitgenau mit dem von `phnixIot4G` persistent gespeicherten PHNIX-Soll-MD5 überein. Sie ist damit gegen originale OTA-Metadaten verifiziert.
+
+Die Formulierung bedeutet bewusst **nicht**, dass eine Hersteller-Signatur vorliegt. PHNIX verwendet in diesem Pfad MD5 als Integritätsreferenz; der zusätzliche SHA-256 stammt aus unserer lokalen Sicherung und dient der stärkeren späteren Wiedererkennung.
+
+### Warum `Offset = 0` und `Länge = 0` trotzdem plausibel sind
+
+Die reale Datei enthält zwar weiterhin MD5, SoftwareCode und SoftwareVersion, aber:
+
+```text
+offset = 0
+length = 0
+```
+
+Das ist kein Widerspruch. Es zeigt nur, dass zum Zeitpunkt der Sicherung kein aktiver/resumierbarer Board-Firmwaretransfer gespeichert war. Die zuletzt gespeicherte Firmwareidentität und der MD5 können in `sys_para` bestehen bleiben, obwohl Offset und Länge bereits auf den Idle-/Abschlusszustand zurückgesetzt wurden.
+
+---
+
+# 8. `board_ota_step` ist nicht persistent
 
 Globale Variable:
 
@@ -327,7 +427,7 @@ Resume erfolgt ausschließlich über die persistenten Metadaten plus erneuten Bo
 
 ---
 
-# 8. Resume-Erkennung durch `dev_otavercode_compare()`
+# 9. Resume-Erkennung durch `dev_otavercode_compare()`
 
 `dev_otavercode_compare() @ 0x1BFB0` ruft zuerst:
 
@@ -391,7 +491,7 @@ Start
 
 ---
 
-# 9. Was bei verschiedenen Crash-Zeitpunkten erhalten bleibt
+# 10. Was bei verschiedenen Crash-Zeitpunkten erhalten bleibt
 
 ## Crash direkt nach angenommenem `0033`
 
@@ -466,7 +566,7 @@ Das Verhalten ist damit idempotent gegenüber verlorenen ACKs.
 
 ---
 
-# 10. Fehlerfälle der OTA_INFO-Datei
+# 11. Fehlerfälle der OTA_INFO-Datei
 
 `sys_read_para()` akzeptiert die Datei nur, wenn:
 
@@ -490,7 +590,7 @@ Beim Workerstart wird die Dateigröße per `stat()` betrachtet. Ist die Datei le
 
 ---
 
-# 11. Konsequenz für isolierte Work-Läufe
+# 12. Konsequenz für isolierte Work-Läufe
 
 Für vollständig reproduzierbare OTA-Tests müssen **beide** Dateien berücksichtigt werden:
 
@@ -538,4 +638,4 @@ Download
 RS485-OTA-State-Machine
 ```
 
-Für Tests, die bewusst hinter diesen Punkt gehen, sollte Work den Inhalt und die Größe beider Persistenzdateien vor und nach dem Lauf protokollieren.
+Für Tests, die bewusst weiterlaufen, sollte der reale Inhalt von `OTA_INFO` vor und nach dem Lauf binär gesichert und gegen CRC, MD5, Code/Version, Offset und Länge verglichen werden.
