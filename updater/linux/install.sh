@@ -28,6 +28,14 @@ configure_sparse_checkout() {
     fi
 }
 
+adb_has_device() {
+    printf '%s\n' "$1" | awk 'NR>1 && $2 == "device" {found=1} END {exit !found}'
+}
+
+adb_has_offline() {
+    printf '%s\n' "$1" | awk 'NR>1 && $2 == "offline" {found=1} END {exit !found}'
+}
+
 if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
     die "Bitte den Installer als normaler Benutzer starten. sudo wird bei Bedarf automatisch verwendet."
 fi
@@ -186,10 +194,32 @@ adb kill-server >/dev/null 2>&1 || true
 adb start-server >/dev/null
 ok "ADB-Server läuft"
 
+# Das PHNIX-LTE-Modem kann unmittelbar nach einem ADB-Neustart kurz als
+# "offline" erscheinen, obwohl USB und Berechtigungen bereits korrekt sind.
+# Deshalb zunächst kurz warten und bei genau diesem Zustand einmal reconnecten.
+sleep 1
 adb_output="$(adb devices -l 2>&1 || true)"
+if ! adb_has_device "$adb_output" && adb_has_offline "$adb_output"; then
+    info "ADB-Gerät ist noch offline; verbinde Transport erneut"
+    adb reconnect >/dev/null 2>&1 || true
+    sleep 2
+    adb_output="$(adb devices -l 2>&1 || true)"
+fi
+
+# Nach einem Reconnect noch einige Sekunden auf den fertigen ADB-Handshake warten.
+if ! adb_has_device "$adb_output"; then
+    for _ in 1 2 3 4 5; do
+        sleep 1
+        adb_output="$(adb devices -l 2>&1 || true)"
+        adb_has_device "$adb_output" && break
+    done
+fi
+
 printf '\n%s\n' "$adb_output"
-if printf '%s\n' "$adb_output" | awk 'NR>1 && $2 == "device" {found=1} END {exit !found}'; then
+if adb_has_device "$adb_output"; then
     ok "ADB-Gerät erkannt"
+elif adb_has_offline "$adb_output"; then
+    warn "ADB-Gerät wurde erkannt, ist aber weiterhin 'offline'. Bitte 'adb reconnect' und danach 'adb devices -l' ausführen."
 else
     warn "Kein ADB-Gerät im Status 'device' erkannt. Die Installation ist trotzdem abgeschlossen. Modem anschließen und 'adb devices -l' erneut ausführen."
 fi
