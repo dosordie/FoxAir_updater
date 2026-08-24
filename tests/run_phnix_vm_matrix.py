@@ -134,7 +134,21 @@ def main() -> int:
             print(started.stdout)
             return 1
 
-        # 1: read-only status
+        # reset_state() intentionally preloads a simulated helper because many
+        # lab scenarios expect it.  `status` instead proves the clean original
+        # runtime, so remove that fixture exactly as a completed OTA cleanup would.
+        clean = run(
+            [
+                str(adb), "shell",
+                "rm -f /data/phnix_ota_runtime_hook /data/.phnix_ota_runtime_hook.new",
+            ],
+            env,
+        )
+        if clean.returncode != 0:
+            print(clean.stdout)
+            return 1
+
+        # 1: read-only status from a clean original-runtime state.
         completed = run(
             [sys.executable, str(CONTROLLER), "--adb", str(adb), "run", "--check", "status"],
             env,
