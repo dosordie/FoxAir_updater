@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Windows release version, for example 0.1.5"
+        description: "Windows release version, for example 0.1.8"
         required: true
         type: string
       prerelease:
@@ -39,7 +39,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Version must use x.y.z, for example 0.1.5"
+            throw "Version must use x.y.z, for example 0.1.8"
           }
           git fetch origin main --tags
           $tag = "windows-v$env:VERSION"
@@ -101,6 +101,7 @@ jobs:
           python -m py_compile updater/windows/foxair_updater_gui.py
           python -m py_compile updater/windows/foxair_updater_app.py
           python -m py_compile updater/windows/release_check.py
+          python -m py_compile updater/windows/phnix_windows_controller_wrapper.py
 
       - name: Build portable package
         shell: cmd
@@ -156,10 +157,12 @@ jobs:
           body: |
             Experimentelle Windows-Version des FoxAir Updaters.
 
-            - Portable ZIP und Setup EXE
+            - Portable ZIP und Setup EXE. Die Builds sind derzeit nicht kommerziell code-signiert; Windows SmartScreen kann deshalb beim ersten Start "Weitere Informationen" → "Trotzdem ausführen" verlangen.
             - ADB ist nicht enthalten; die GUI verweist zuerst auf den SIMCom USB-Treiber und danach auf die offiziellen Android Platform Tools.
             - Einfache read-only Updateprüfung gegen das neueste GitHub Release; Download/Installation erfolgen nicht automatisch.
             - ADB-Pfad, Remote-ADB-Modus, Raspberry-Pi-IP/Port, Backup-Ziel und zuletzt verwendete Firmware-/Manifestordner werden persistent gespeichert.
+            - v0.1.8 korrigiert das Laden von Remote-IP/Port, sodass gespeicherte Werte beim Programmstart nicht mehr durch leere/default Werte überschrieben werden.
+            - v0.1.8 korrigiert den Windows-Same-Version-Abschluss: Wrapper und Controller verwenden für die Abschlussprüfung exakt denselben effektiven --state-dir; alte Run-State-Dateien werden nicht als aktueller Abschlussbeweis wiederverwendet.
             - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi.
             - Benutzerfreundliche Dry-Run-/OTA-Statusanzeige mit farbigen Prüfschritten und Fortschrittsbalken.
             - Der Windows-/Remote-ADB-Pfad wurde real bis zur sicheren V3.3→V3.3-Gleichversionsablehnung bestätigt; dabei wurden keine Firmwaredaten übertragen.
