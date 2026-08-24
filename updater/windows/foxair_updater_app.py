@@ -21,7 +21,7 @@ import foxair_updater_gui as base
 import release_check
 
 
-APP_VERSION = "0.1.7"
+APP_VERSION = "0.1.8"
 MODEM_DRIVER_URL = "https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip"
 
 GREEN = "#16803a"
@@ -57,6 +57,52 @@ class MainWindow(base.MainWindow):
         self.same_manifest.editingFinished.connect(self._persist_settings)
         self.firmware.editingFinished.connect(self._persist_settings)
         QTimer.singleShot(900, lambda: self._check_for_updates(silent=True))
+
+    def _load(self):
+        """Load all connection values before signals are allowed to write them back."""
+        saved_adb = str(self.settings.value("adb", "") or "")
+        backup_value = str(
+            self.settings.value("backup", Path.home() / "FoxAir_LTE_Backup")
+        )
+        remote = str(self.settings.value("adb_mode", "local")) == "remote"
+        remote_host_value = str(self.settings.value("remote_host", "") or "")
+        try:
+            remote_port_value = int(self.settings.value("remote_port", 5038))
+        except (TypeError, ValueError):
+            remote_port_value = 5038
+
+        found = (
+            Path(saved_adb)
+            if saved_adb and Path(saved_adb).is_file()
+            else self._find_adb()
+        )
+        if found:
+            self.adb.setText(str(found))
+        self.backup_path.setText(backup_value)
+
+        # The base GUI connects radio/text/value signals before _load(). Without
+        # blocking them, setChecked() writes the still-empty host and default
+        # port back to QSettings before they are read. That is why the previous
+        # Windows build forgot the Raspberry-Pi IP (and could reset the port).
+        widgets = (
+            self.adb_remote,
+            self.adb_local,
+            self.remote_host,
+            self.remote_port,
+        )
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self.remote_host.setText(remote_host_value)
+            self.remote_port.setValue(remote_port_value)
+            self.adb_remote.setChecked(remote)
+            self.adb_local.setChecked(not remote)
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+
+        self._remote_changed()
+        self.settings.sync()
 
     def _connection(self):
         widget = super()._connection()
