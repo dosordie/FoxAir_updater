@@ -34,14 +34,16 @@ jobs:
           python-version: "3.11"
 
       - name: Read Windows app version
+        id: version
         shell: powershell
         run: |
           $text = Get-Content updater/windows/foxair_updater_gui.py -Raw
           $match = [regex]::Match($text, 'APP_VERSION\s*=\s*"([^"]+)"')
           if (-not $match.Success) { throw "APP_VERSION not found" }
           $version = $match.Groups[1].Value
-          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "WINDOWS_RELEASE_TAG=windows-v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $tag = "windows-v$version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Windows version: $version"
 
       - name: Build portable package
@@ -62,21 +64,23 @@ jobs:
       - name: Upload portable files
         uses: actions/upload-artifact@v4
         with:
-          name: FoxAir_Updater_Portable_v${{ env.APP_VERSION }}
+          name: FoxAir_Updater_Portable_v${{ steps.version.outputs.version }}
           path: dist/FoxAir_Updater/
           if-no-files-found: error
 
       - name: Upload Windows setup
         uses: actions/upload-artifact@v4
         with:
-          name: FoxAir_Updater_Setup_v${{ env.APP_VERSION }}
-          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ env.APP_VERSION }}.exe
+          name: FoxAir_Updater_Setup_v${{ steps.version.outputs.version }}
+          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ steps.version.outputs.version }}.exe
           if-no-files-found: error
 
       - name: Publish Windows prerelease
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          WINDOWS_RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           $tag = $env:WINDOWS_RELEASE_TAG
           $version = $env:APP_VERSION
