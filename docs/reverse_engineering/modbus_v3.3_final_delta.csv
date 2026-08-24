@@ -17,6 +17,7 @@ MAIN:S,2117,correction,Reserved,High word of 32-bit counter 2117/2118,model_u32_
 MAIN:S,2119,correction,Reserved,High word of 32-bit counter 2119/2120,model_u32_pair,confirmed,read_only
 MAIN:S,2121,correction,Reserved,High word of 32-bit counter 2121/2122,model_u32_pair,confirmed,read_only
 MAIN:S,2123,correction,Reserved,High word of 32-bit counter 2123/2124,model_u32_pair,confirmed,read_only
+MAIN:S,2133,behavior_upgrade,Active SG mode,Effective SG mode0-4 with fixed 10-minute hold between accepted transitions,add_state_machine_metadata,live_confirmed,read_only_feedback
 MAIN:S,2136,correction,Unknown x0.1 value,T04 outdoor temperature second publication path,rename,confirmed,read_only
 MAIN:S,2137,correction,Candidate mirror of 2054,Pure heat-pump/inverter electrical input power RAW/10 kW,rename_scale,confirmed,read_only
 MAIN:S,2138,correction,Candidate mirror of 2059,Pure heat-pump thermal power RAW/10 kW,rename_scale,confirmed,read_only
@@ -24,8 +25,13 @@ MAIN:S,2140-2141,structure_upgrade,Two RAW words,One 32-bit value,model_u32_pair
 MAIN:S,2142-2143,structure_upgrade,Two RAW words,One 32-bit value,model_u32_pair,confirmed,read_only
 MAIN:S,2146,structure_upgrade,Unknown,V3.3 capability/status bitfield base 0x002C,set_bitfield_raw_bits,confirmed,read_only
 MAIN:S,2150-2180,add_range,Mostly absent,V3.3 status range with confirmed live RAM sources/additional broadcast words,add_raw_candidates,confirmed_provenance,read_only
-MAIN:P,1334.value3,add_enum,Missing,Virtual/Modbus SG Ready input source,add_enum_value,very_likely_label,operational_control
-ENG:CTRL,8801,add_register,Absent,Virtual SG Ready state command values 1-4,add_advanced_register,confirmed,operational_control
+MAIN:P,1334.value3,add_enum,Missing,Virtual/Modbus SG Ready input source,add_enum_value,live_confirmed,operational_control
+MAIN:P,1334.transition_reset,behavior_add,Absent,Changing SG source resets 10-minute SG transition hold and internal transition state,document_and_model_reset,live_confirmed,operational_control
+ENG:CTRL,8801,add_register,Absent,Virtual SG Ready state command values1-4 on direct User/Mainboard Modbus,add_confirmed_register_and_ui,live_confirmed,operational_control
+ENG:CTRL,8801.mapping,behavior_add,Absent,"1=Mode1;2=Mode2;3=Mode3;4=Mode4",add_enum_and_feedback_link_to_2133,live_confirmed,operational_control
+ENG:CTRL,8801.hold,behavior_add,Absent,After accepted mode change hold=1200 cycles at0.5s =10min,add_transition_hold_metadata,confirmed_binary_live_consistent,operational_control
+WARMLINK63,8801,backend_access_correction,Generic assumption of same Mainboard access,"FC03 timeout; FC16 formal ACK seen but real User-8801 apply not confirmed",do_not_enable_8801_as_equivalent_lte_write,live_tested,avoid_write_assumption
+WARMLINK63,1334-2133,backend_access_add,Partial knowledge,1334 R/W and 2133 read live-confirmed over slave0x63,model_backend_specific_permissions,live_confirmed,operational_control
 MAIN:P,1348-1352,confidence_upgrade,Display/unknown C13-C15 E20-E21,Real active V3.3 signed-byte live parameters with defaults,add_ram_defaults,confirmed,configuration
 MAIN:P,1381-1389,add_range,Mostly absent,Confirmed V3.3 live parameter fields,add_raw_with_provenance,confirmed_provenance,configuration
 MAIN:P,1402,add_register,Absent/unknown,Confirmed V3.3 live parameter,add_raw_with_provenance,confirmed_provenance,configuration
@@ -44,10 +50,10 @@ DIAG,6016,add_register,Absent,T01 inlet-water temperature,add_named_diag,confirm
 DIAG,6017,add_register,Absent,T02 outlet-water temperature,add_named_diag,confirmed,read_only
 DIAG,6019,add_register,Absent,T04 outdoor temperature,add_named_diag,confirmed,read_only
 DIAG,6040,add_register,Absent,Compressor actual frequency,add_named_diag,confirmed,read_only
-DIAG,6044,add_register,Absent,Fan actual 1,add_named_diag,confirmed,read_only
-DIAG,6045,add_register,Absent,Fan actual 2,add_named_diag,confirmed,read_only
+DIAG,6044,add_register,Absent,Fan actual1,add_named_diag,confirmed,read_only
+DIAG,6045,add_register,Absent,Fan actual2,add_named_diag,confirmed,read_only
 DIAG,6073-6080,add_range,Absent,Low-level hardware/IO diagnostic bitfields,add_raw_bitfields,confirmed_provenance,read_only
 DIAG,6088,add_register,Absent,Service/handshake status word,add_advanced_raw,confirmed,stateful_read
-ENG:CTRL,8802-8820,add_range,Absent,Protocol-addressable engineering control slots no direct live consumer found,keep_hidden_raw,confirmed_addressing,unknown_write_risk
-SPECIAL,60000,add_service_action,Absent,Reset MAIN:1024 Modbus Unit Address to 1,separate_service_action,confirmed,very_high
+ENG:CTRL,8802-8820,add_range,Absent,Protocol-addressable direct-dispatcher engineering control slots no direct live consumer found,keep_hidden_raw,confirmed_addressing,unknown_write_risk
+SPECIAL,60000,add_service_action,Absent,Reset MAIN:1024 Modbus Unit Address to1,separate_service_action,confirmed,very_high
 SPECIAL,60010,add_service_action,Absent,STM32 UID-bound Modbus address provisioning,separate_service_action,confirmed,very_high
