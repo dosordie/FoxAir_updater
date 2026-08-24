@@ -55,11 +55,14 @@ Für Entwicklung und Abnahme existiert zusätzlich:
 ### Windows
 
 Zusätzlich gibt es eine **experimentelle Windows-GUI** als Portable-ZIP und Setup-EXE.
-Die aktuelle Entwicklungsfassung ist **v0.1.5**.
+Die nächste Windows-Fassung ist **v0.1.8**.
 
 Öffentliche Windows-Versionen werden hier bereitgestellt:
 
 **[FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)**
+
+> [!NOTE]
+> Die Windows-Builds sind derzeit nicht mit einem kommerziellen Code-Signing-Zertifikat signiert. Windows SmartScreen kann deshalb beim ersten Start **„Der Computer wurde durch Windows geschützt“** anzeigen. Wenn die Datei bewusst von der offiziellen GitHub-Releases-Seite geladen wurde, **Weitere Informationen** und anschließend **Trotzdem ausführen** wählen.
 
 > [!IMPORTANT]
 > Der Windows-Pfad wurde bereits real für **ADB-Verbindung, Remote-ADB über Raspberry Pi,
@@ -70,6 +73,12 @@ Die aktuelle Entwicklungsfassung ist **v0.1.5**.
 > beendete den Ablauf sicher mit `same-version`, `C357=false` und `C5A8=false`, und der
 > Originalbetrieb wurde anschließend wieder bestätigt. Es wurden dabei **keine Firmwaredaten
 > übertragen**.
+>
+> v0.1.7 meldete nach diesem bereits sauber terminal beendeten Same-Version-Lauf noch einen
+> rein hostseitigen Fehler, weil der Windows-Sicherheitswrapper den `run-state.json` in einem
+> anderen lokalen Verzeichnis suchte als dem tatsächlich verwendeten `--state-dir`. Dieser
+> Auswertungsfehler ist in v0.1.8 korrigiert. Ebenfalls korrigiert ist das Speichern/Laden der
+> Remote-ADB-IP und des Ports.
 >
 > Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung
 > wurde mit der Windows-GUI weiterhin noch nicht live durchgeführt**.
@@ -109,7 +118,7 @@ Ausführliche Updater-Anleitung:
 Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
 [`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
 
-## Windows GUI v0.1.5
+## Windows GUI v0.1.8
 
 Die Windows-Version verwendet die gemeinsame OTA-Quelle weiterhin unverändert:
 
@@ -136,12 +145,12 @@ Linux außerhalb des Controllers liegen: Full-Abgleich direkt vor einem echten U
 Sicherung und Wiederherstellung eines eventuell vorhandenen LTE-Firmware-Caches. Der gemeinsame
 Controller selbst wird dafür **nicht verändert oder refaktoriert**.
 
-**ADB wird nicht mitgeliefert.** Die GUI enthält einen Link auf die offizielle Google-Seite
-für Android SDK Platform Tools und erlaubt anschließend die Auswahl einer vorhandenen `adb.exe`.
+**ADB wird nicht mitgeliefert.** Die GUI enthält zuerst einen Link zum benötigten SIMCom-USB-Treiber und anschließend einen Link auf die offizielle Google-Seite für Android SDK Platform Tools. Eine vorhandene `adb.exe` kann ausgewählt und dauerhaft gemerkt werden.
 
 Die GUI bietet unter anderem:
 
 - lokale ADB-Verbindung oder optional Remote-ADB über einen Raspberry Pi;
+- persistente Speicherung von ADB-Pfad, Remote-Modus, Raspberry-Pi-IP/Port, Backup-Ziel sowie zuletzt verwendeten Firmware-/Manifestordnern;
 - ADB-Erkennung und `adb reconnect` bei kurzzeitigem `offline`;
 - **real getestetes read-only LTE-Backup/Firmware-Download per `adb pull`**;
 - frei wählbaren Backup-Zielordner und **Zielordner öffnen** im Windows-Explorer;
@@ -159,6 +168,7 @@ Die GUI bietet unter anderem:
 - automatische Full-Manifest-Erzeugung sowie manuellen Fallback;
 - Auswahl originaler Firmwaredateien auch **ohne `.bin`-Endung**;
 - Gleichversionstest im Bereich „Erweitert“;
+- read-only GitHub-Release-Prüfung ohne automatischen Download oder Installation;
 - Loganzeige, Logexport und Protokoll leeren;
 - dasselbe Programmlogo wie `FoxAir_Control` für EXE, Fenster und Setup.
 
