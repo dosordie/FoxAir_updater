@@ -7,6 +7,9 @@ MANIFEST_TOOL="$ROOT_DIR/tools/phnix_ota/create_firmware_manifest.py"
 ADB_BIN="${FOX_AIR_ADB:-adb}"
 STATE_DIR="$ROOT_DIR/phnix-ota-state"
 FIRMWARE_DIR="$ROOT_DIR/firmware"
+DOWNLOAD_DIR="$ROOT_DIR/downloaded_firmware"
+CACHE_BACKUP_DIR="$STATE_DIR/original-cache"
+REMOTE_CACHE="/cache/phnixIot_device_OTA"
 
 usage() {
     cat <<'TXT'
@@ -18,6 +21,7 @@ Verwendung:
   ./foxair-updater update MANIFEST [--full] --confirm
   ./foxair-updater same-version MANIFEST --confirm
   ./foxair-updater restore
+  ./foxair-updater download
   ./foxair-updater manifest FIRMWARE [--full] [--show] [--software-code CODE] [--display-version VERSION] [--target-ssid 0063]
   ./foxair-updater version
 
@@ -30,6 +34,7 @@ Beispiele:
   ./foxair-updater update FW3.4.json --confirm
   ./foxair-updater update FW3.4.json --full --confirm
   ./foxair-updater same-version FW3.3.json --confirm
+  ./foxair-updater download
   ./foxair-updater manifest FW3.4.bin --full
   ./foxair-updater manifest FW3.4.bin --full --show
   ./foxair-updater manifest FW3.4.bin --software-code 82400644 --display-version V3.4 --show
@@ -45,6 +50,15 @@ aus. Es wird dabei keine Manifestdatei geschrieben.
 vergleicht die extrahierte Identitaet sowie Dateigroesse und Hashes strikt mit
 dem Manifest, bevor ADB oder Busaktivitaet beginnt.
 
+Der Befehl download liest die aktuell im LTE-Cache vorhandene Mainboard-Firmware
+sowie wichtige LTE-/OTA-Dateien aus und speichert sie unter
+./downloaded_firmware/<Zeitstempel>/. Auf dem Modem wird dabei nichts veraendert.
+
+Vor update und same-version wird eine eventuell vorhandene Originaldatei
+/cache/phnixIot_device_OTA zusaetzlich intern gesichert. same-version stellt sie
+nach erfolgreicher Gleichversionsablehnung wieder her; restore stellt sie nach
+einem bestaetigten Pre-C5A8-Recovery wieder auf den Ausgangszustand zurueck.
+
 Beim Manifest-Befehl wird ohne --show die JSON-Datei standardmaessig neben der
 Firmware mit dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json.
 TXT
@@ -55,8 +69,122 @@ die() {
     exit 1
 }
 
+warn() {
+    printf '[WARNUNG] %s\n' "$*" >&2
+}
+
 require_adb() {
     command -v "$ADB_BIN" >/dev/null 2>&1 || die "ADB wurde nicht gefunden: $ADB_BIN"
+}
+
+remote_file_exists() {
+    "$ADB_BIN" shell "test -f '$1'" >/dev/null 2>&1
+}
+
+backup_update_cache() {
+    mkdir -p "$CACHE_BACKUP_DIR"
+    rm -f \
+        "$CACHE_BACKUP_DIR/phnixIot_device_OTA" \
+        "$CACHE_BACKUP_DIR/cache.present" \
+        "$CACHE_BACKUP_DIR/cache.absent" \
+        "$CACHE_BACKUP_DIR/MD5" \
+        "$CACHE_BACKUP_DIR/SHA256"
+
+    if remote_file_exists "$REMOTE_CACHE"; then
+        "$ADB_BIN" pull "$REMOTE_CACHE" "$CACHE_BACKUP_DIR/phnixIot_device_OTA" >/dev/null \
+            || die "Vorhandene Cache-Firmware konnte vor dem OTA nicht gesichert werden"
+        md5sum "$CACHE_BACKUP_DIR/phnixIot_device_OTA" | awk '{print $1}' > "$CACHE_BACKUP_DIR/MD5"
+        sha256sum "$CACHE_BACKUP_DIR/phnixIot_device_OTA" | awk '{print $1}' > "$CACHE_BACKUP_DIR/SHA256"
+        touch "$CACHE_BACKUP_DIR/cache.present"
+        printf '[OK] Vorhandene LTE-Cache-Firmware vor dem OTA gesichert\n'
+    else
+        touch "$CACHE_BACKUP_DIR/cache.absent"
+        printf '[..] Vor dem OTA war keine Firmware unter %s vorhanden\n' "$REMOTE_CACHE"
+    fi
+}
+
+restore_update_cache() {
+    [[ -d "$CACHE_BACKUP_DIR" ]] || return 0
+
+    if [[ -f "$CACHE_BACKUP_DIR/cache.present" ]]; then
+        local backup expected remote_hash
+        backup="$CACHE_BACKUP_DIR/phnixIot_device_OTA"
+        [[ -f "$backup" ]] || die "Cache-Backup-Marker vorhanden, aber Sicherungsdatei fehlt"
+        expected="$(cat "$CACHE_BACKUP_DIR/SHA256")"
+
+        "$ADB_BIN" push "$backup" /cache/.phnixIot_device_OTA.restore >/dev/null \
+            || die "Cache-Firmware konnte nicht zum LTE-Modem zurueckkopiert werden"
+        remote_hash="$("$ADB_BIN" shell "sha256sum /cache/.phnixIot_device_OTA.restore | awk '{print \$1}'" | tr -d '\r')"
+        [[ "$remote_hash" == "$expected" ]] || die "SHA-256 der zurueckkopierten Cache-Firmware stimmt nicht"
+        "$ADB_BIN" shell "mv /cache/.phnixIot_device_OTA.restore '$REMOTE_CACHE' && sync" >/dev/null \
+            || die "Cache-Firmware konnte nicht atomar wiederhergestellt werden"
+        remote_hash="$("$ADB_BIN" shell "sha256sum '$REMOTE_CACHE' | awk '{print \$1}'" | tr -d '\r')"
+        [[ "$remote_hash" == "$expected" ]] || die "SHA-256 der wiederhergestellten Cache-Firmware stimmt nicht"
+        printf '[OK] Urspruengliche LTE-Cache-Firmware wiederhergestellt\n'
+        return 0
+    fi
+
+    if [[ -f "$CACHE_BACKUP_DIR/cache.absent" ]]; then
+        "$ADB_BIN" shell "rm -f '$REMOTE_CACHE' /cache/.phnixIot_device_OTA.restore && sync" >/dev/null \
+            || die "Urspruenglich leeren Cache-Zustand konnte nicht wiederhergestellt werden"
+        printf '[OK] Urspruenglicher leerer LTE-Cache-Zustand wiederhergestellt\n'
+    fi
+}
+
+download_device_files() {
+    local stamp dest pulled remote name
+    stamp="$(date '+%Y%m%d-%H%M%S')"
+    dest="$DOWNLOAD_DIR/$stamp"
+    mkdir -p "$dest"
+    pulled=0
+
+    printf '[..] Sichere LTE-Dateien nach %s\n' "$dest"
+
+    while IFS='|' read -r remote name; do
+        [[ -n "$remote" ]] || continue
+        if remote_file_exists "$remote"; then
+            "$ADB_BIN" pull "$remote" "$dest/$name" >/dev/null \
+                || die "Datei konnte nicht gesichert werden: $remote"
+            printf '[OK] %s\n' "$remote"
+            pulled=$((pulled + 1))
+        else
+            if [[ "$remote" == "$REMOTE_CACHE" ]]; then
+                warn "Keine Mainboard-Firmware im LTE-Cache gefunden: $REMOTE_CACHE"
+            else
+                warn "Datei auf dem LTE-Modem nicht gefunden: $remote"
+            fi
+        fi
+    done <<EOF
+$REMOTE_CACHE|phnixIot_device_OTA
+/data/phnixIot4G|phnixIot4G
+/data/phnixIot_device_OTA_INFO|phnixIot_device_OTA_INFO
+/data/phnixIot_device_statisic|phnixIot_device_statisic
+EOF
+
+    (( pulled > 0 )) || die "Keine der erwarteten LTE-Dateien konnte gefunden werden"
+
+    (
+        cd "$dest"
+        md5sum phnixIot* 2>/dev/null > MD5SUMS.txt || true
+        sha256sum phnixIot* 2>/dev/null > SHA256SUMS.txt || true
+    )
+
+    cat > "$dest/README.txt" <<EOF
+FoxAir LTE backup
+Created: $(date --iso-8601=seconds 2>/dev/null || date)
+Source device: PHNIX/FoxAir LTE modem via ADB
+
+Expected source paths:
+  /cache/phnixIot_device_OTA
+  /data/phnixIot4G
+  /data/phnixIot_device_OTA_INFO
+  /data/phnixIot_device_statisic
+
+The backup command only used adb pull/read operations on the LTE modem.
+EOF
+
+    printf '\n[OK] Sicherung abgeschlossen: %s\n' "$dest"
+    printf '     Dateien: %d plus Pruefsummen/README\n' "$pulled"
 }
 
 resolve_manifest() {
@@ -196,6 +324,7 @@ case "$command" in
             full_manifest_preflight "$manifest"
         fi
         require_adb
+        backup_update_cache
         exec python3 "$CONTROLLER" \
             --adb "$ADB_BIN" \
             run \
@@ -208,19 +337,36 @@ case "$command" in
         [[ $# -eq 3 && "$3" == "--confirm" ]] || die "Verwendung: ./foxair-updater same-version MANIFEST --confirm"
         require_adb
         manifest="$(resolve_manifest "$2")"
-        exec python3 "$CONTROLLER" \
+        backup_update_cache
+        if python3 "$CONTROLLER" \
             --adb "$ADB_BIN" \
             same-version-test \
             --manifest "$manifest" \
             --execute \
             --confirm PHNIX-C350-SAME-V33 \
             --logger-confirm PASSIVE-LOGGER-RUNNING \
-            --state-dir "$STATE_DIR"
+            --state-dir "$STATE_DIR"; then
+            restore_update_cache
+            exit 0
+        else
+            rc=$?
+            warn "Gleichversionstest nicht sicher terminal beendet; Cache wird nicht automatisch veraendert. Bei bestaetigtem Pre-C5A8-Zustand ./foxair-updater restore verwenden."
+            exit "$rc"
+        fi
         ;;
     restore)
         [[ $# -eq 1 ]] || die "restore benoetigt keine weiteren Argumente"
         require_adb
-        exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --restore original
+        if python3 "$CONTROLLER" --adb "$ADB_BIN" run --restore original; then
+            restore_update_cache
+            exit 0
+        fi
+        exit $?
+        ;;
+    download)
+        [[ $# -eq 1 ]] || die "download benoetigt keine weiteren Argumente"
+        require_adb
+        download_device_files
         ;;
     manifest)
         [[ $# -ge 2 ]] || die "Verwendung: ./foxair-updater manifest FIRMWARE [--full] [--show] [--software-code CODE --display-version VERSION]"
