@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 FOX_AIR_TARGET_SSID = "0063"
+FOX_AIR_MAX_FIRMWARE_SIZE = 0x4B000
 
 
 class ManifestError(ValueError):
@@ -46,7 +47,7 @@ class FirmwareManifest:
             raise ManifestError("firmware_file must be a plain filename")
         if not re.fullmatch(r"[0-9A-Z]{8}", self.software_code):
             raise ManifestError("software_code must contain exactly 8 uppercase characters")
-        if not re.fullmatch(r"V[0-9]\.[0-9]", self.display_version):
+        if not re.fullmatch(r"V[0-9]\\.[0-9]", self.display_version):
             raise ManifestError("display_version must use the Vn.n form")
         derived = f"00{self.display_version[1]}{self.display_version[3]}"
         if self.wire_version != derived:
@@ -57,6 +58,10 @@ class FirmwareManifest:
             )
         if not isinstance(self.size, int) or self.size <= 0:
             raise ManifestError("size must be a positive integer")
+        if self.size > FOX_AIR_MAX_FIRMWARE_SIZE:
+            raise ManifestError(
+                f"firmware size exceeds FoxAir C357 limit of {FOX_AIR_MAX_FIRMWARE_SIZE} bytes"
+            )
         if not re.fullmatch(r"[0-9A-F]{32}", self.md5):
             raise ManifestError("md5 must contain 32 uppercase hex digits")
         if not re.fullmatch(r"[0-9A-F]{64}", self.sha256):
