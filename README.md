@@ -33,8 +33,7 @@ normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
 
 ## Aktueller Stand
 
-Der Linux-/Raspberry-Pi-Weg ist inzwischen über einen Installer und einen einfachen
-Launcher nutzbar:
+Der Linux-/Raspberry-Pi-Weg ist über einen Installer und einen einfachen Launcher nutzbar:
 
 ```text
 ./foxair-updater status
@@ -50,6 +49,11 @@ Für Entwicklung und Abnahme existiert zusätzlich:
 ```text
 ./foxair-updater same-version MANIFEST --confirm
 ```
+
+Zusätzlich existiert inzwischen eine **erste experimentelle Windows-GUI v0.1**. Sie
+refaktoriert die OTA-Logik bewusst nicht, sondern startet denselben vorhandenen
+`phnix_local_ota_controller.py` als separates Backend. Details stehen unter
+[`updater/windows/README.md`](updater/windows/README.md).
 
 Die eigentliche Sicherheits- und OTA-Logik bleibt im Controller
 `tools/phnix_ota/phnix_local_ota_controller.py`.
@@ -81,12 +85,51 @@ Ausführliche Updater-Anleitung:
 Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
 [`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
 
+## Windows GUI v0.1
+
+Die Windows-Version verfolgt bewusst denselben Backend-Ansatz wie Linux:
+
+```text
+FoxAir_Updater.exe
+        ↓
+private Python Runtime
+        ↓
+phnix_local_ota_controller.py   ← dieselbe Repository-Datei wie Linux
+        ↓
+extern ausgewählte adb.exe
+        ↓
+PHNIX LTE-Modem
+```
+
+**ADB wird nicht mitgeliefert.** Die GUI enthält nur einen Link auf die offizielle
+Google-Seite für Android SDK Platform Tools und erlaubt anschließend die Auswahl
+einer vorhandenen `adb.exe`.
+
+Die GUI bietet in der ersten Version:
+
+- ADB-Erkennung und `adb reconnect` bei kurzzeitigem `offline`;
+- read-only LTE-Backup/Firmware-Download per `adb pull`;
+- Originalstatus;
+- Dry-Run;
+- vollständigen Update-Aufruf über den bestehenden Controller;
+- Restore über den bestehenden Controller;
+- Manifest-Erzeugung über das bestehende Manifest-Tool;
+- Gleichversionstest im Bereich „Erweitert“;
+- Loganzeige und Logexport.
+
+Beim Portable-Build werden Controller, Runtime-Helfer und `updater/common/*.py`
+bytegleich aus dem Repository kopiert und mit `fc /b` geprüft. Damit entsteht
+bewusst keine zweite Windows-OTA-Implementierung.
+
+Build-Anleitung:
+[`updater/windows/README.md`](updater/windows/README.md)
+
 ## Firmware bereitstellen
 
 Firmwaredateien werden **nicht über dieses öffentliche GitHub-Repository verteilt**.
 Der Installer lädt keine Mainboard-Firmware herunter.
 
-Firmware und Manifest werden lokal gemeinsam abgelegt, zum Beispiel:
+Firmware und Manifest werden unter Linux lokal gemeinsam abgelegt, zum Beispiel:
 
 ```text
 ~/FoxAir_updater/firmware/FW3.4.bin
@@ -119,7 +162,7 @@ FoxAir_updater/
 ├─ updater/
 │  ├─ common/               # gemeinsam genutzte Python-Module
 │  ├─ linux/                # Linux-/Raspberry-Pi-Installer
-│  └─ windows/              # Windows-Planung / zukünftige Integration
+│  └─ windows/              # Windows-GUI, Portable-/Setup-Build
 ├─ tools/phnix_ota/         # OTA-Controller, Runtime-Helfer, Manifestwerkzeug
 ├─ devtools/                # Simulatoren und Laborwerkzeuge
 ├─ tests/                   # Regressionstests
