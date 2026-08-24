@@ -101,6 +101,12 @@ In das Projektverzeichnis wechseln:
 cd ~/FoxAir_updater
 ```
 
+Hilfe anzeigen:
+
+```sh
+./foxair-updater --help
+```
+
 Status des Originalsystems prüfen:
 
 ```sh
@@ -122,6 +128,17 @@ Ein echtes Update bleibt bewusst explizit bestätigt:
 ./foxair-updater update FW3.4.json --confirm
 ```
 
+Der Entwicklungs-/Abnahmetest für die bereits installierte V3.3 wird ebenfalls
+über den Launcher angeboten. Ein passiver Logger muss dabei tatsächlich laufen:
+
+```sh
+./foxair-updater same-version FW3.3.json --confirm
+```
+
+Der Launcher setzt intern die absichtlich langen Sicherheitsbestätigungen
+`PHNIX-C350-SAME-V33` und `PASSIVE-LOGGER-RUNNING`; `--confirm` bleibt als
+bewusste Bestätigung des Anwenders erhalten.
+
 Originalzustand vor begonnenem Firmwaretransfer wiederherstellen:
 
 ```sh
@@ -136,6 +153,33 @@ Installierten Git-Stand anzeigen:
 
 Die eigentliche Sicherheitslogik bleibt vollständig im bestehenden
 `phnix_local_ota_controller.py`; der Launcher dupliziert keine OTA-Logik.
+
+## Manifest erzeugen
+
+Liegt beispielsweise `FW3.4.bin` unter `~/FoxAir_updater/firmware/`, kann das
+passende Manifest direkt über den Launcher erzeugt werden:
+
+```sh
+./foxair-updater manifest FW3.4.bin \
+  --software-code 82400644 \
+  --display-version V3.4 \
+  --target-ssid 0063
+```
+
+Ohne `--output` wird automatisch `FW3.4.json` neben der Firmware erzeugt.
+`wire_version` wird aus der Display-Version abgeleitet (`V3.4` -> `0034`) und
+muss nicht angegeben werden. Der Manifest-Generator berechnet Größe, MD5 und
+SHA-256 selbst und validiert anschließend die Felder.
+
+Ein eigener Ausgabepfad ist weiterhin möglich:
+
+```sh
+./foxair-updater manifest FW3.4.bin \
+  --software-code 82400644 \
+  --display-version V3.4 \
+  --target-ssid 0063 \
+  --output /tmp/FW3.4.json
+```
 
 ## Vorhandene Installation aktualisieren
 
