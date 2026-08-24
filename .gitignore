@@ -32,3 +32,4 @@ device_secret*
 /build/
 /dist/
 /updater/windows/installer/Output/
+/updater/windows/app_icon.ico
