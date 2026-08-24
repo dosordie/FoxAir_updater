@@ -119,7 +119,7 @@ wird die Shell wieder verlassen.
 
 ## 4. Firmware sichern
 
-Die eigentliche Firmware-Datei liegt unter:
+Die eigentliche Firmware-Datei liegt – sofern sie seit dem letzten Download noch nicht durch einen neuen OTA-Auftrag entfernt wurde – unter:
 
 ```text
 /cache/phnixIot_device_OTA
@@ -136,6 +136,46 @@ Download in den aktuellen Ordner:
 ## 5. Zusätzliche Dateien sichern
 
 Zusätzlich können folgende Dateien bzw. Datenbereiche interessant sein.
+
+### Komfortweg mit installiertem FoxAir-Updater unter Linux / Raspberry Pi
+
+Wenn der FoxAir-Updater bereits installiert ist, können die Firmware aus dem LTE-Cache und alle unten aufgeführten Zusatzdateien mit einem einzigen **rein lesenden** Befehl gesichert werden:
+
+```bash
+cd ~/FoxAir_updater
+./foxair-updater download
+```
+
+Der Updater legt automatisch einen Zeitstempel-Unterordner an, zum Beispiel:
+
+```text
+~/FoxAir_updater/downloaded_firmware/20260824-151100/
+```
+
+Darin werden – soweit auf dem LTE-Modem vorhanden – gespeichert:
+
+```text
+phnixIot_device_OTA
+phnixIot4G
+phnixIot_device_OTA_INFO
+phnixIot_device_statisic
+MD5SUMS.txt
+SHA256SUMS.txt
+README.txt
+```
+
+Quellen auf dem LTE-Modem:
+
+```text
+/cache/phnixIot_device_OTA
+/data/phnixIot4G
+/data/phnixIot_device_OTA_INFO
+/data/phnixIot_device_statisic
+```
+
+Der Ordner `downloaded_firmware/` ist bewusst vom normalen Update-Eingangsordner `firmware/` getrennt und wird vom Git-Repository ignoriert.
+
+Fehlt `/cache/phnixIot_device_OTA` bereits, meldet der Befehl dies als Warnung und sichert die übrigen vorhandenen Diagnose-/Statusdateien trotzdem.
 
 ### `/data/phnixIot4G`
 
@@ -155,11 +195,11 @@ Zusätzlich können folgende Dateien bzw. Datenbereiche interessant sein.
 .\adb.exe pull /data/phnixIot_device_statisic
 ```
 
-Die Dateien werden jeweils in den Ordner heruntergeladen, in dem PowerShell aktuell geöffnet ist. Auch hierbei werden die Originaldateien auf dem LTE-Modem nicht verändert.
+Die Dateien werden bei den manuellen Windows-Befehlen jeweils in den Ordner heruntergeladen, in dem PowerShell aktuell geöffnet ist. Auch hierbei werden die Originaldateien auf dem LTE-Modem nicht verändert.
 
 ## 6. Gesicherte Dateien prüfen
 
-Nach dem Backup sollten sich die heruntergeladenen Dateien im aktuellen `platform-tools`-Ordner befinden.
+Nach dem Backup sollten sich die heruntergeladenen Dateien im aktuellen `platform-tools`-Ordner beziehungsweise beim FoxAir-Updater im erzeugten Zeitstempel-Unterordner unter `downloaded_firmware/` befinden.
 
 Zur Sicherheit empfiehlt es sich, die Originaldateien zunächst **unverändert zu archivieren**, bevor sie analysiert oder weiterverarbeitet werden.
 
@@ -174,6 +214,15 @@ Zur Sicherheit empfiehlt es sich, die Originaldateien zunächst **unverändert z
 > Dieser Abschnitt ist ein **alternativer Weg zur Windows-Anleitung**. Wer das Backup bereits unter Windows durchführt, braucht diesen Abschnitt nicht zusätzlich auszuführen.
 
 Die folgenden Schritte wurden für einen **Raspberry Pi mit Raspberry Pi OS / Debian-basiertem Linux** vorgesehen. Dort sind für das LTE-Modem in der Regel keine zusätzlichen Windows-/SIMCom-Treiber notwendig.
+
+Wer den FoxAir-Updater bereits installiert hat, kann nach funktionierender ADB-Verbindung direkt den in Abschnitt 5 beschriebenen Komfortbefehl verwenden:
+
+```bash
+cd ~/FoxAir_updater
+./foxair-updater download
+```
+
+Die folgenden manuellen Befehle bleiben als Alternative und für Systeme ohne installierten Updater dokumentiert.
 
 ## 7.1 ADB und USB-Werkzeuge installieren
 
@@ -214,7 +263,7 @@ wieder verlassen.
 
 ## 7.2 Backup-Ordner anlegen
 
-Damit alle Dateien an einer Stelle landen, empfiehlt sich ein eigener Ordner, z. B. im Home-Verzeichnis:
+Damit alle Dateien an einer Stelle landen, empfiehlt sich bei manueller Sicherung ein eigener Ordner, z. B. im Home-Verzeichnis:
 
 ```bash
 mkdir -p ~/lte_backup
