@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows-only safety wrapper around the unchanged PHNIX OTA controller.
+"""Windows-only safety wrapper around the shared PHNIX OTA controller.
 
 This file deliberately does not implement OTA protocol logic. It mirrors the
 Linux launcher safety shell around the controller:
@@ -8,7 +8,8 @@ Linux launcher safety shell around the controller:
 * backup of an existing /cache/phnixIot_device_OTA before update/same-version;
 * keep that backup on a non-terminal/failed run;
 * restore it after a successful same-version run or successful controller restore;
-* clear the pending cache backup after a successful full update.
+* distinguish a same-version terminal from a real update using host run-state;
+* keep full-update run-state in a stable LOCALAPPDATA location.
 
 All ADB calls are executed as argument lists. ADB_SERVER_SOCKET is inherited,
 so the same wrapper works with the Windows GUI's Remote-ADB mode.
@@ -60,12 +61,45 @@ def value_after(args: list[str], option: str) -> str | None:
     return args[index + 1]
 
 
-def windows_state_root() -> Path:
+def windows_app_state_root() -> Path:
     local = os.environ.get("LOCALAPPDATA")
     base = Path(local) if local else Path.home() / "AppData" / "Local"
-    path = base / "FoxAir Updater" / "windows-wrapper-state" / "original-cache"
+    path = base / "FoxAir Updater"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def windows_state_root() -> Path:
+    path = windows_app_state_root() / "windows-wrapper-state" / "original-cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def windows_ota_state_root() -> Path:
+    path = windows_app_state_root() / "ota-state"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def with_state_dir(args: list[str], state_dir: Path) -> list[str]:
+    if "--state-dir" in args:
+        return list(args)
+    return [*args, "--state-dir", str(state_dir)]
+
+
+def latest_update_phase(state_dir: Path) -> str:
+    files = [path for path in state_dir.glob("*/run-state.json") if path.is_file()]
+    if not files:
+        fail("Terminaler Host-Run-State des Updates fehlt")
+    latest = max(files, key=lambda path: path.stat().st_mtime_ns)
+    try:
+        value = json.loads(latest.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"Host-Run-State kann nicht gelesen werden: {exc}")
+    phase = value.get("phase")
+    if not isinstance(phase, str) or not phase:
+        fail("Host-Run-State enthält keinen terminalen Phasenwert")
+    return phase
 
 
 def adb_command(args: list[str]) -> list[str]:
@@ -260,10 +294,10 @@ def run_core(core: Path, args: list[str]) -> int:
 def main() -> int:
     args = sys.argv[1:]
     here = Path(__file__).resolve().parent
-    core = here / "phnix_local_ota_controller_core.py"
+    core = here / "phnix_local_ota_controller_hardened.py"
     manifest_tool = here / "create_firmware_manifest.py"
     if not core.is_file():
-        fail(f"Unveränderter Controller-Core fehlt: {core}")
+        fail(f"Gehärteter Controller fehlt: {core}")
     if not manifest_tool.is_file():
         fail(f"Manifest-Tool fehlt: {manifest_tool}")
 
@@ -278,11 +312,20 @@ def main() -> int:
         if not manifest_value:
             fail("--manifest fehlt beim Update")
         full_manifest_preflight(Path(manifest_value), manifest_tool)
+        state_dir = windows_ota_state_root()
+        run_args = with_state_dir(args, state_dir)
         backup_update_cache(base)
-        rc = run_core(core, args)
+        rc = run_core(core, run_args)
         if rc == 0:
-            clear_cache_pending()
-            note("Update terminal erfolgreich: offener Cache-Sicherungsmarker wurde gelöscht.")
+            phase = latest_update_phase(state_dir)
+            if phase == "same-version":
+                restore_update_cache(base)
+                note("Gleichversion über normalen Updatepfad erkannt; ursprünglicher Cache wurde wiederhergestellt.")
+            elif phase == "success":
+                clear_cache_pending()
+                note("Update terminal erfolgreich: offener Cache-Sicherungsmarker wurde gelöscht.")
+            else:
+                fail(f"Unerwarteter terminaler Updatezustand trotz Exit 0: {phase}")
         else:
             note(
                 "Update nicht erfolgreich terminal beendet; das Original-Cache-Backup bleibt "

@@ -46,6 +46,15 @@ class FirmwareManifestTests(unittest.TestCase):
             with self.assertRaises(ManifestError):
                 manifest.validate_file(firmware)
 
+    def test_rejects_firmware_larger_than_c357_limit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path, _ = self.make(Path(temp))
+            value = json.loads(path.read_text())
+            value["size"] = 0x4B000 + 1
+            path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ManifestError, "C357 limit"):
+                FirmwareManifest.load(path)
+
 
 if __name__ == "__main__":
     unittest.main()

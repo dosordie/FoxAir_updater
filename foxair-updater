@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTROLLER="$ROOT_DIR/tools/phnix_ota/phnix_local_ota_controller.py"
+CONTROLLER="$ROOT_DIR/tools/phnix_ota/phnix_local_ota_controller_hardened.py"
 MANIFEST_TOOL="$ROOT_DIR/tools/phnix_ota/create_firmware_manifest.py"
 ADB_BIN="${FOX_AIR_ADB:-adb}"
 STATE_DIR="$ROOT_DIR/phnix-ota-state"
@@ -19,7 +19,7 @@ FoxAir Updater
 Verwendung:
   ./foxair-updater status
   ./foxair-updater check MANIFEST
-  ./foxair-updater update MANIFEST [--full] --confirm
+  ./foxair-updater update MANIFEST --full --confirm
   ./foxair-updater same-version MANIFEST --confirm
   ./foxair-updater restore
   ./foxair-updater download
@@ -32,7 +32,6 @@ angegeben, wird automatisch im lokalen Ordner ./firmware/ gesucht.
 Beispiele:
   ./foxair-updater status
   ./foxair-updater check FW3.4.json
-  ./foxair-updater update FW3.4.json --confirm
   ./foxair-updater update FW3.4.json --full --confirm
   ./foxair-updater same-version FW3.3.json --confirm
   ./foxair-updater download
@@ -47,9 +46,9 @@ FoxAir fest 0063 (Modbus Unit-ID 0x63).
 --show erzeugt dasselbe Manifest nur im Speicher und gibt das JSON auf stdout
 aus. Es wird dabei keine Manifestdatei geschrieben.
 
---full beim Update analysiert die zum Manifest gehoerende Firmware erneut und
-vergleicht die extrahierte Identitaet sowie Dateigroesse und Hashes strikt mit
-dem Manifest, bevor ADB oder Busaktivitaet beginnt.
+--full ist bei einem echten Update verpflichtend. Die zum Manifest gehoerende
+Firmware wird unmittelbar vor ADB-/Busaktivitaet erneut analysiert; extrahierte
+Identitaet, Dateigroesse und Hashes muessen strikt mit dem Manifest uebereinstimmen.
 
 Der Befehl download liest die aktuell im LTE-Cache vorhandene Mainboard-Firmware
 sowie wichtige LTE-/OTA-Dateien aus und speichert sie unter
@@ -57,7 +56,8 @@ sowie wichtige LTE-/OTA-Dateien aus und speichert sie unter
 
 Vor update und same-version wird eine eventuell vorhandene Originaldatei
 /cache/phnixIot_device_OTA zusaetzlich intern gesichert. same-version stellt sie
-nach erfolgreicher Gleichversionsablehnung wieder her; restore stellt sie nach
+nach erfolgreicher Gleichversionsablehnung wieder her; dasselbe gilt, wenn der
+normale update-Pfad terminal als same-version endet. restore stellt sie nach
 einem bestaetigten Pre-C5A8-Recovery wieder auf den Ausgangszustand zurueck.
 Ein offener Sicherungszustand verhindert absichtlich, dass ein neuer Lauf das
 noch benoetigte Originalbackup ueberschreibt.
@@ -154,6 +154,27 @@ restore_update_cache() {
     fi
 
     die "Offener Cache-Sicherungszustand ist inkonsistent: present/absent Marker fehlt"
+}
+
+latest_update_phase() {
+    python3 - "$STATE_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+files = [p for p in root.glob("*/run-state.json") if p.is_file()]
+if not files:
+    raise SystemExit(1)
+latest = max(files, key=lambda p: p.stat().st_mtime_ns)
+try:
+    value = json.loads(latest.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+phase = value.get("phase")
+if not isinstance(phase, str) or not phase:
+    raise SystemExit(1)
+print(phase)
+PY
 }
 
 download_device_files() {
@@ -333,7 +354,7 @@ case "$command" in
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --manifest "$manifest"
         ;;
     update)
-        [[ $# -ge 3 && $# -le 4 ]] || die "Verwendung: ./foxair-updater update MANIFEST [--full] --confirm"
+        [[ $# -eq 4 ]] || die "Verwendung: ./foxair-updater update MANIFEST --full --confirm"
         manifest="$(resolve_manifest "$2")"
         full=0
         confirm=0
@@ -345,9 +366,8 @@ case "$command" in
             esac
         done
         (( confirm == 1 )) || die "Update benoetigt --confirm"
-        if (( full == 1 )); then
-            full_manifest_preflight "$manifest"
-        fi
+        (( full == 1 )) || die "Echte Updates benoetigen zwingend --full"
+        full_manifest_preflight "$manifest"
         require_adb
         backup_update_cache
         if python3 "$CONTROLLER" \
@@ -357,7 +377,14 @@ case "$command" in
             --execute \
             --confirm PHNIX-FULL-UPDATE \
             --state-dir "$STATE_DIR"; then
-            clear_update_cache_pending
+            phase="$(latest_update_phase)" || die "Terminaler Host-Run-State des Updates fehlt"
+            if [[ "$phase" == "same-version" ]]; then
+                restore_update_cache
+            elif [[ "$phase" == "success" ]]; then
+                clear_update_cache_pending
+            else
+                die "Unerwarteter terminaler Updatezustand trotz Exit 0: $phase"
+            fi
             exit 0
         else
             rc=$?

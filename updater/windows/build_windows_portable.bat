@@ -63,8 +63,10 @@ mkdir "%OUT%\backend\updater\common" || goto :err
 copy /y updater\__init__.py "%OUT%\backend\updater\__init__.py" >nul || goto :err
 xcopy /y /i updater\common\*.py "%OUT%\backend\updater\common\" >nul || goto :err
 
-rem Der echte Controller bleibt bytegleich erhalten und wird unter _core.py abgelegt.
+rem Der verifizierte Controller-Core bleibt bytegleich unter _core.py erhalten.
 copy /y tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" >nul || goto :err
+rem Die plattformuebergreifende Safety-Schicht umschliesst den unveraenderten Core.
+copy /y tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :err
 rem Die GUI startet unter dem bisherigen Dateinamen nur die Windows-Sicherheitshuette.
 copy /y updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :err
 copy /y tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\" >nul || goto :err
@@ -72,6 +74,7 @@ copy /y tools\phnix_ota\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\" 
 
 echo [5/9] Bytegleichheit des gemeinsamen Backends pruefen ...
 fc /b tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" >nul || goto :backenderr
+fc /b tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :backenderr
 fc /b updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :backenderr
 fc /b tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" >nul || goto :backenderr
 fc /b tools\phnix_ota\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook" >nul || goto :backenderr
@@ -108,9 +111,10 @@ if not exist "%OUT%\runtime\python.exe" (
 
 echo [7/9] Backend mit privater Runtime pruefen ...
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" --help >nul || goto :err
+"%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" --help >nul || goto :err
-echo [OK] Windows-Sicherheitshuette, Controller-Core und Manifest-Tool starten mit der privaten Runtime.
+echo [OK] Windows-Sicherheitshuette, Safety-Schicht, Controller-Core und Manifest-Tool starten mit der privaten Runtime.
 
 echo [8/9] Dokumentation und Lizenzen beilegen ...
 copy /y LICENSE "%OUT%\LICENSE" >nul || goto :err
