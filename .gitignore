@@ -27,3 +27,8 @@ device_secret*
 
 # Read-only downloads/backups pulled from the LTE modem
 /downloaded_firmware/
+
+# Windows/PyInstaller build artifacts
+/build/
+/dist/
+/updater/windows/installer/Output/
