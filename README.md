@@ -40,7 +40,7 @@ Der Linux-/Raspberry-Pi-Weg ist über einen Installer und einen einfachen Launch
 ```text
 ./foxair-updater status
 ./foxair-updater check MANIFEST
-./foxair-updater update MANIFEST --full --confirm
+./foxair-updater update MANIFEST --confirm
 ./foxair-updater restore
 ./foxair-updater manifest FIRMWARE ...
 ./foxair-updater version
@@ -51,10 +51,6 @@ Für Entwicklung und Abnahme existiert zusätzlich:
 ```text
 ./foxair-updater same-version MANIFEST --confirm
 ```
-
-Bei einem echten Linux-Update ist `--full` verpflichtend. Direkt vor ADB-/Busaktivität
-werden damit die aus der Firmware extrahierte Identität, Dateigröße und Hashes nochmals
-streng gegen das Manifest geprüft.
 
 ### Windows
 
@@ -78,8 +74,8 @@ Die aktuelle Entwicklungsfassung ist **v0.1.5**.
 > Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung
 > wurde mit der Windows-GUI weiterhin noch nicht live durchgeführt**.
 
-Die Windows-Version verwendet denselben Controller-Core und dieselbe gemeinsame Host-Safety-Schicht
-wie Linux. Details stehen unter [`updater/windows/README.md`](updater/windows/README.md).
+Die Windows-Version refaktoriert die gemeinsame OTA-Logik bewusst nicht. Details stehen unter
+[`updater/windows/README.md`](updater/windows/README.md).
 
 Windows-Releases werden über einen separaten manuellen Actions-Workflow veröffentlicht.
 Unter **Actions → Release Windows** wird nur die Zielversion eingegeben; anschließend erscheinen
@@ -115,8 +111,7 @@ Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
 
 ## Windows GUI v0.1.5
 
-Die Windows-Version verwendet denselben verifizierten Protokoll-Core und dieselbe
-plattformübergreifende Full-Update-Safety-Schicht:
+Die Windows-Version verwendet die gemeinsame OTA-Quelle weiterhin unverändert:
 
 ```text
 FoxAir_Updater.exe
@@ -127,8 +122,6 @@ private Python Runtime
         ↓
 Windows-Sicherheitswrapper
         ↓
-phnix_local_ota_controller_hardened.py
-        ↓
 phnix_local_ota_controller_core.py
         ↑ bytegleiche Kopie von
           tools/phnix_ota/phnix_local_ota_controller.py
@@ -138,11 +131,10 @@ extern ausgewählte adb.exe
 PHNIX LTE-Modem
 ```
 
-Die Windows-Sicherheitshülle bildet die Launcher-Funktionen nach, die unter Linux außerhalb
-des Controllers liegen. Die gemeinsame Hardened-Schicht ergänzt nur Host-Sicherheitslogik wie
-Speicherplatzprüfung, persistenten Run-State, passive Stallwarnung und die Regel, dass nach
-begonnenem C5A8 ein Host-/ADB-Fehler den originalen `phnixIot4G`-Dienst nicht mehr anhalten darf.
-Der verifizierte Protokoll-Core selbst bleibt dafür unverändert.
+Die zusätzliche Windows-Sicherheitshülle bildet nur die Launcher-Funktionen nach, die unter
+Linux außerhalb des Controllers liegen: Full-Abgleich direkt vor einem echten Update sowie
+Sicherung und Wiederherstellung eines eventuell vorhandenen LTE-Firmware-Caches. Der gemeinsame
+Controller selbst wird dafür **nicht verändert oder refaktoriert**.
 
 **ADB wird nicht mitgeliefert.** Die GUI enthält einen Link auf die offizielle Google-Seite
 für Android SDK Platform Tools und erlaubt anschließend die Auswahl einer vorhandenen `adb.exe`.
@@ -170,9 +162,9 @@ Die GUI bietet unter anderem:
 - Loganzeige, Logexport und Protokoll leeren;
 - dasselbe Programmlogo wie `FoxAir_Control` für EXE, Fenster und Setup.
 
-Beim Portable-Build werden Controller-Core, gemeinsame Safety-Schicht, Runtime-Helfer und
-`updater/common/*.py` aus dem Repository kopiert und mit `fc /b` geprüft. Der Controller-Core
-bleibt dabei bytegleich mit `tools/phnix_ota/phnix_local_ota_controller.py`.
+Beim Portable-Build werden der gemeinsame Controller, Runtime-Helfer und `updater/common/*.py`
+bytegleich aus dem Repository kopiert und mit `fc /b` geprüft. Damit entsteht bewusst keine
+zweite Windows-OTA-Implementierung.
 
 ### Remote ADB
 
@@ -185,8 +177,8 @@ adb -a -P 5038 nodaemon server
 ```
 
 Zum Beenden auf dem Raspberry Pi **Strg+C** drücken. In der Windows-GUI werden nur IP-Adresse
-und Port eingetragen. Intern setzt die GUI `ADB_SERVER_SOCKET`, sodass auch der gemeinsame
-Controller den entfernten ADB-Server nutzt.
+und Port eingetragen. Intern setzt die GUI `ADB_SERVER_SOCKET`, sodass auch der unveränderte
+gemeinsame Controller den entfernten ADB-Server nutzt.
 
 Build-/Release-Anleitung:
 [`updater/windows/README.md`](updater/windows/README.md)
@@ -265,10 +257,8 @@ Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
 SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 ```
 
-Vor dem ersten C5A8 arbeitet der Updater weiterhin fail-closed: nicht eindeutig sichere
-Zustände führen zu einem geschützten `Guarded Hold`. Ab dem ersten C5A8 ist dagegen der
-originale `phnixIot4G`-Dienst für den laufenden Boardtransfer autoritativ; ein Host-/ADB-/Helper-
-Fehler darf ihn dann nicht mehr automatisch anhalten. Der Host beobachtet und protokolliert nur.
+Der Controller arbeitet fail-closed. Nicht eindeutig terminale Zustände führen zu
+einem geschützten `Guarded Hold`, statt automatisch aggressiv aufzuräumen.
 
 Der bekannte V3.3-Gleichversionstest prüft den frühen Handshake und die sichere
 Ablehnung einer bereits installierten Version. Er beweist ausdrücklich nicht den
