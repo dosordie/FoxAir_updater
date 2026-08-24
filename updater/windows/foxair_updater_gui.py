@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.1.4"
 ADB_URL = "https://developer.android.com/tools/releases/platform-tools?hl=de#downloads"
 HOWTO_URL = "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md"
 
@@ -213,8 +213,11 @@ class MainWindow(QMainWindow):
         self.backup_path = QLineEdit()
         button = QPushButton("Zielordner…")
         button.clicked.connect(self._browse_backup)
+        open_button = QPushButton("Zielordner öffnen")
+        open_button.clicked.connect(self._open_backup_folder)
         row.addWidget(self.backup_path, 1)
         row.addWidget(button)
+        row.addWidget(open_button)
         layout.addLayout(row)
 
         self.backup_fw = QCheckBox("Firmware")
@@ -464,6 +467,19 @@ class MainWindow(QMainWindow):
         if directory:
             self.backup_path.setText(directory)
             self.settings.setValue("backup", directory)
+
+    def _open_backup_folder(self):
+        value = self.backup_path.text().strip()
+        target = Path(value) if value else Path.home() / "FoxAir_LTE_Backup"
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            QMessageBox.critical(self, "Zielordner", f"Zielordner konnte nicht angelegt werden:\n{error}")
+            return
+        self.backup_path.setText(str(target))
+        self.settings.setValue("backup", str(target))
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target.resolve()))):
+            QMessageBox.warning(self, "Zielordner", "Zielordner konnte nicht im Explorer geöffnet werden.")
 
     def _pick_manifest(self, field):
         file_name, _ = QFileDialog.getOpenFileName(
