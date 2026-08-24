@@ -100,6 +100,7 @@ jobs:
         run: |
           python -m py_compile updater/windows/foxair_updater_gui.py
           python -m py_compile updater/windows/foxair_updater_app.py
+          python -m py_compile updater/windows/release_check.py
 
       - name: Build portable package
         shell: cmd
@@ -130,7 +131,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.email '41898233+github-actions[bot]@users.noreply.github.com'
           git add updater/windows/foxair_updater_app.py updater/windows/foxair_updater_gui.py updater/windows/build_windows_portable.bat updater/windows/installer/FoxAir_Updater.iss
 
           $PSNativeCommandUseErrorActionPreference = $false
@@ -156,7 +157,9 @@ jobs:
             Experimentelle Windows-Version des FoxAir Updaters.
 
             - Portable ZIP und Setup EXE
-            - ADB ist nicht enthalten; die GUI verweist auf die offiziellen Android Platform Tools.
+            - ADB ist nicht enthalten; die GUI verweist zuerst auf den SIMCom USB-Treiber und danach auf die offiziellen Android Platform Tools.
+            - Einfache read-only Updateprüfung gegen das neueste GitHub Release; Download/Installation erfolgen nicht automatisch.
+            - ADB-Pfad, Remote-ADB-Modus, Raspberry-Pi-IP/Port, Backup-Ziel und zuletzt verwendete Firmware-/Manifestordner werden persistent gespeichert.
             - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi.
             - Benutzerfreundliche Dry-Run-/OTA-Statusanzeige mit farbigen Prüfschritten und Fortschrittsbalken.
             - Der Windows-/Remote-ADB-Pfad wurde real bis zur sicheren V3.3→V3.3-Gleichversionsablehnung bestätigt; dabei wurden keine Firmwaredaten übertragen.
