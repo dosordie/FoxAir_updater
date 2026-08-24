@@ -47,7 +47,7 @@ class FirmwareManifest:
             raise ManifestError("firmware_file must be a plain filename")
         if not re.fullmatch(r"[0-9A-Z]{8}", self.software_code):
             raise ManifestError("software_code must contain exactly 8 uppercase characters")
-        if not re.fullmatch(r"V[0-9]\\.[0-9]", self.display_version):
+        if not re.fullmatch(r"V[0-9]\.[0-9]", self.display_version):
             raise ManifestError("display_version must use the Vn.n form")
         derived = f"00{self.display_version[1]}{self.display_version[3]}"
         if self.wire_version != derived:
