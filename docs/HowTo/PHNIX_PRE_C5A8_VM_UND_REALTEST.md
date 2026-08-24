@@ -1,6 +1,11 @@
 # PHNIX-Generalprobe bis vor C5A8
 
-Stand: 2026-08-23
+Stand: 2026-08-24
+
+> [!NOTE]
+> Für Endanwender steht inzwischen zusätzlich eine Windows-GUI unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases) zur Verfügung. Dort sind ADB-Verbindung, Originalstatus und Backup real getestet.
+>
+> Die hier beschriebene Pre-C5A8-Generalprobe bleibt ein **separater Labor-/Entwicklungspfad**. Die Windows-GUI ersetzt diesen Test nicht. Ein echter Firmware-Versionswechsel ist weiterhin nicht live bestätigt.
 
 ## Ziel
 
@@ -128,6 +133,8 @@ Diese Punkte bleiben eigene, später separat freizugebende Risikostufen.
 ## Zugehörige Dokumente
 
 - [`PHNIX_PRE_C5A8_REALTEST_RUNBOOK.md`](PHNIX_PRE_C5A8_REALTEST_RUNBOOK.md)
+- [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md)
+- [`firmware_backup_lte.md`](firmware_backup_lte.md)
 - [`PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md)
 - [`PHNIX_CANCEL_PROBE_LIVE_RESULT.md`](../reverse_engineering/PHNIX_CANCEL_PROBE_LIVE_RESULT.md)
 - [`phnix_ota_sender.md`](phnix_ota_sender.md)
