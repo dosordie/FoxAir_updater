@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""Conservative safety layer around the verified PHNIX OTA controller.
+"""Small host-side safety layer around the verified PHNIX OTA controller.
 
-The underlying controller and its build-specific runtime breakpoints remain
-unchanged.  This layer only hardens host-side behaviour around a real full
-update: storage preflight, persistent host run-state, passive C5A8 stall
-warnings, transfer/promotion UI, and the point-of-no-return rule that the
-original phnixIot4G service must never be stopped after C5A8 has started.
+PR #1 deliberately does not change the OTA lifecycle after C5A8.  The original
+controller remains authoritative for helper hold/cleanup behaviour.  This module
+adds only read-only/preflight checks and passive observation:
+
+* free-space preflight for /data and /cache;
+* persistent informational host run-state;
+* passive C5A8 stall warnings;
+* explicit UI distinction between 100 % transport and final OTA completion.
+
+Post-C5A8 disconnect/supervisor/recovery behaviour is intentionally deferred to
+a separate follow-up change after real modem process-lifetime tests.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -43,17 +47,35 @@ C5A8_STALL_WARNING_SECONDS = 60.0
 HOST_RUN_STATE_SCHEMA = "foxair-ota-run-state-v1"
 
 
+def parse_df_output(output: str, path: str) -> dict[str, object]:
+    """Select the last syntactically valid df data row, ignoring headers/noise."""
+    for raw_line in reversed(output.splitlines()):
+        parts = raw_line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            total_kib = int(parts[1])
+            used_kib = int(parts[2])
+            available_kib = int(parts[3])
+        except ValueError:
+            continue
+        return {
+            "filesystem": parts[0],
+            "total_bytes": total_kib * 1024,
+            "used_bytes": used_kib * 1024,
+            "free_bytes": available_kib * 1024,
+            "raw": raw_line,
+        }
+    raise core.OtaError(f"could not parse free storage for {path}: {output!r}")
+
+
 def remote_filesystem_stat(adb, path: str) -> dict[str, object]:
-    """Return filesystem identity and free bytes using BusyBox-compatible df."""
-    line = adb.shell(f"df -k {path} 2>/dev/null | tail -n 1")
-    parts = line.split()
-    if len(parts) < 4:
-        raise core.OtaError(f"could not parse free storage for {path}: {line!r}")
-    try:
-        free_bytes = int(parts[3]) * 1024
-    except ValueError as error:
-        raise core.OtaError(f"invalid free storage value for {path}: {parts[3]!r}") from error
-    return {"filesystem": parts[0], "free_bytes": free_bytes, "raw": line}
+    """Return filesystem identity and free bytes from BusyBox-compatible df."""
+    # Do not rely on a remote shell pipeline such as `tail -n 1`.  The real
+    # BusyBox shell supports it, but test transports/simulators may return the
+    # command output before pipeline processing.  Parsing belongs on the host.
+    output = adb.shell(f"df -k {path} 2>/dev/null")
+    return parse_df_output(output, path)
 
 
 def add_storage_preflight(checks: dict, adb, manifest) -> dict:
@@ -106,7 +128,7 @@ def add_storage_preflight(checks: dict, adb, manifest) -> dict:
 
 
 def write_host_run_state(path: Path, **fields) -> None:
-    """Persist informational point-of-no-return state atomically on the host."""
+    """Persist informational OTA observation state atomically on the host."""
     current: dict[str, object] = {"schema": HOST_RUN_STATE_SCHEMA}
     if path.is_file():
         try:
@@ -123,276 +145,181 @@ def write_host_run_state(path: Path, **fields) -> None:
     temporary.replace(path)
 
 
-def remote_transfer_started(adb) -> bool:
-    value = adb.shell(
-        f"if test -f {core.REMOTE_TRANSFER_STARTED}; then echo STARTED; else echo NOT_STARTED; fi",
-        check=False,
-    )
-    return value.strip() == "STARTED"
+class RunObserver:
+    """Observe core events without changing helper, GDB or board control flow."""
 
+    def __init__(self) -> None:
+        self.active = False
+        self.manifest = None
+        self.state_path: Path | None = None
+        self.transfer_started = False
+        self.transfer_complete_announced = False
+        self.highest_confirmed_offset = 0
+        self.last_progress_at = 0.0
+        self.last_stall_warning_at = 0.0
 
-def run_update(args, adb) -> None:
-    """Hardened copy of the core full-update host loop; board protocol is unchanged."""
-    checks = core.preflight(adb, args.firmware, require_helper=False, manifest=args.firmware_manifest)
-    checks = add_storage_preflight(checks, adb, args.firmware_manifest)
-    checks["local_helper_sha256"] = core.validate_local_runtime_helper(args.runtime_helper)
-    core.print_event("preflight", **checks)
-    if not checks["ok"]:
-        raise core.OtaError("preflight failed: " + "; ".join(checks["failures"]))
-    if not args.execute:
-        core.print_event("dry-run-complete", message="No modem or bus state was changed")
-        return
+    def start(self, manifest) -> None:
+        self.active = True
+        self.manifest = manifest
+        self.state_path = None
+        self.transfer_started = False
+        self.transfer_complete_announced = False
+        self.highest_confirmed_offset = 0
+        self.last_progress_at = time.monotonic()
+        self.last_stall_warning_at = 0.0
 
-    simulated = adb.shell(f"test -f {core.REMOTE_SIM_MARKER}; echo $?") == "0"
-    expected_confirm = "VM-FULL-UPDATE" if simulated else "PHNIX-FULL-UPDATE"
-    if args.confirm != expected_confirm:
-        raise core.OtaError(f"confirmation must be {expected_confirm}")
-    core.install_runtime_helper(adb, args.runtime_helper)
+    def stop(self) -> None:
+        self.active = False
 
-    run_state_path: Path | None = None
-    try:
-        state_dir = args.state_dir / time.strftime("%Y%m%d-%H%M%S")
-        core.save_remote_state(adb, state_dir)
-        run_state_path = state_dir / "run-state.json"
-        write_host_run_state(
-            run_state_path,
-            phase="prepared",
-            transfer_started=False,
-            point_of_no_return=False,
-            highest_confirmed_offset=0,
-            software_code=args.firmware_manifest.software_code,
-            wire_version=args.firmware_manifest.wire_version,
-            firmware_md5=args.firmware_manifest.md5,
-            firmware_size=args.firmware_manifest.size,
-        )
-        core.print_event("state-backed-up", directory=str(state_dir))
-        core.stage_firmware(adb, args.firmware, args.firmware_manifest)
+    def _write(self, **fields) -> None:
+        if self.state_path is not None:
+            write_host_run_state(self.state_path, **fields)
 
-        payload = core.command_payload(args.firmware_url, args.firmware_manifest)
-        with tempfile.TemporaryDirectory() as temp_dir:
-            command_file = Path(temp_dir) / "ota-command.json"
-            command_file.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-            adb.push(command_file, core.REMOTE_COMMAND)
-    except BaseException:
-        core.remove_local_ota_artifacts(adb, remove_helper=True)
-        raise
+    def observe(self, event: str, fields: dict) -> None:
+        if not self.active:
+            return
+        now = time.monotonic()
 
-    helper_command = (
-        f"{core.REMOTE_HELPER} run --build-id {core.EXPECTED_BUILD_ID} "
-        f"--command {core.REMOTE_COMMAND} --status {core.REMOTE_STATUS} "
-        "--allow-publish 0023,0053,0083"
-    )
-    adb.shell(f"rm -f {core.REMOTE_STATUS}")
-    core.print_event("hook-start", allowed_publish=["0023", "0053", "0083"])
-    helper = adb.popen_shell(helper_command)
+        if event == "state-backed-up":
+            directory = fields.get("directory")
+            if isinstance(directory, str) and directory:
+                self.state_path = Path(directory) / "run-state.json"
+                manifest = self.manifest
+                self._write(
+                    phase="prepared",
+                    terminal=False,
+                    transfer_started=False,
+                    point_of_no_return=False,
+                    highest_confirmed_offset=0,
+                    software_code=getattr(manifest, "software_code", None),
+                    wire_version=getattr(manifest, "wire_version", None),
+                    firmware_md5=getattr(manifest, "md5", None),
+                    firmware_size=getattr(manifest, "size", None),
+                )
+            return
 
-    phase_started = time.monotonic()
-    previous_phase = None
-    last_offset = -1
-    highest_confirmed_offset = 0
-    last_progress_at = time.monotonic()
-    last_stall_warning_at = 0.0
-    transfer_started = False
-    transfer_complete_announced = False
-    safe_terminal = False
-    guarded_hold = False
-    helper_exit_seen_at = None
-    try:
-        while True:
-            status = core.remote_status(adb, allow_transient_info=True)
-            hook = status["hook"]
-            info = status["ota_info"]
-            core.print_event("status", **status)
-            now = time.monotonic()
+        if event != "status":
+            return
 
-            phase = hook.get("phase", "unknown")
-            if phase != previous_phase:
-                previous_phase = phase
-                phase_started = now
-                core.print_event("phase-change", phase=phase)
+        hook = fields.get("hook", {})
+        info = fields.get("ota_info", {})
+        if not isinstance(hook, dict) or not isinstance(info, dict):
+            return
+        phase = hook.get("phase")
+        if not isinstance(phase, str) or not phase:
+            phase = "unknown"
 
-            if phase == "c5a8" and not transfer_started:
-                transfer_started = True
-                last_progress_at = now
-                if run_state_path is not None:
-                    write_host_run_state(
-                        run_state_path,
-                        phase="c5a8",
-                        transfer_started=True,
-                        point_of_no_return=True,
-                    )
+        if phase == "c5a8" and not self.transfer_started:
+            self.transfer_started = True
+            self.last_progress_at = now
 
-            observed_offset = info.get("offset") if info.get("crc_ok") is True else None
-            observed_length = info.get("length") if info.get("crc_ok") is True else None
-            if isinstance(observed_offset, int) and observed_offset != last_offset:
-                last_offset = observed_offset
-                if transfer_started and observed_offset >= highest_confirmed_offset:
-                    highest_confirmed_offset = observed_offset
-                    last_progress_at = now
-                    if run_state_path is not None:
-                        write_host_run_state(
-                            run_state_path,
-                            phase=phase,
-                            transfer_started=True,
-                            point_of_no_return=True,
-                            highest_confirmed_offset=highest_confirmed_offset,
-                            ota_length=observed_length,
-                        )
-
-            if (
-                transfer_started
-                and not transfer_complete_announced
-                and isinstance(observed_offset, int)
-                and isinstance(observed_length, int)
-                and observed_length > 0
-                and observed_offset >= observed_length
-            ):
-                transfer_complete_announced = True
-                core.print_event("transfer-complete", offset=observed_offset, length=observed_length)
-                if run_state_path is not None:
-                    write_host_run_state(
-                        run_state_path,
-                        phase="promotion",
-                        transfer_started=True,
-                        point_of_no_return=True,
-                        highest_confirmed_offset=highest_confirmed_offset,
-                        ota_length=observed_length,
-                    )
-
-            if (
-                transfer_started
-                and phase == "c5a8"
-                and now - last_progress_at >= C5A8_STALL_WARNING_SECONDS
-                and now - last_stall_warning_at >= C5A8_STALL_WARNING_SECONDS
-            ):
-                last_stall_warning_at = now
-                core.print_event(
-                    "warning",
-                    message=(
-                        "C5A8-Fortschritt seit mindestens 60 Sekunden unveraendert; "
-                        "Originaldienst laeuft weiter, kein automatischer Eingriff"
-                    ),
-                    offset=highest_confirmed_offset,
-                    length=observed_length,
+        offset = info.get("offset") if info.get("crc_ok") is True else None
+        length = info.get("length") if info.get("crc_ok") is True else None
+        if isinstance(offset, int) and offset >= self.highest_confirmed_offset:
+            if offset > self.highest_confirmed_offset:
+                self.highest_confirmed_offset = offset
+                self.last_progress_at = now
+            if self.transfer_started:
+                self._write(
+                    phase=phase,
+                    transfer_started=True,
+                    point_of_no_return=True,
+                    highest_confirmed_offset=self.highest_confirmed_offset,
+                    ota_length=length,
                 )
 
-            if hook.get("terminal") is True:
-                safe_terminal = phase in {
-                    "success", "failed", "parser-rejected", "precondition-rejected",
-                    "same-version",
-                }
-                if run_state_path is not None:
-                    write_host_run_state(
-                        run_state_path,
-                        phase=phase,
-                        terminal=True,
-                        transfer_started=transfer_started,
-                        point_of_no_return=transfer_started,
-                        highest_confirmed_offset=highest_confirmed_offset,
-                    )
-                if phase == "success":
-                    if hook.get("board_ota_step") != 12:
-                        safe_terminal = False
-                        raise core.OtaError("success was reported without confirmed board_ota_step 12")
-                    core.print_event("complete", offset=info.get("offset"), length=info.get("length"))
-                    return
-                if phase == "same-version":
-                    core.print_event(
-                        "warning",
-                        message="Gleiche Firmware erkannt - keine Firmwaredaten uebertragen",
-                    )
-                    return
-                raise core.OtaError(f"terminal OTA state: {phase}")
+        if (
+            self.transfer_started
+            and not self.transfer_complete_announced
+            and isinstance(offset, int)
+            and isinstance(length, int)
+            and length > 0
+            and offset >= length
+        ):
+            self.transfer_complete_announced = True
+            _ORIGINAL_PRINT_EVENT("transfer-complete", offset=offset, length=length)
+            self._write(
+                phase="promotion-observed",
+                transfer_started=True,
+                point_of_no_return=True,
+                highest_confirmed_offset=self.highest_confirmed_offset,
+                ota_length=length,
+            )
 
-            if helper.poll() is not None:
-                if helper_exit_seen_at is None:
-                    helper_exit_seen_at = now
-                if now - helper_exit_seen_at < 1.0:
-                    time.sleep(args.poll_interval)
-                    continue
-                raise core.OtaError(f"runtime helper exited unexpectedly with code {helper.returncode}")
+        if (
+            self.transfer_started
+            and phase == "c5a8"
+            and now - self.last_progress_at >= C5A8_STALL_WARNING_SECONDS
+            and now - self.last_stall_warning_at >= C5A8_STALL_WARNING_SECONDS
+        ):
+            self.last_stall_warning_at = now
+            _ORIGINAL_PRINT_EVENT(
+                "warning",
+                message=(
+                    "C5A8-Fortschritt seit mindestens 60 Sekunden unveraendert; "
+                    "nur passive Warnung, der bestehende OTA-Ablauf wird nicht veraendert"
+                ),
+                offset=self.highest_confirmed_offset,
+                length=length,
+            )
 
-            if phase == "c5a8":
-                time.sleep(args.poll_interval)
-                continue
-            phase_limit = {
-                "c350": args.handshake_timeout,
-                "c357": args.handshake_timeout,
-            }.get(phase, args.start_timeout)
-            if now - phase_started > phase_limit:
-                raise core.OtaError(f"phase watchdog expired in {phase}")
-            time.sleep(args.poll_interval)
-    except BaseException as error:
-        if not safe_terminal:
-            started = transfer_started
-            if not started:
-                try:
-                    started = remote_transfer_started(adb)
-                except BaseException:
-                    started = False
-            if started:
-                transfer_started = True
-                if run_state_path is not None:
-                    write_host_run_state(
-                        run_state_path,
-                        phase="host-supervision-lost",
-                        terminal=False,
-                        transfer_started=True,
-                        point_of_no_return=True,
-                        highest_confirmed_offset=highest_confirmed_offset,
-                        error=str(error),
-                    )
-                core.print_event(
-                    "warning",
-                    message=(
-                        "Host/ADB-Ueberwachung nach begonnenem C5A8 verloren; "
-                        "der originale phnixIot4G-Dienst wird nicht angehalten"
-                    ),
-                )
-            else:
-                adb.shell(f"{core.REMOTE_HELPER} hold --status {core.REMOTE_STATUS}", check=False)
-                guarded_hold = True
-                core.print_event(
-                    "guarded-hold",
-                    message="Active OTA was frozen fail-closed; cloud and watchdog guards remain active",
-                )
-        raise
-    finally:
-        if safe_terminal and helper.poll() is None:
-            adb.shell(f"{core.REMOTE_HELPER} stop --status {core.REMOTE_STATUS}", check=False)
-            try:
-                helper.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                core.print_event("warning", message="runtime helper did not exit within 10 seconds")
-        if safe_terminal:
-            core.remove_local_ota_artifacts(adb, remove_helper=True)
-            core.print_event("hook-stopped")
-            runtime = core.verify_original_runtime(adb)
-            if not runtime["ok"]:
-                raise core.OtaError(f"original LTE runtime was not fully restored: {runtime}")
-            core.print_event("services-restored", **runtime)
-        elif guarded_hold:
-            core.print_event("manual-recovery-required", status=core.REMOTE_STATUS)
+        if hook.get("terminal") is True:
+            self._write(
+                phase=phase,
+                terminal=True,
+                transfer_started=self.transfer_started,
+                point_of_no_return=self.transfer_started,
+                highest_confirmed_offset=self.highest_confirmed_offset,
+                ota_length=length,
+            )
+
+
+_OBSERVER = RunObserver()
+_ORIGINAL_PRINT_EVENT = core.print_event
+_ORIGINAL_HUMAN_EVENT = core._human_event
+_ORIGINAL_RUN_UPDATE = core.run_update
 
 
 def _patched_human_event(event: str, fields: dict) -> None:
+    if event == "storage-preflight":
+        print(core._paint("[OK] Freier Speicher fuer OTA-Staging ausreichend", core.GREEN), flush=True)
+        return
     if event == "transfer-complete":
         offset = fields.get("offset")
         length = fields.get("length")
         if isinstance(offset, int) and isinstance(length, int):
             text = (
                 f"[..] 100 % Firmware uebertragen ({offset:,} / {length:,} Byte) - "
-                "Mainboard programmiert und verifiziert intern weiter"
+                "Mainboard kann intern noch programmieren und verifizieren"
             ).replace(",", ".")
         else:
-            text = "[..] Firmware uebertragen - Mainboard programmiert und verifiziert intern weiter"
+            text = "[..] Firmware uebertragen - Mainboard kann intern noch programmieren und verifizieren"
         print(core._paint(text, core.CYAN), flush=True)
         return
     _ORIGINAL_HUMAN_EVENT(event, fields)
 
 
-_ORIGINAL_HUMAN_EVENT = core._human_event
+def _observed_print_event(event: str, **fields) -> None:
+    _OBSERVER.observe(event, fields)
+    _ORIGINAL_PRINT_EVENT(event, **fields)
+
+
+def run_update(args, adb) -> None:
+    """Add host checks/observation, then delegate the OTA lifecycle unchanged."""
+    storage = add_storage_preflight({"ok": True, "failures": []}, adb, args.firmware_manifest)
+    core.print_event("storage-preflight", **storage["storage_preflight"])
+    if not storage["ok"]:
+        raise core.OtaError("preflight failed: " + "; ".join(storage["failures"]))
+
+    _OBSERVER.start(args.firmware_manifest)
+    try:
+        return _ORIGINAL_RUN_UPDATE(args, adb)
+    finally:
+        _OBSERVER.stop()
+
+
 core._human_event = _patched_human_event
+core.print_event = _observed_print_event
 core.run_update = run_update
 
 
