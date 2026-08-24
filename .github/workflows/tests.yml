@@ -21,6 +21,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m unittest discover -s tests -p "test_*.py"
 
+  vm-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python tests/run_phnix_vm_matrix.py
+
   shell:
     runs-on: ubuntu-latest
     steps:
