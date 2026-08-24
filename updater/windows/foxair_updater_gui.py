@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.3"
 ADB_URL = "https://developer.android.com/tools/releases/platform-tools?hl=de#downloads"
 HOWTO_URL = "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md"
 
@@ -500,6 +500,14 @@ class MainWindow(QMainWindow):
             return None
         return path
 
+    def _process_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
+        env.pop("ADB_SERVER_SOCKET", None)
+        env.update(self._adb_env())
+        return env
+
     def _run(self, op, command, cwd=None):
         if self.busy:
             return
@@ -512,11 +520,6 @@ class MainWindow(QMainWindow):
 
         def work():
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-            env = os.environ.copy()
-            env["PYTHONUTF8"] = "1"
-            env["PYTHONUNBUFFERED"] = "1"
-            env.pop("ADB_SERVER_SOCKET", None)
-            env.update(adb_env)
             output = []
             try:
                 process = subprocess.Popen(
@@ -528,13 +531,57 @@ class MainWindow(QMainWindow):
                     encoding="utf-8",
                     errors="replace",
                     creationflags=flags,
-                    env=env,
+                    env=self._process_env(),
                 )
                 for line in process.stdout or []:
                     line = line.rstrip("\r\n")
                     output.append(line)
                     self.signals.line.emit(line)
                 self.signals.done.emit(op, process.wait(), "\n".join(output))
+            except Exception as error:
+                self.signals.line.emit("[Prozessfehler] " + str(error))
+                self.signals.done.emit(op, -1, str(error))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _run_sequence(self, op, commands, cwd=None):
+        """Run commands directly and sequentially without cmd.exe quoting/parsing."""
+        if self.busy:
+            return
+        self.busy = True
+        self._buttons()
+        adb_env = self._adb_env()
+        if adb_env:
+            self._log("[Remote ADB] ADB_SERVER_SOCKET=" + adb_env["ADB_SERVER_SOCKET"])
+
+        def work():
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            output = []
+            try:
+                for command in commands:
+                    self.signals.line.emit(
+                        "$ " + subprocess.list2cmdline([str(item) for item in command])
+                    )
+                    process = subprocess.Popen(
+                        command,
+                        cwd=cwd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=flags,
+                        env=self._process_env(),
+                    )
+                    for line in process.stdout or []:
+                        line = line.rstrip("\r\n")
+                        output.append(line)
+                        self.signals.line.emit(line)
+                    code = process.wait()
+                    if code != 0:
+                        self.signals.done.emit(op, code, "\n".join(output))
+                        return
+                self.signals.done.emit(op, 0, "\n".join(output))
             except Exception as error:
                 self.signals.line.emit("[Prozessfehler] " + str(error))
                 self.signals.done.emit(op, -1, str(error))
@@ -615,18 +662,25 @@ class MainWindow(QMainWindow):
                 else "Lokal"
             )
             if device:
-                self.adb_state.setText(f"<b>ADB verbunden ({source}):</b><br><code>{device}</code>")
+                self.adb_state.setText(
+                    f'<span style="color:#16803a;"><b>ADB verbunden ({source}):</b><br>'
+                    f'<code>{device}</code></span>'
+                )
                 self.pending_after_reconnect = False
             elif offline and not self.pending_after_reconnect:
                 self.pending_after_reconnect = True
-                self.adb_state.setText(f"ADB-Gerät über {source} ist offline – reconnect wird versucht…")
+                self.adb_state.setText(
+                    f'<span style="color:#b26a00;">ADB-Gerät über {source} ist offline – '
+                    'reconnect wird versucht…</span>'
+                )
                 self._reconnect(auto=True)
             else:
-                self.adb_state.setText(
+                message = (
                     f"Kein ADB-Gerät über {source} im Status device erkannt."
                     if not offline
                     else f"ADB-Gerät über {source} bleibt offline."
                 )
+                self.adb_state.setText(f'<span style="color:#b42318;">{message}</span>')
         elif op == "reconnect":
             if code == 0:
                 adb = self._adb_path()
@@ -636,11 +690,20 @@ class MainWindow(QMainWindow):
             try:
                 data = json.loads(output)
                 checks = data.get("checks", {})
-                lines = [("✓ " if ok else "✗ ") + name for name, ok in checks.items()]
-                self.status_text.setText(
-                    ("<b>OK</b><br>" if data.get("original_ok") else "<b>NICHT OK</b><br>")
-                    + "<br>".join(lines)
+                lines = [
+                    (
+                        f'<span style="color:#16803a;">✓ {name}</span>'
+                        if ok
+                        else f'<span style="color:#b42318;">✗ {name}</span>'
+                    )
+                    for name, ok in checks.items()
+                ]
+                headline = (
+                    '<span style="color:#16803a;"><b>OK</b></span><br>'
+                    if data.get("original_ok")
+                    else '<span style="color:#b42318;"><b>NICHT OK</b></span><br>'
                 )
+                self.status_text.setText(headline + "<br>".join(lines))
             except Exception:
                 self.status_text.setText("Status beendet – Details im Log.")
         elif op == "manifest-preview-full":
@@ -713,10 +776,12 @@ class MainWindow(QMainWindow):
             items.append(("/data/phnixIot4G", "phnixIot4G"))
         if not items:
             return
-        command_text = " && ".join(
-            f'"{adb}" pull "{remote}" "{target / name}"' for remote, name in items
-        )
-        self._run("backup", ["cmd.exe", "/d", "/s", "/c", command_text])
+
+        commands = [
+            [str(adb), "pull", remote, str(target / name)]
+            for remote, name in items
+        ]
+        self._run_sequence("backup", commands)
 
     def _status_run(self):
         self._backend("status", ["run", "--check", "status"])
