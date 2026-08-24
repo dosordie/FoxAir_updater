@@ -1,76 +1,168 @@
 # FoxAir Updater
 
-Firmware research, reverse engineering and update tooling for FoxAir / PHNIX heat-pump systems.
+Experimentelles Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 
-This repository intentionally separates firmware-related work from [`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), which remains focused on the FoxAir Control application and normal operational control/diagnostics.
+> [!CAUTION]
+> ## Experimentell – echtes Versionsupdate noch nicht live validiert
+>
+> Dieses Projekt befindet sich im **Entwicklungs- und Teststadium**.
+> Ein vollständiges Firmwareupdate von einer installierten Mainboard-Version auf
+> eine andere Version wurde auf realer Hardware **noch nicht erfolgreich durchgeführt
+> und bestätigt**.
+>
+> Der reale Ablauf wurde bislang nur mit **V3.3 → V3.3** getestet. Das Mainboard
+> hat dieses Firmwareangebot erwartungsgemäß abgelehnt, weil V3.3 bereits installiert
+> war. Dabei wurden keine Firmwareblöcke geschrieben.
+>
+> Damit ist insbesondere **nicht nachgewiesen**, dass ein echtes Update wie
+> **V3.3 → V3.4** bereits sicher oder vollständig funktionsfähig ist.
+>
+> Bei der Verwendung kann etwas schiefgehen. Im ungünstigsten Fall können Mainboard,
+> LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein
+> manueller Recovery- oder Reparatureingriff erforderlich werden.
+>
+> **Nutzung ausschließlich auf eigenes Risiko.** Jeder Anwender muss selbst
+> entscheiden, ob er dieses experimentelle Werkzeug verwendet und die möglichen
+> Folgen verantworten kann. Der Ersteller übernimmt, **soweit gesetzlich zulässig**,
+> keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden,
+> die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
 
-## Repository layout
+Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt
+[`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), das weiterhin für
+normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
+
+## Aktueller Stand
+
+Der Linux-/Raspberry-Pi-Weg ist inzwischen über einen Installer und einen einfachen
+Launcher nutzbar:
+
+```text
+./foxair-updater status
+./foxair-updater check MANIFEST
+./foxair-updater update MANIFEST --confirm
+./foxair-updater restore
+./foxair-updater manifest FIRMWARE ...
+./foxair-updater version
+```
+
+Für Entwicklung und Abnahme existiert zusätzlich:
+
+```text
+./foxair-updater same-version MANIFEST --confirm
+```
+
+Die eigentliche Sicherheits- und OTA-Logik bleibt im Controller
+`tools/phnix_ota/phnix_local_ota_controller.py`.
+
+## Linux / Raspberry Pi installieren
+
+Als normaler Benutzer ausführen, **nicht** mit `sudo` starten:
+
+```sh
+cd ~
+wget -O install.sh \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/linux/install.sh
+bash install.sh
+```
+
+Der Installer:
+
+- prüft beziehungsweise installiert `python3`, `adb`, `usbutils`, `git` und CA-Zertifikate;
+- verlangt Python 3.10 oder neuer;
+- verwendet einen schlanken Git-Sparse-Checkout;
+- richtet den USB-Zugriff für das PHNIX-LTE-Modem `1e0e:9001` ein;
+- berücksichtigt ein kurzzeitig `offline` erscheinendes ADB-Gerät und versucht `adb reconnect`;
+- erstellt den lokalen Firmwareordner `~/FoxAir_updater/firmware`;
+- prüft Controller, Manifestwerkzeug und Launcher.
+
+Ausführliche Anleitung:
+[`docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)
+
+## Firmware bereitstellen
+
+Firmwaredateien werden **nicht über dieses öffentliche GitHub-Repository verteilt**.
+Der Installer lädt keine Mainboard-Firmware herunter.
+
+Firmware und Manifest werden lokal gemeinsam abgelegt, zum Beispiel:
+
+```text
+~/FoxAir_updater/firmware/FW3.4.bin
+~/FoxAir_updater/firmware/FW3.4.json
+```
+
+Der lokale Ordner `firmware/` ist über `.gitignore` von Git ausgeschlossen und wird
+bei normalen Installer-Updates nicht gelöscht oder verändert.
+
+Ein Manifest kann lokal erzeugt werden:
+
+```sh
+cd ~/FoxAir_updater
+./foxair-updater manifest FW3.4.bin \
+  --software-code 82400644 \
+  --display-version V3.4 \
+  --target-ssid 0063
+```
+
+`wire_version`, Dateigröße, MD5 und SHA-256 werden automatisch erzeugt.
+
+## Repository-Struktur
 
 ```text
 FoxAir_updater/
 ├─ docs/
-│  ├─ reverse_engineering/  # Mainboard, OTA and LTE modem analysis
-│  └─ HowTo/                # Operator-facing procedures
-├─ firmware_images/
-│  ├─ mainboard/            # Original/read-out mainboard firmware images
-│  ├─ modem/                # LTE modem firmware images / OTA payloads
-│  └─ display/              # HMI/DGUS/display firmware images where relevant
+│  ├─ reverse_engineering/  # Mainboard-, OTA- und LTE-Analyse
+│  └─ HowTo/                # Anwender- und Testanleitungen
+├─ firmware_manifests/      # geprüfte/analysierte Manifest-Metadaten
 ├─ updater/
-│  ├─ common/               # Shared Python transport/core used by every host OS
-│  ├─ linux/                # Linux/Raspberry Pi integration
-│  └─ windows/              # Windows design; no Windows application yet
-├─ tools/phnix_ota/         # Current guarded launcher, runtime hook and VM simulator
-├─ devtools/                # Direct RS485 sender, board simulator and offline lab
-└─ tests/                   # Protocol, controller and simulator regression tests
+│  ├─ common/               # gemeinsam genutzte Python-Module
+│  ├─ linux/                # Linux-/Raspberry-Pi-Installer
+│  └─ windows/              # Windows-Planung / zukünftige Integration
+├─ tools/phnix_ota/         # OTA-Controller, Runtime-Helfer, Manifestwerkzeug
+├─ devtools/                # Simulatoren und Laborwerkzeuge
+├─ tests/                   # Regressionstests
+└─ foxair-updater           # einfacher Linux-Endanwender-Launcher
 ```
 
-## Firmware images
+Der Linux-Installer checkt für Endanwender bewusst nur die benötigten Bereiche aus.
+`devtools`, `tests`, `docs/reverse_engineering`, `updater/windows` und
+`firmware_manifests` bleiben auf GitHub, erscheinen aber nicht im normalen
+Linux-Endanwender-Checkout.
 
-Binary firmware dumps belong below `firmware_images/` and should be kept separate from source code and documentation. Prefer a subdirectory per device/firmware version, for example:
+## Technische Sicherheitsgrenze
+
+Der aktuelle Live-Pfad ist für genau den untersuchten Originaldienst `phnixIot4G`
+ausgelegt:
 
 ```text
-firmware_images/mainboard/v3.3/
-firmware_images/modem/phnixIot4G/
+Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
+SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 ```
 
-For every image, add a small `README.md` or metadata file containing at least source/device, observed version, file size, SHA-256 hash, acquisition method and whether the image is original, extracted or modified.
+Der Controller arbeitet fail-closed. Nicht eindeutig terminale Zustände führen zu
+einem geschützten `Guarded Hold`, statt automatisch aggressiv aufzuräumen.
 
-Do not overwrite known-good originals. Modified/test images should use clearly different filenames or a dedicated subdirectory.
+Der bekannte V3.3-Gleichversionstest prüft den frühen Handshake und die sichere
+Ablehnung einer bereits installierten Version. Er beweist ausdrücklich nicht den
+späteren C5A8-Firmware-Schreibpfad eines echten Versionswechsels.
 
-## Platform split
+## Projektumfang
 
-The updater keeps host-independent transport and protocol logic in
-`updater/common/`. Linux/Raspberry-Pi integration belongs in `updater/linux/`.
-The future Windows frontend belongs in `updater/windows/` and will reuse the
-same common Python code with a selected or bundled `adb.exe`.
+Enthalten sind unter anderem:
 
-The currently executable guarded laboratory launcher remains in
-`tools/phnix_ota/` until its interfaces and live recovery path are stable.
+- Firmware-Reverse-Engineering;
+- PHNIX-LTE-Modem-/Runtime-Analyse, soweit für OTA relevant;
+- OTA-/IAP-Protokollanalyse;
+- Firmwareupdate-, Recovery- und Validierungswerkzeuge;
+- Manifest- und Hashprüfung;
+- Simulatoren, Laborwerkzeuge und Regressionstests.
 
-The current German end-user command reference is available at
-[`docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md).
+Nicht Schwerpunkt dieses Repositorys sind:
 
-## Current safety boundary
+- die normale FoxAir-Control-GUI;
+- normale Endanwender-Steuerlogik;
+- allgemeine Modbus-Werkzeuge ohne direkten Firmware-/Updater-Bezug.
 
-The VM simulator supports the complete cancel/recovery contract and the
-C350/C357 handshake up to a hard stop before C5A8. The early C36A/C36C cancel
-and return to terminal Step 12 have been validated once on the real build.
+## Lizenz
 
-The new `pre-c5a8-vm-test` remains marker-locked to the simulator. A real
-C350/C357 test and every C5A8 firmware-writing test require a separate explicit
-approval and are not enabled by the VM command.
-
-## Scope
-
-Included here:
-- firmware dumps and metadata
-- firmware reverse engineering
-- PHNIX modem firmware/runtime reverse engineering when relevant to update transport
-- OTA/IAP protocol analysis
-- firmware update, recovery and validation tooling
-- simulators and lab/test scripts
-
-Not included here:
-- FoxAir Control GUI/application code
-- normal end-user control logic
-- general Modbus tooling that is independent of firmware/update development
+Für dieses Repository ist aktuell noch keine Open-Source-Lizenz festgelegt.
+Vor einer breiteren Weitergabe sollte eine `LICENSE`-Datei ergänzt werden.
