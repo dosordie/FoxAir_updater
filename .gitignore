@@ -22,10 +22,5 @@ rootfs/
 DeviceSecret*
 device_secret*
 
-# Firmware binaries are local unless their redistribution is explicitly cleared
-firmware_images/**/*.bin
-firmware_images/**/*.hex
-firmware_images/**/*.fw
-!firmware_images/**/.gitkeep
-!firmware_images/**/README.md
-!firmware_images/**/metadata.json
+# End-user firmware staging directory (local only, never distributed by GitHub)
+/firmware/
