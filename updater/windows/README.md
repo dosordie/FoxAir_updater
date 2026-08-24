@@ -1,17 +1,28 @@
-# Windows Updater v0.1.5 (experimentell)
+# Windows Updater v0.1.8 (experimentell)
 
 Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden gemeinsamen OTA-Backend** gebaut.
 
 > [!IMPORTANT]
 > **Real getestet sind derzeit:** lokale/Remote-ADB-Verbindung, Originalstatus, das read-only LTE-Backup/Firmware-Download per `adb pull` und der Dry-Run.
 >
-> Zusätzlich wurde mit Windows v0.1.3 der normale **Firmware-Update**-Button über Remote-ADB real mit **V3.3 → V3.3** ausgeführt. Das Mainboard erkannte die bereits installierte Firmware und beendete den Ablauf sicher mit `same-version`; `C357` und `C5A8` wurden nicht erreicht und der Originalbetrieb wurde danach wieder bestätigt. Es wurden keine Firmwaredaten übertragen.
+> Zusätzlich wurde der normale **Firmware-Update**-Button über Remote-ADB real mit **V3.3 → V3.3** ausgeführt. Das Mainboard erkannte die bereits installierte Firmware und beendete den Ablauf sicher mit `same-version`; `C357` und `C5A8` wurden nicht erreicht und der Originalbetrieb wurde danach wieder bestätigt. Es wurden keine Firmwaredaten übertragen.
 >
-> Die seit v0.1.4 vorgeschaltete Windows-Sicherheitshülle mit zusätzlichem Full-Abgleich und LTE-Cache-Sicherung ist noch nicht in genau diesem Live-Test nachgetestet worden. Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung wurde unter Windows weiterhin noch nicht live durchgeführt und bestätigt**.
+> Beim Live-Test mit v0.1.7 trat **erst nach diesem sauber beendeten Same-Version-Ablauf** ein Windows-Hostfehler auf: Der Sicherheitswrapper suchte den terminalen `run-state.json` in einem anderen lokalen Verzeichnis als dem von der GUI an den Controller übergebenen `--state-dir`. Dieser Host-Auswertungsfehler ist in v0.1.8 korrigiert. Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung wurde unter Windows weiterhin noch nicht live durchgeführt und bestätigt**.
 
 Öffentliche Windows-Versionen stehen als Portable-ZIP und Setup-EXE auf der normalen GitHub-Releases-Seite bereit:
 
 https://github.com/dosordie/FoxAir_updater/releases
+
+## Windows SmartScreen beim ersten Start
+
+Die Windows-Builds sind derzeit **nicht mit einem kommerziellen Code-Signing-Zertifikat signiert**. Windows SmartScreen kann deshalb beim ersten Start des Setup oder der EXE die Meldung **„Der Computer wurde durch Windows geschützt“** anzeigen.
+
+Wenn die Datei bewusst von der oben genannten offiziellen GitHub-Releases-Seite geladen wurde:
+
+1. **Weitere Informationen** anklicken;
+2. anschließend **Trotzdem ausführen** wählen.
+
+Das SmartScreen-Fenster ist kein Fehler des FoxAir Updaters. Eine Datei aus einer anderen oder unbekannten Quelle sollte dagegen nicht einfach freigegeben werden.
 
 ## Wichtig: keine Refaktorierung der OTA-Logik
 
@@ -28,7 +39,7 @@ tools/phnix_ota/phnix_ota_runtime_hook
 
 bytegleich in das Windows-Paket und prüft die Kopien mit `fc /b`.
 
-Seit v0.1.4 liegt davor zusätzlich eine kleine Windows-Sicherheitshülle. Seit v0.1.5 liegt darüber außerdem nur eine Windows-UI-Schicht für die lesbare Statusdarstellung:
+Seit v0.1.4 liegt davor zusätzlich eine kleine Windows-Sicherheitshülle. Darüber liegt nur eine Windows-UI-Schicht für die lesbare Statusdarstellung:
 
 ```text
 FoxAir_Updater.exe
@@ -53,16 +64,20 @@ Der Wrapper bildet ausschließlich die Linux-Launcher-Funktionen nach, die **au�
 - Full-Firmware-/Manifest-Abgleich unmittelbar vor einem echten Update;
 - Sicherung einer eventuell vorhandenen `/cache/phnixIot_device_OTA`;
 - Erhalt dieses Backups bei nicht sicher terminalem Updatezustand;
-- Wiederherstellung des Cachezustands nach erfolgreichem Same-Version-Test bzw. nach einem vom Controller freigegebenen Restore.
+- Wiederherstellung des Cachezustands nach erfolgreichem Same-Version-Test bzw. nach einem vom Controller freigegebenen Restore;
+- hostseitige Auswertung des terminalen Run-State nach einem vollständigen Updateaufruf.
 
-Die neue v0.1.5-UI-Schicht interpretiert nur die bereits vorhandenen JSON-Ereignisse für den Benutzer. Entscheidungen über Preflight, Update, Guarded Hold, C5A8-Grenze und Zulässigkeit eines Restore verbleiben weiterhin im bestehenden gemeinsamen Controller.
+Die UI-Schicht interpretiert nur die bereits vorhandenen JSON-Ereignisse für den Benutzer. Entscheidungen über Preflight, Update, Guarded Hold, C5A8-Grenze und Zulässigkeit eines Restore verbleiben weiterhin im bestehenden gemeinsamen Controller.
 
 ## ADB
 
 **ADB wird nicht mitgeliefert.**
 
+Die GUI zeigt für eine direkte USB-Verbindung zuerst den benötigten **SIMCom Windows USB-Treiber** und danach die offiziellen Android SDK Platform Tools an.
+
 Die GUI bietet:
 
+- Link zum SIMCom Windows USB Driver V1.0.2;
 - automatische Suche nach einer bereits vorhandenen `adb.exe`;
 - manuelle Auswahl der `adb.exe`;
 - Link zur offiziellen Google-Seite für Android SDK Platform Tools;
@@ -72,7 +87,11 @@ Die GUI bietet:
 - manuellen `adb reconnect`;
 - optionalen **Remote-ADB-Modus über einen Raspberry Pi**.
 
-Offizielle Downloadseite:
+SIMCom-Treiber:
+
+https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip
+
+Offizielle ADB-Downloadseite:
 
 https://developer.android.com/tools/releases/platform-tools?hl=de#downloads
 
@@ -111,7 +130,20 @@ Dadurch verwenden GUI, Windows-Sicherheitswrapper, gemeinsamer Controller und `a
 
 Auch im Remote-Modus wird auf Windows weiterhin eine lokale `adb.exe` als ADB-Client benötigt. Der Remote-Port sollte nur kurzfristig in einem vertrauenswürdigen LAN offen sein.
 
-## Funktionen der GUI v0.1.5
+### Persistenz von IP und Port
+
+Die Verbindungswerte werden über `QSettings("FoxAir", "FoxAir Updater")` gespeichert. v0.1.7 hatte dabei einen Ladefehler: Beim Start wurden die Signale der Radio-/Eingabefelder ausgelöst, bevor die gespeicherte IP und der gespeicherte Port vollständig eingelesen waren. Dadurch konnte die IP wieder leer und der Port auf den Defaultwert gesetzt werden.
+
+v0.1.8 liest die gespeicherten Werte zuerst vollständig ein und blockiert während des Einsetzens die Writeback-Signale. Danach bleiben insbesondere erhalten:
+
+- lokaler/Remote-ADB-Modus;
+- Raspberry-Pi-IP;
+- ADB-Server-Port;
+- ADB-Pfad;
+- Backup-Zielordner;
+- zuletzt verwendeter ADB-, Firmware- und Manifest-Ordner.
+
+## Funktionen der GUI v0.1.8
 
 ### Verbindung
 
@@ -170,7 +202,7 @@ image_base
 
 Erst wenn diese Prüfung erfolgreich ist, wird der ursprüngliche LTE-Firmware-Cache gesichert und anschließend der gemeinsame Controller mit `PHNIX-FULL-UPDATE` gestartet.
 
-v0.1.5 zeigt die vorhandenen Controller-Ereignisse zusätzlich als lesbaren Ablauf an:
+Die vorhandenen Controller-Ereignisse werden zusätzlich als lesbarer Ablauf angezeigt:
 
 - **grüne Punkte** für erfolgreiche Prüfungen und sicher bestätigte Zustände;
 - **gelbe Punkte** für Warte-/Transferzustände und erwartete Warnungen wie gleiche Firmware;
@@ -191,7 +223,7 @@ Beispiele für lesbare Zustände sind:
 
 Das technische Rohprotokoll mit allen JSON-Zeilen bleibt unverändert darunter erhalten und kann weiterhin gespeichert werden.
 
-Abschluss-Popups zeigen keine bloßen technischen `Exit 0`-Texte mehr, sondern unterscheiden unter anderem:
+Abschluss-Popups unterscheiden unter anderem:
 
 - **Dry-Run erfolgreich – nichts wurde verändert**;
 - **Update nicht durchgeführt – gleiche Firmware**;
@@ -199,6 +231,40 @@ Abschluss-Popups zeigen keine bloßen technischen `Exit 0`-Texte mehr, sondern u
 - **Update sicher angehalten / Guarded Hold**;
 - **Firmwareupdate wegen Fehler abgebrochen**;
 - **Wiederherstellung erfolgreich/fehlgeschlagen**.
+
+### Same-Version-Host-State-Fix in v0.1.8
+
+Der normale Updateaufruf übergibt von der GUI einen stabilen `--state-dir`. v0.1.7 startete den Controller mit diesem Pfad, suchte nach Exit 0 aber im separaten Wrapper-Defaultpfad nach dem terminalen `run-state.json`. Ein korrekt abgeschlossenes `same-version` konnte deshalb nachträglich mit
+
+```text
+FEHLER: Terminaler Host-Run-State des Updates fehlt
+```
+
+und Exit-Code 2 erscheinen.
+
+v0.1.8 verwendet für Start und Abschlussprüfung denselben effektiven `--state-dir`. Vor dem Controllerstart wird außerdem eine Momentaufnahme vorhandener Run-State-Dateien erstellt; nur ein neu angelegter oder veränderter Run-State zählt anschließend als aktueller Abschlussbeweis. Damit kann auch kein alter erfolgreicher Lauf versehentlich wiederverwendet werden.
+
+#### Einmalige Bereinigung nach dem bekannten v0.1.7-Fall
+
+Nur wenn das Log eindeutig bestätigt:
+
+```text
+phase=same-version
+c357_sent=false
+c5a8_sent=false
+state_restored=true
+services-restored ok=true
+```
+
+und erst danach der Host-Run-State-Fehler kam, kann der liegengebliebene **lokale** Marker entfernt werden:
+
+```powershell
+Remove-Item "$env:LOCALAPPDATA\FoxAir Updater\windows-wrapper-state\original-cache\cache.pending"
+```
+
+Die historischen `phnix-ota-state`-Ordner nicht löschen. Auf dem LTE-Modem ist für diesen bestätigten Same-Version-Fall keine manuelle Löschung erforderlich.
+
+Bei einem unbekannten Zustand oder einem bereits begonnenen C5A8-Transfer darf dieser Marker nicht blind gelöscht werden.
 
 ### Fortschrittsbalken
 
@@ -259,7 +325,7 @@ verwendet wird. Das Logo wird als EXE-Icon, Fenster-Icon und Setup-Icon verwende
 
 Ein echter Versionswechsel wurde weiterhin **nicht live bestätigt**. Bisher wurde auf realer Hardware V3.3 → V3.3 bis zur erwarteten Gleichversionsablehnung getestet; dabei wurden keine Firmwareblöcke geschrieben.
 
-Für Windows sind ADB, Remote-ADB, Originalstatus, Backup und Dry-Run bestätigt. Zusätzlich wurde unter Windows v0.1.3 der normale Update-Aufruf über Remote-ADB bis zur sicheren Gleichversionsablehnung real bestätigt. Die später ergänzte Windows-Sicherheitshülle muss in diesem Pfad noch nachgetestet werden; die C5A8-Schreibphase einer anderen Firmware bleibt weiterhin ungetestet.
+Für Windows sind ADB, Remote-ADB, Originalstatus, Backup und Dry-Run bestätigt. Der vollständige Windows-Sicherheitswrapper wurde inzwischen ebenfalls real bis zum terminalen V3.3→V3.3-Same-Version-Zustand ausgeführt. Dabei zeigte sich in v0.1.7 der oben dokumentierte rein hostseitige State-Pfad-Fehler nach dem bereits sauber beendeten OTA-Ablauf. Die Korrektur ist in v0.1.8 automatisiert getestet; ein echter C5A8-Versionswechsel bleibt weiterhin ungetestet.
 
 ## GitHub Actions: Build und Release getrennt
 
@@ -285,7 +351,7 @@ Actions → Release Windows → Run workflow
 Dort wird nur die Zielversion eingetragen, zum Beispiel:
 
 ```text
-0.1.5
+0.1.8
 ```
 
 Optional kann festgelegt werden, ob das Release als Prerelease markiert wird.
@@ -293,7 +359,7 @@ Optional kann festgelegt werden, ob das Release als Prerelease markiert wird.
 Der Workflow:
 
 1. setzt die eingegebene Version synchron in GUI-Einstieg, Basis-GUI, Portable-Build und Inno-Setup-Datei;
-2. prüft die Python-Syntax beider GUI-Dateien;
+2. prüft die Python-Syntax der Windows-GUI-Dateien;
 3. baut Portable und Setup;
 4. prüft, dass beide Release-Dateien vorhanden sind;
 5. committed eine eventuell geänderte Versionsnummer nach `main`;
@@ -303,15 +369,15 @@ Der Workflow:
 Beispiel:
 
 ```text
-Tag:     windows-v0.1.5
-Release: FoxAir Updater Windows v0.1.5
+Tag:     windows-v0.1.8
+Release: FoxAir Updater Windows v0.1.8
 ```
 
 Release-Assets:
 
 ```text
-FoxAir_Updater_Portable_v0.1.5.zip
-FoxAir_Updater_Setup_v0.1.5.exe
+FoxAir_Updater_Portable_v0.1.8.zip
+FoxAir_Updater_Setup_v0.1.8.exe
 ```
 
 Diese Dateien sind bei einem öffentlichen Repository auch ohne GitHub-Anmeldung über die normale Releases-Seite herunterladbar.
@@ -347,7 +413,7 @@ Ergebnis:
 
 ```text
 dist/FoxAir_Updater/
-dist/FoxAir_Updater_Portable_v0.1.5.zip
+dist/FoxAir_Updater_Portable_v0.1.8.zip
 ```
 
 Der Endanwender benötigt **keine Python-Installation**. ADB ist ausdrücklich nicht Bestandteil des Pakets.
@@ -363,7 +429,7 @@ updater\windows\build_windows_setup.bat
 Ergebnis:
 
 ```text
-updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.5.exe
+updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.8.exe
 ```
 
 Das Setup installiert denselben Inhalt wie die Portable-Version nach `Program Files`. Laufzeitdaten und OTA-State werden von der GUI bzw. der Windows-Sicherheitshülle in das lokale Benutzer-Anwendungsdatenverzeichnis geschrieben, nicht in `Program Files`.
@@ -377,4 +443,4 @@ py -m pip install -r updater\windows\requirements-build.txt
 py updater\windows\foxair_updater_app.py
 ```
 
-Im Entwicklungsmodus läuft die GUI direkt gegen die Repository-Dateien. Die Release-Builds verwenden zusätzlich die oben beschriebene Windows-Sicherheitshülle, ohne die gemeinsame OTA-Logik zu verändern.
+Im Entwicklungsmodus läuft die GUI über denselben Windows-Backendpfad wie das Release: Windows-Sicherheitswrapper → gehärtete gemeinsame Safety-Schicht → gemeinsamer Controller-Core. Damit werden Entwicklung und ausgelieferte Version nicht mit unterschiedlichen Sicherheitswegen getestet.
