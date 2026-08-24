@@ -108,6 +108,11 @@ cleanup_original_state() {
 
 cleanup() {
     if test -f "$RUN_ACTIVE" && ! test -f "$SAFE_TO_CLEAN"; then
+        if test -f "$TRANSFER_STARTED"; then
+            printf '{"phase":"transfer-unattended","terminal":false,"transfer_started":true,"recovery_required":false}\n' > "${STATUS:-$DEFAULT_STATUS}"
+            echo "ACTIVE OTA ALREADY PASSED C5A8; ORIGINAL phnixIot4G IS LEFT RUNNING" >&2
+            return
+        fi
         PID=$(service_pid || true)
         test -n "$PID" && kill -STOP "$PID" 2>/dev/null || true
         printf '{"phase":"guarded-hold","terminal":false,"recovery_required":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
