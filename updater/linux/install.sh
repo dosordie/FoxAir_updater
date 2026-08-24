@@ -69,9 +69,14 @@ if ! python3 -c "import sys; raise SystemExit(0 if sys.version_info >= ($MIN_PYT
 fi
 ok "Python $python_version"
 
-if ! git help -a | grep -q '^[[:space:]]*sparse-checkout[[:space:]]'; then
+# `git sparse-checkout -h` liefert bei unterstützten Git-Versionen je nach
+# Version trotzdem einen von 0 verschiedenen Rückgabecode. Deshalb nicht den
+# Exit-Code der Hilfe auswerten, sondern die tatsächliche Usage-Ausgabe.
+sparse_help="$(git sparse-checkout -h 2>&1 || true)"
+if [[ "$sparse_help" != *"usage: git sparse-checkout"* ]]; then
     die "Die installierte Git-Version unterstützt 'git sparse-checkout' nicht. Bitte Git aktualisieren."
 fi
+ok "Git sparse-checkout verfügbar ($(git --version))"
 
 if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
     die "$INSTALL_DIR existiert, ist aber kein Verzeichnis."
