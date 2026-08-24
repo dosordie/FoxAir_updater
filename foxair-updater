@@ -15,10 +15,10 @@ FoxAir Updater
 Verwendung:
   ./foxair-updater status
   ./foxair-updater check MANIFEST
-  ./foxair-updater update MANIFEST --confirm
+  ./foxair-updater update MANIFEST [--full] --confirm
   ./foxair-updater same-version MANIFEST --confirm
   ./foxair-updater restore
-  ./foxair-updater manifest FIRMWARE --software-code CODE --display-version VERSION --target-ssid SSID
+  ./foxair-updater manifest FIRMWARE [--full] [--software-code CODE] [--display-version VERSION] [--target-ssid 0063]
   ./foxair-updater version
 
 MANIFEST und FIRMWARE können als Pfad angegeben werden. Wird nur ein Dateiname
@@ -28,12 +28,21 @@ Beispiele:
   ./foxair-updater status
   ./foxair-updater check FW3.4.json
   ./foxair-updater update FW3.4.json --confirm
+  ./foxair-updater update FW3.4.json --full --confirm
   ./foxair-updater same-version FW3.3.json --confirm
-  ./foxair-updater manifest FW3.4.bin --software-code 82400644 --display-version V3.4 --target-ssid 0063
+  ./foxair-updater manifest FW3.4.bin --full
+  ./foxair-updater manifest FW3.4.bin --software-code 82400644 --display-version V3.4
 
-Beim Manifest-Befehl wird die JSON-Datei standardmäßig neben der Firmware mit
-dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json. wire_version
-wird automatisch aus display-version abgeleitet.
+--full beim Manifest-Befehl extrahiert SoftwareCode und Wire-Version direkt aus
+der Firmwaredatei und plausibilisiert das Cortex-M-Image. target_ssid ist fuer
+FoxAir fest 0063 (Modbus Unit-ID 0x63).
+
+--full beim Update analysiert die zum Manifest gehoerende Firmware erneut und
+vergleicht die extrahierte Identitaet sowie Dateigroesse und Hashes strikt mit
+dem Manifest, bevor ADB oder Busaktivitaet beginnt.
+
+Beim Manifest-Befehl wird die JSON-Datei standardmaessig neben der Firmware mit
+dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json.
 TXT
 }
 
@@ -76,6 +85,77 @@ resolve_firmware() {
     die "Firmware nicht gefunden: $input (auch nicht unter $FIRMWARE_DIR/)"
 }
 
+resolve_manifest_firmware() {
+    local manifest="$1"
+    local firmware_name
+    firmware_name="$(python3 - "$manifest" <<'PY'
+import json
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+try:
+    value = json.loads(p.read_text(encoding="utf-8"))
+    name = value["firmware_file"]
+except Exception as exc:
+    raise SystemExit(f"ungueltiges Manifest: {exc}")
+if Path(name).name != name:
+    raise SystemExit("firmware_file muss ein einfacher Dateiname sein")
+print(name)
+PY
+)" || die "Firmware-Dateiname konnte nicht aus dem Manifest gelesen werden"
+
+    if [[ -f "$(dirname "$manifest")/$firmware_name" ]]; then
+        readlink -f "$(dirname "$manifest")/$firmware_name"
+        return
+    fi
+    if [[ -f "$FIRMWARE_DIR/$firmware_name" ]]; then
+        readlink -f "$FIRMWARE_DIR/$firmware_name"
+        return
+    fi
+    die "Zum Manifest gehoerende Firmware nicht gefunden: $firmware_name"
+}
+
+full_manifest_preflight() {
+    local manifest="$1"
+    local firmware tmp
+    [[ -f "$MANIFEST_TOOL" ]] || die "Manifest-Werkzeug fehlt: $MANIFEST_TOOL"
+    firmware="$(resolve_manifest_firmware "$manifest")"
+    tmp="$(mktemp)"
+
+    if ! python3 "$MANIFEST_TOOL" --firmware "$firmware" --full --output "$tmp" >/dev/null; then
+        rm -f "$tmp"
+        die "Vollanalyse der Firmware ist fehlgeschlagen"
+    fi
+
+    if ! python3 - "$manifest" "$tmp" <<'PY'
+import json
+import sys
+from pathlib import Path
+expected = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+detected = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+fields = (
+    "schema", "firmware_file", "software_code", "display_version", "wire_version",
+    "target_ssid", "size", "md5", "sha256", "image_base",
+)
+errors = []
+for field in fields:
+    if expected.get(field) != detected.get(field):
+        errors.append(f"{field}: Manifest={expected.get(field)!r}, Firmware={detected.get(field)!r}")
+if errors:
+    print("[FEHLER] Manifest stimmt nicht mit der analysierten Firmware ueberein:", file=sys.stderr)
+    for item in errors:
+        print(f"  - {item}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+    then
+        rm -f "$tmp"
+        die "--full Vorpruefung abgebrochen"
+    fi
+
+    rm -f "$tmp"
+    printf '[OK] Vollanalyse: Firmwareidentitaet, Groesse und Hashes stimmen mit dem Manifest ueberein\n'
+}
+
 [[ -f "$CONTROLLER" ]] || die "Controller fehlt: $CONTROLLER"
 command -v python3 >/dev/null 2>&1 || die "python3 wurde nicht gefunden"
 
@@ -85,7 +165,7 @@ case "$command" in
         usage
         ;;
     status)
-        [[ $# -eq 1 ]] || die "status benötigt keine weiteren Argumente"
+        [[ $# -eq 1 ]] || die "status benoetigt keine weiteren Argumente"
         require_adb
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --check status
         ;;
@@ -96,9 +176,22 @@ case "$command" in
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --manifest "$manifest"
         ;;
     update)
-        [[ $# -eq 3 && "$3" == "--confirm" ]] || die "Verwendung: ./foxair-updater update MANIFEST --confirm"
-        require_adb
+        [[ $# -ge 3 && $# -le 4 ]] || die "Verwendung: ./foxair-updater update MANIFEST [--full] --confirm"
         manifest="$(resolve_manifest "$2")"
+        full=0
+        confirm=0
+        for arg in "${@:3}"; do
+            case "$arg" in
+                --full) full=1 ;;
+                --confirm) confirm=1 ;;
+                *) die "Unbekannte update-Option: $arg" ;;
+            esac
+        done
+        (( confirm == 1 )) || die "Update benoetigt --confirm"
+        if (( full == 1 )); then
+            full_manifest_preflight "$manifest"
+        fi
+        require_adb
         exec python3 "$CONTROLLER" \
             --adb "$ADB_BIN" \
             run \
@@ -121,12 +214,12 @@ case "$command" in
             --state-dir "$STATE_DIR"
         ;;
     restore)
-        [[ $# -eq 1 ]] || die "restore benötigt keine weiteren Argumente"
+        [[ $# -eq 1 ]] || die "restore benoetigt keine weiteren Argumente"
         require_adb
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --restore original
         ;;
     manifest)
-        [[ $# -ge 2 ]] || die "Verwendung: ./foxair-updater manifest FIRMWARE --software-code CODE --display-version VERSION --target-ssid SSID"
+        [[ $# -ge 2 ]] || die "Verwendung: ./foxair-updater manifest FIRMWARE [--full] [--software-code CODE --display-version VERSION]"
         [[ -f "$MANIFEST_TOOL" ]] || die "Manifest-Werkzeug fehlt: $MANIFEST_TOOL"
         firmware="$(resolve_firmware "$2")"
         shift 2
@@ -147,7 +240,7 @@ case "$command" in
         fi
         ;;
     version)
-        [[ $# -eq 1 ]] || die "version benötigt keine weiteren Argumente"
+        [[ $# -eq 1 ]] || die "version benoetigt keine weiteren Argumente"
         printf 'FoxAir Updater %s\n' "$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
         ;;
     *)
