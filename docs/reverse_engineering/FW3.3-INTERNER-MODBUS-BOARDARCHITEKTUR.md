@@ -6,7 +6,7 @@ Diese Datei dokumentiert die interne Modbus-Kommunikationsarchitektur der PHNIX-
 
 1. **interner Boardbus** – Mainboard als Modbus-Master,
 2. **direkter Mainboard-/User-Modbus** – Mainboard als Slave mit öffentlichem und Engineeringdispatcher,
-3. **Warmlink-/LTE-Servicepfad `0x63`** – separater, gefilterter Slave-/Gatewaypfad einschließlich OTA.
+3. **Warmlink-/LTE-Servicepfad `0x63`** – separater Slave-/Gatewaydispatcher einschließlich eigener Servicefenster und OTA.
 
 Die Analyse verbindet V3.3-Binary, rekonstruierte State-Machines und reale Bus-/Funktionstests.
 
@@ -36,10 +36,10 @@ Bewertung:
                  ┌────────────────┼─────────────────┐
                  │                │                 │
        interner Boardbus      User-Modbus      Warmlink/LTE
-       USART3 / 4800 8N1      Slavepfad         USART1 / 9600
-       Mainboard = Master      Mainboard=Slave    Slave 0x63
+       USART3 / 4800 8N1      Mainboard-Slave   USART1 / 9600
+       Mainboard = Master      direkter Dispatcher Slave 0x63
                  │                │                 │
-   ┌─────────────┼───────┐        │         gefilterter Zugriff
+   ┌─────────────┼───────┐        │         eigener 0x63-Dispatcher
    │             │       │        │         + Service/OTA 0xCxxx
  0x01        0x02/0x03   0x04     │
  Inverter      HMI       Fan      │
@@ -57,7 +57,7 @@ Bewertung:
 
 Wichtig:
 
-> Die direkten Dispatcherrechte des User-/Mainboard-Modbus dürfen **nicht** automatisch auf den Warmlink-/LTE-Slave `0x63` übertragen werden. Der Live-Test von `8801` beweist eine registerabhängige Filterung des 0x63-Pfads.
+> Direkter User-/Mainboarddispatcher und Warmlink-`0x63`-Dispatcher besitzen **nicht dieselben Registerbereiche**. Das erklärt insbesondere, warum `8801` am User-Modbus funktioniert, auf dem LTE-/0x63-Pfad aber nicht lesbar ist.
 
 ---
 
@@ -115,7 +115,7 @@ CRC:
 0x0805094E
 ```
 
-Der Builder gehört zum **internen USART3-Masterring** und ist nicht mit dem externen Mainboard-Slavedispatcher zu verwechseln.
+Der Builder gehört zum **internen USART3-Masterring** und ist nicht mit den externen Mainboard-Slavedispatchern zu verwechseln.
 
 ---
 
@@ -214,8 +214,6 @@ Wichtige Felder:
 | 2009 | `0x20016F0C` | Lüfter-Sollwert 2 |
 | 2010 | 0 | noch offen |
 
-Die frühere Klassifikation von INV1:2002 als lediglich „offen“ ist damit überholt.
-
 ---
 
 # 7. Unit-0x01-Rückmeldungen 2099–2149
@@ -243,8 +241,6 @@ Wichtige Zuordnungen:
 | 2110 | 2044 | IPM-Temperatur, konvertiert |
 | 2113 high/low | 2026/2027 | Diagnosebytes |
 | 2118 | 2028 | Diagnosewert |
-
-Bei H33 aktiv stammen zusätzliche Fan-Rückmeldungen ebenfalls aus diesem 51-Wort-Block.
 
 ---
 
@@ -286,14 +282,12 @@ Start 1011
 Qty 14
 ```
 
-Bestätigte Übernahmen:
+Bestätigt:
 
 ```text
 1017 → MAIN:2074 Fan actual 1
 1018 → MAIN:2075 Fan actual 2
 ```
-
-Weitere 1011–1024-Werte füllen die Fan-Driver-Livestruktur `0x2001691C`.
 
 Im untersuchten Mitschnitt wird 0x04 gepollt, antwortet aber nicht; die reale Anlage arbeitet über den H33-integrierten Unit-0x01-Pfad.
 
@@ -314,11 +308,9 @@ Reale Antwort bestätigt u. a.:
 3013 = 17 = V1.7
 ```
 
-Damit aktiver DWIN-/Wire-Controller.
-
 ## Unit 0x02
 
-Gleiche 3001/21-Abfrage und gleicher Kommunikationsklassenpfad; physisch sehr wahrscheinlich optionaler zweiter HMI-/Controllerkanal. Im untersuchten Mitschnitt ohne gültige Antwort.
+Gleiche 3001/21-Abfrage; sehr wahrscheinlich optionaler zweiter HMI-/Controllerkanal. Im untersuchten Mitschnitt ohne gültige Antwort.
 
 ---
 
@@ -331,13 +323,9 @@ FC10 Broadcast 2001–2090 qty90
 FC10 Broadcast 2091–2180 qty90
 ```
 
-Damit erhalten HMI/Controller/weitere Teilnehmer den kompletten öffentlichen Statusblock.
-
 ---
 
 # 12. Unit 0x05 / 0x61 – Hydraulikmodule
-
-Auswahlparameter:
 
 ```text
 MAIN:1036 = H30 = Enable Hydraulic Module
@@ -359,15 +347,13 @@ RX: FC03 2001–2090
 TX: FC10 1001–1090
 ```
 
-Die funktionale Rolle ist bestätigt; genaue physische Modulrevisionen bleiben offen.
-
 ---
 
 # 13. Direkter Mainboard-/User-Modbus
 
-Der direkte Mainboard-Slavedispatcher ist vom internen Masterring getrennt.
+Der direkte Mainboard-Slavedispatcher ist vom internen Masterring und vom Warmlink-0x63-Dispatcher zu trennen.
 
-V3.3-Bereiche:
+Bestätigte Bereiche:
 
 ```text
 MAIN:P     1001–1540
@@ -379,7 +365,7 @@ ENG:CTRL   8801–8820
 SPECIAL    60000 / 60010
 ```
 
-Für den **direkten Dispatcher** sind unter anderem bestätigt:
+Für den direkten Dispatcher:
 
 ```text
 ENG:CTRL 8801–8820
@@ -387,8 +373,6 @@ FC03 yes
 FC06 yes
 FC10 yes
 ```
-
-Diese Rechte gelten nicht automatisch für andere Proxy-/Gatewaypfade.
 
 Details:
 
@@ -398,8 +382,6 @@ Details:
 ---
 
 # 14. ENG:CTRL:8801 – virtueller SG-Ready-Zustand
-
-Ein besonders wichtiger live validierter Engineeringbefehl ist:
 
 ```text
 ENG:CTRL:8801
@@ -421,13 +403,13 @@ wertet V3.3 `8801` als virtuelle SG-Kontakte aus:
 8801=4 → (1,1) → SG Mode 4
 ```
 
-Am realen direkten User-Modbus bestätigt:
+Am direkten User-Modbus live bestätigt:
 
 ```text
-8801 lesen            ✓
-0..4 schreiben        ✓
-Rücklesen             ✓
-SG-Wirkung            ✓
+8801 lesen       ✓
+0..4 schreiben   ✓
+Rücklesen        ✓
+SG-Wirkung       ✓
 ```
 
 Unter anderem:
@@ -438,8 +420,6 @@ Unter anderem:
 ```
 
 ## 10-Minuten-Hold
-
-Nach jeder akzeptierten SG-Modusänderung:
 
 ```text
 0x2001696C = 1200
@@ -452,88 +432,169 @@ Währenddessen kann 8801 bereits einen neuen Wert enthalten; MAIN:2133 bleibt no
 
 Eine Änderung der SG-Quellenauswahl `MAIN:1334` setzt den 10-Minuten-Hold zurück.
 
-**Dieser Punkt ist Binary + live am realen Gerät bestätigt.**
+**Binary + live bestätigt.**
 
 Details: [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md).
 
 ---
 
-# 15. Warmlink-/LTE-Servicepfad – Slave 0x63
+# 15. Warmlink-/LTE-Dispatcher – Slave 0x63
 
-Der Warmlink-/LTE-Bus ist ein separater serieller Kanal auf USART1/9600.
-
-Rollenrichtung:
+Der Warmlink-/LTE-Pfad besitzt eine eigene große Dispatcherfunktion ungefähr bei:
 
 ```text
-Warmlink/LTE bzw. externer Master
-        ↓
-Mainboard-Service-/Gatewaypfad Slave 0x63
+0x08067548
 ```
 
-Dieser Pfad trägt sowohl Service-/OTA-Kommunikation als auch ausgewählte normale Mainboardzugriffe.
-
-Live bestätigt:
+Sie akzeptiert Slave:
 
 ```text
-0x63: MAIN:1334 lesen       ✓
-0x63: MAIN:1334 schreiben   ✓
-0x63: MAIN:2133 lesen       ✓
+0x63
 ```
 
-Für `8801` zeigt sich jedoch eine klare Asymmetrie:
+und teilweise Broadcast `0x00`.
+
+Dieser Dispatcher ist **nicht identisch** mit dem direkten User-/Engineeringdispatcher.
+
+## 15.1 FC03-Bereiche
+
+Statisch bestätigt:
 
 ```text
-0x63 FC03 8801  → Timeout / keine Antwort
-0x63 FC16 8801  → formal passender ACK
+1001–1540
+2001–2180
+8001–8090
 ```
 
-Der Cross-Bus-Gegencheck konnte **keine tatsächliche Änderung des echten User-Modbus-Registers 8801** durch diesen LTE-FC16-ACK bestätigen.
+jeweils mit maximal 90 Wörtern pro normalem Bereich, zusätzlich mehrere Spezialreads.
 
-Daraus folgt:
+Das erklärt die Livebeobachtung exakt:
 
-> `0x63` ist kein transparenter 1:1-Proxy auf den direkten Mainboarddispatcher. Er besitzt register-/funktionsabhängige Filter- oder Gatewaylogik.
+```text
+0x63:1334 lesen → funktioniert, weil 1334 ∈ 1001–1540
+0x63:2133 lesen → funktioniert, weil 2133 ∈ 2001–2180
+0x63:8801 lesen → keine Antwort, weil 8801 in diesem FC03-Dispatcher nicht enthalten ist
+```
 
-Die frühere Annahme, alle direkten Engineeringrechte seien über `0x63` identisch verfügbar, ist damit widerlegt.
+## 15.2 FC06-Bereiche
+
+Statisch bestätigt:
+
+```text
+1001–1540
+8001–8090
+```
+
+mit eigener Parameterprüfung/Sonderlogik.
+
+## 15.3 FC10-Bereiche
+
+Statisch bestätigt sind mindestens:
+
+```text
+1001–1540
+5091–5180
+7001–7090
+7091–7180
+8001–8090
+```
+
+sowie die speziellen OTA-/Serviceadressen im `0xCxxx`-Bereich.
+
+**8801–8820 ist auch im normalen FC10-Bereich dieses `0x63`-Dispatchers nicht enthalten.**
+
+Damit fällt eine FC10-Anfrage auf `8801` in diesem rekonstruierten Handler durch, ohne dass `ENG:CTRL:8801` geschrieben wird.
+
+## 15.4 Einordnung des beobachteten FC16-ACKs auf 8801
+
+Im realen Warmlink-Test wurde auf eine injizierte FC16-Anfrage `0x63 / 8801 / Wert 2` ein formal passender ACK gesehen.
+
+Der statische V3.3-`0x63`-Dispatcher verarbeitet `8801` jedoch weder in seinem normalen FC03- noch FC10-Bereich. Gleichzeitig änderte sich beim Cross-Bus-Gegencheck das echte User-Modbus-Register `8801` nicht nachweisbar.
+
+Daher gilt jetzt präziser:
+
+> Der beobachtete ACK kann **nicht als Beweis für einen Mainboard-Apply auf ENG:CTRL:8801** gewertet werden. Seine genaue Quelle – z. B. weiterer Proxy-/Gatewaypfad oder ein anderes Busverhalten – ist separat zu klären.
+
+Die funktionale SG-Steuerung über `8801` ist über den direkten User-Modbus bestätigt, nicht über Warmlink-0x63.
 
 ---
 
-# 16. Service-/Engineeringbereiche
+# 16. Warmlink-spezifisches internes Fenster 8001–8090
 
-Die früher noch offenen Bereiche sind inzwischen strukturell geschlossen:
+Der bereits früher gefundene Block `8001–8090` bleibt gültig, ist aber jetzt korrekt einzuordnen:
+
+> Er gehört **zum separaten Warmlink-/Service-Dispatcher `0x63`**, nicht zum direkten `ENG:CTRL:8801–8820`-Fenster.
+
+Backing-Struktur:
 
 ```text
-ENG:A    5001–5090  Engineering-Parameter-Schatten / Apply-Profil
-ENG:B    5091–5180  90-Wort-Konfig-/Synchronisationsfenster
-DIAG     6001–6090  read-only Engineering-Diagnosesnapshot
-ENG:CTRL 8801–8820  Engineering-Control; 8801 funktional geschlossen
-SPECIAL  60000      MAIN:1024 / Unit Address auf 1 zurücksetzen
-SPECIAL  60010      STM32-UID-gebundene Unit-Address-Provisionierung
+0x20015EF0
 ```
 
-Die alte Bezeichnung eines allgemeinen Servicefensters `8001–8090` für diesen V3.3-Mainboarddispatcher ist zu verwerfen; der bestätigte Engineering-Control-Bereich ist `8801–8820`.
+Bekannte Spiegelungen in öffentliche V3.3-Statusfelder:
+
+```text
+2151 ← Teil/Status aus 8001-Pfad
+2153 ← 8002
+2156 ← 8003
+2154 ← 8004
+2155 ← 8005
+2157 ← 8007
+2158 ← 8008
+```
+
+Internes 8006 besitzt eine Änderungserkennung mit einem 150-Zyklen-Timer.
+
+Die genaue fachliche Rolle dieses Subsystems bleibt offen; Existenz, 0x63-Zugehörigkeit und RAM-Fenster sind bestätigt.
+
+Damit existieren **zwei verschiedene 8xxx-Namespaces**:
+
+```text
+8001–8090 → Warmlink-/0x63-spezifisches internes Servicefenster
+8801–8820 → direkter Mainboard-Engineering-Control-Bereich
+             8801 = virtueller SG-Ready-Zustand
+```
+
+Diese dürfen nicht zusammengeführt werden.
 
 ---
 
-# 17. OTA-/Service-Namespace auf 0x63
+# 17. Weitere Warmlink-FC10-Servicefenster
 
-Zusätzlich zu ausgewählten normalen/Servicezugriffen nutzt der Warmlink-/0x63-Pfad einen separaten `0xCxxx`-Namespace für OTA/IAP, unter anderem:
+Der `0x63`-FC10-Dispatcher kennt zusätzlich:
 
 ```text
-0xC350 server/version
-0xC357 OTA metadata
-0xC36C cancel
-0xC36E allow upgrade
-0xC371 block ACK/progress
-0xC378 rollback/init
-0xC544 hardware/software info
-0xC5A8 firmware block
+5091–5180
+7001–7090
+7091–7180
 ```
 
-Dieser OTA-Namespace darf nicht mit `MAIN:P`, `MAIN:S` oder `ENG:CTRL` zusammengelegt werden.
+`5091–5180` ist als 90-Wort-Konfigurations-/Synchronisationsfenster bereits aus dem Engineeringaudit bekannt.
+
+Die beiden 7xxx-Fenster sind als eigenständige Warmlink-/Service-Transferbereiche strukturell bestätigt; ihre vollständige fachliche Einzelbedeutung ist noch nicht geschlossen und sollte nicht als normaler User-Parameterbereich angeboten werden.
 
 ---
 
-# 18. Beobachtete Teilnehmer der realen internen Anlage
+# 18. OTA-/Service-Namespace auf 0x63
+
+Zusätzlich nutzt der `0x63`-Dispatcher spezielle `0xCxxx`-Adressen, unter anderem:
+
+```text
+0xC350
+0xC357
+0xC36A / weitere Status-/Steueradressen
+0xC36C/0xC36E im OTA-Gesamtpfad
+0xC371 ff.
+0xC378 ff.
+0xC544 Hardware-/Softwareinformation
+0xC5A8 Firmwareblock
+```
+
+Die exakte OTA-Tabelle ist in den OTA-Dokumenten maßgeblich; wichtig für diese Architekturdatei ist die Namespace-Trennung.
+
+---
+
+# 19. Beobachtete Teilnehmer der realen internen Anlage
 
 | Adresse | Rolle | Anfrage | Antwort | Status |
 |---:|---|---|---|---|
@@ -545,11 +606,11 @@ Dieser OTA-Namespace darf nicht mit `MAIN:P`, `MAIN:S` oder `ENG:CTRL` zusammeng
 | `0x05` | Hydraulikpfad | ja | nicht belegt | H30-Pfad gewählt |
 | `0x61` | alternative H30-Variante | nein | nein | nicht gewählt |
 
-`0x63` gehört **nicht** in diese Tabelle des USART3-Masterzyklus; es ist der separate USART1-Service-/Warmlink-Slavepfad.
+`0x63` gehört **nicht** in diesen USART3-Masterzyklus; es ist der separate USART1-Warmlink-/Service-Slavepfad.
 
 ---
 
-# 19. Diagnosemöglichkeiten
+# 20. Diagnosemöglichkeiten
 
 Ein passiver Mitschnitt des internen USART3-Rings kann die Boards separat überwachen.
 
@@ -575,34 +636,37 @@ Ein passiver Mitschnitt des internen USART3-Rings kann die Boards separat überw
 04 03 03 F3 00 0E ...
 ```
 
-Der separate Warmlink-/LTE-Bus muss mit 9600 8N1 und eigenem Slave-/Registerkontext analysiert werden.
+Der separate Warmlink-/LTE-Bus muss mit 9600 8N1 und eigenem `0x63`-Registerkontext analysiert werden.
 
 ---
 
-# 20. Noch offene Punkte
+# 21. Noch offene Punkte
 
-Die Architektur selbst ist weitgehend geschlossen. Offen bleiben vor allem Einzelbenennungen:
+Offen bleiben vor allem Einzelbenennungen:
 
 1. physische Board-P/N von Unit 0x01,
-2. konkrete Unit-0x04-Fan-Driver-Platine und vollständige Register 1011–1024,
+2. konkrete Unit-0x04-Fan-Driver-Platine,
 3. genaue Hydraulikmodulrevisionen 0x05/0x61,
 4. genaue zweite HMI-Variante 0x02,
 5. einzelne Unit-0x01 Run-/Mode-/Diagnosebits,
-6. vollständige Filter-/Whitelistregeln des Warmlink-/LTE-0x63-Gatewaypfads.
+6. vollständige Semantik von Warmlink `8001–8090`,
+7. vollständige Semantik der Warmlink-FC10-Fenster `7001–7180`,
+8. genaue Quelle des im Realtest gesehenen FC16-ACKs auf nicht unterstütztes `0x63:8801`.
 
 Nicht mehr offen sind:
 
 - interner UART/RS485-Pfad,
 - physische Trennung USART3 vs USART1,
-- öffentliche/Engineeringbereiche des direkten Dispatchers,
-- Funktion von 60000/60010,
+- direkte Mainboard-/Engineeringbereiche,
+- Funktion von 60000/60010 im direkten Dispatcher,
 - Funktion von 8801,
 - 10-Minuten-SG-Hold,
-- Reset dieses Holds durch Änderung von 1334.
+- Reset dieses Holds durch Änderung von 1334,
+- Grund, warum `0x63` FC03 auf 8801 nicht antwortet.
 
 ---
 
-# 21. Verwandte Analysen
+# 22. Verwandte Analysen
 
 - [`FW3.3-INTERNER-MODBUS-UART-HARDWARE.md`](FW3.3-INTERNER-MODBUS-UART-HARDWARE.md)
 - [`FW3.3-MODBUS-GESAMTKATALOG.md`](FW3.3-MODBUS-GESAMTKATALOG.md)
@@ -615,7 +679,7 @@ Nicht mehr offen sind:
 
 ---
 
-# 22. Arbeitsmodell
+# 23. Arbeitsmodell
 
 Für jede künftige Registeranalyse ist die vollständige Kette anzugeben:
 
@@ -626,6 +690,8 @@ interne Soll-/Istvariable
    ↓
 Busrolle / physischer UART
    ↓
+Dispatcher
+   ↓
 Slave + FC + Remote-/Mainboardregister
    ↓
 Producer/Consumer
@@ -635,6 +701,6 @@ Producer/Consumer
 
 Zusätzlich gilt seit den 8801-Live-Tests:
 
-> **Ein bestätigtes Register im direkten Mainboarddispatcher ist nicht automatisch über jeden Gateway-/Servicepfad mit denselben Function Codes verfügbar.**
+> **Gleiche oder ähnliche Registerzahlen in verschiedenen Dispatchern sind eigenständige Namespaces. Ein bestätigtes Register im direkten Mainboarddispatcher ist nicht automatisch auf Warmlink-0x63 verfügbar.**
 
-Damit ist die interne Boardarchitektur und ihre Abgrenzung zum User- und Warmlink-/LTE-Modbus für V3.3 strukturell abgeschlossen.
+Damit ist die interne Boardarchitektur und ihre Abgrenzung zum User- und Warmlink-/LTE-Modbus für V3.3 deutlich präziser geschlossen.
