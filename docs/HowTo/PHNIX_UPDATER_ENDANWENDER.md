@@ -1,10 +1,14 @@
 # PHNIX-Firmware-Updater – Anleitung für Anwender
 
-Stand: 23. August 2026
+Stand: 24. August 2026
 
-Diese Anleitung beschreibt den aktuell nutzbaren Raspberry-Pi-/Linux-Stand
-des FoxAir-Updaters. Eine Windows-Oberfläche ist vorgesehen, aber noch nicht
-implementiert.
+Diese Anleitung beschreibt den aktuellen Linux-/Raspberry-Pi-Ablauf des
+FoxAir-Updaters. Die Installation und der normale Betrieb erfolgen inzwischen
+über den Linux-Installer und den einfachen Launcher `./foxair-updater`.
+
+Der vorherige Stand der Anleitung ist zur Referenz unter
+[`PHNIX_UPDATER_ENDANWENDER_OLD.md`](PHNIX_UPDATER_ENDANWENDER_OLD.md)
+archiviert.
 
 ## Wichtige Sicherheitsgrenze
 
@@ -16,363 +20,501 @@ Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
 SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 ```
 
-Der vollständige Aufruf wurde mit der bereits installierten Firmware V3.3
-erfolgreich bis zur sicheren Gleichversionsablehnung getestet. Eine tatsächlich
-neuere Firmware wurde noch nicht zum Mainboard übertragen. Ein erstes echtes
-Update auf eine neue Version bleibt deshalb ein beaufsichtigter Test mit
-stabiler Stromversorgung und vorbereitetem Recoveryweg.
+Der vollständige Ablauf wurde mit der bereits installierten Firmware V3.3 bis
+zur sicheren Gleichversionsablehnung getestet. Ein erstes echtes Update auf
+eine neuere Mainboard-Firmware bleibt ein beaufsichtigter Test mit stabiler
+Stromversorgung und vorbereitetem Recoveryweg.
 
-## Benötigt werden
+Der Controller arbeitet absichtlich fail-closed: unbekannte oder nicht sicher
+terminale Zustände führen nicht zu einem aggressiven automatischen Cleanup,
+sondern zu einem geschützten Halt.
 
-- Raspberry Pi oder Linux-Rechner mit Python 3;
-- per USB angeschlossenes und über ADB erreichbares PHNIX-LTE-Modem;
-- dieses Repository einschließlich `updater/common`;
-- `phnix_ota_runtime_hook` passend zum geprüften Originaldienst;
-- Firmwaredatei, zum Beispiel `FW3.4.bin`;
-- dazugehöriges Manifest, zum Beispiel `FW3.4.json`.
+## Voraussetzungen
 
-Empfohlen wird ein vollständiger Checkout des Repositorys. Die Beispiele
-werden aus dessen Hauptverzeichnis ausgeführt:
+Benötigt werden:
 
-```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py ...
-```
+- Raspberry Pi OS, Debian oder Ubuntu;
+- Python 3.10 oder neuer;
+- USB-Verbindung zum PHNIX-LTE-Modem;
+- ADB (Android Debug Bridge);
+- Git;
+- die geprüfte Firmwaredatei, zum Beispiel `FW3.4.bin`;
+- ein dazu passendes Manifest, zum Beispiel `FW3.4.json`.
 
-Wer Controller und Helfer direkt in sein Home-Verzeichnis kopiert, muss
-zusätzlich sicherstellen, dass das Python-Paket `updater/common` vorhanden oder
-installiert ist.
+Fehlende Systempakete werden vom Installer auf apt-basierten Systemen bei
+Bedarf automatisch installiert.
 
-## Dateien auf den Raspberry Pi holen
+## Installation
 
-### Empfohlen: vollständiges Repository mit Git
+Als normaler Benutzer ausführen, **nicht** mit `sudo` starten:
 
 ```sh
 cd ~
-git clone https://github.com/dosordie/FoxAir_updater.git
-cd FoxAir_updater
+wget -O install.sh \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/linux/install.sh
+bash install.sh
 ```
 
-Wurde das Repository bereits geklont, lässt es sich aktualisieren:
+Der Installer verwendet `sudo` nur für Systempakete und die udev-Regel.
+Standardmäßig wird nach folgendem Pfad installiert:
+
+```text
+~/FoxAir_updater
+```
+
+### Was der Installer erledigt
+
+Der Installer:
+
+- prüft `python3`, `adb`, `lsusb`, `git` und CA-Zertifikate;
+- installiert fehlende Pakete per `apt-get`;
+- verlangt Python 3.10 oder neuer;
+- verwendet einen schlanken Git-Sparse-Checkout;
+- richtet die benötigten Datei- und Ausführungsrechte ein;
+- erstellt den lokalen Firmwareordner `~/FoxAir_updater/firmware`;
+- installiert eine udev-Regel für das PHNIX-LTE-Modem `1e0e:9001`;
+- lädt die udev-Regeln neu;
+- startet den ADB-Server neu;
+- prüft Controller, Manifestwerkzeug und Launcher;
+- zeigt den erkannten ADB-Status und den installierten Git-Commit an.
+
+Die udev-Regel lautet bewusst einfach:
+
+```udev
+SUBSYSTEM=="usb", ATTR{idVendor}=="1e0e", ATTR{idProduct}=="9001", MODE="0666"
+```
+
+Der Updater ist für einen kontrollierten, kurzfristigen internen Einsatz
+gedacht. Deshalb ist keine zusätzliche `plugdev`-Gruppenverwaltung und kein
+Logout/Login notwendig.
+
+## Schlanker Endanwender-Checkout
+
+Der Installer lädt nicht das komplette Entwicklungsrepository in den
+Arbeitsbaum. Ausgecheckt werden nur die für Linux benötigten Bereiche:
+
+```text
+updater/common
+updater/linux
+tools/phnix_ota
+docs/HowTo
+```
+
+Dateien im Projekt-Hauptverzeichnis wie `foxair-updater`, `.gitignore` und
+`README.md` bleiben ebenfalls sichtbar.
+
+Entwicklungsbereiche wie `devtools`, `tests`, `docs/reverse_engineering`,
+`updater/windows` und `firmware_manifests` bleiben auf GitHub erhalten, werden
+beim Linux-Endanwender aber nicht ausgecheckt.
+
+## Verzeichnisstruktur nach der Installation
+
+Für den Anwender ist hauptsächlich folgende Struktur relevant:
+
+```text
+~/FoxAir_updater/
+├── firmware/          # Firmware + Manifest hier ablegen
+├── foxair-updater     # einfacher Launcher
+├── docs/HowTo/
+├── tools/phnix_ota/   # interne OTA-Werkzeuge
+└── updater/           # gemeinsame Module + Linux-Installer
+```
+
+Der Ordner `firmware/` ist lokal und von Git ausgeschlossen. Ein Update des
+Programms verändert oder löscht dort abgelegte Firmwaredateien und Manifeste
+nicht.
+
+## Vorhandene Installation aktualisieren
+
+Der installierte Installer dient gleichzeitig als Updater:
 
 ```sh
 cd ~/FoxAir_updater
-git pull --ff-only
+bash updater/linux/install.sh
 ```
 
-Anschließend stehen Controller, Runtime-Helfer, Manifestwerkzeug,
-Python-Module und Dokumentation gemeinsam in der erwarteten Verzeichnisstruktur
-zur Verfügung.
+Dabei wird nur per Fast-Forward aktualisiert. Lokale Änderungen an versionierten
+Projektdateien werden nicht automatisch überschrieben. Der Installer verwendet
+absichtlich weder `git reset --hard` noch ein Repository-Cleanup.
 
-### Alternative: jede benötigte Datei mit wget laden
+## ADB-Verbindung prüfen
 
-Ohne Git müssen die Verzeichnisse und alle Python-Abhängigkeiten vollständig
-angelegt werden:
+Nach der Installation kann die Verbindung direkt kontrolliert werden:
 
 ```sh
-mkdir -p ~/FoxAir_updater/tools/phnix_ota
-mkdir -p ~/FoxAir_updater/updater/common
+adb devices -l
+```
+
+Normal ist zum Beispiel:
+
+```text
+0123456789ABCDEF       device usb:1-1.1.3 transport_id:2
+```
+
+Direkt nach einem ADB-Neustart kann das PHNIX-Modem kurzzeitig als `offline`
+erscheinen:
+
+```text
+0123456789ABCDEF       offline usb:1-1.1.3 transport_id:1
+```
+
+Das bedeutet normalerweise nicht, dass die USB-Berechtigung fehlt. Das Gerät
+wurde bereits erkannt, aber der ADB-Handshake ist noch nicht vollständig.
+
+Der aktuelle Installer berücksichtigt dieses Verhalten automatisch, wartet
+kurz und führt bei `offline` einmal `adb reconnect` aus. Manuell kann derselbe
+Vorgang so durchgeführt werden:
+
+```sh
+adb reconnect
+sleep 2
+adb devices -l
+```
+
+Für einen Updatevorgang muss das Gerät anschließend im Status `device` stehen.
+
+## Firmware und Manifest bereitstellen
+
+Firmwaredateien werden **nicht** über das öffentliche GitHub-Repository
+verteilt und vom Installer nicht heruntergeladen.
+
+Firmware und Manifest werden gemeinsam in den lokalen Ordner kopiert:
+
+```text
+~/FoxAir_updater/firmware/FW3.4.bin
+~/FoxAir_updater/firmware/FW3.4.json
+```
+
+Das Manifest enthält den Firmware-Dateinamen, zum Beispiel:
+
+```json
+"firmware_file": "FW3.4.bin"
+```
+
+Wenn Firmware und Manifest im selben Verzeichnis liegen, findet der Controller
+die `.bin`-Datei automatisch. Der Anwender muss `--firmware` deshalb im
+normalen Launcher-Ablauf nicht mehr angeben.
+
+Vor einem Lauf werden unter anderem Dateiname, Dateigröße, MD5 und SHA-256
+gegen das Manifest geprüft.
+
+## Bedienung über `./foxair-updater`
+
+Zuerst in das Installationsverzeichnis wechseln:
+
+```sh
 cd ~/FoxAir_updater
-
-wget -O tools/phnix_ota/phnix_local_ota_controller.py \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/phnix_ota/phnix_local_ota_controller.py
-wget -O tools/phnix_ota/phnix_ota_runtime_hook \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/phnix_ota/phnix_ota_runtime_hook
-wget -O tools/phnix_ota/create_firmware_manifest.py \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/phnix_ota/create_firmware_manifest.py
-
-wget -O updater/__init__.py \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/__init__.py
-wget -O updater/common/__init__.py \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/__init__.py
-wget -O updater/common/adb_transport.py \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/adb_transport.py
-wget -O updater/common/firmware_manifest.py \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/firmware_manifest.py
-wget -O updater/common/phnix_frames.py \
-  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/common/phnix_frames.py
-
-chmod 755 tools/phnix_ota/phnix_local_ota_controller.py
-chmod 755 tools/phnix_ota/phnix_ota_runtime_hook
-chmod 755 tools/phnix_ota/create_firmware_manifest.py
 ```
 
-Danach kurz prüfen:
+Die verfügbare Hilfe zeigt:
 
 ```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py --help
-python3 tools/phnix_ota/create_firmware_manifest.py --help
-adb get-state
+./foxair-updater --help
 ```
 
-`adb get-state` muss `device` ausgeben. Die Firmwaredatei selbst wird nicht
-automatisch aus dem öffentlichen Repository geladen. Sie muss als geprüfte
-Datei separat auf den Raspberry Pi kopiert werden.
+Die normalen Befehle sind:
 
-## Manifest für eine Firmware erstellen
+```text
+./foxair-updater status
+./foxair-updater check MANIFEST
+./foxair-updater update MANIFEST --confirm
+./foxair-updater restore
+./foxair-updater manifest FIRMWARE --software-code CODE --display-version VERSION --target-ssid SSID
+./foxair-updater version
+```
 
-Jede Firmware benötigt eine eigene JSON-Manifestdatei. Sie enthält Zielgerät,
-Version, Dateigröße sowie MD5 und SHA-256. Größe und Hashwerte werden vom
-Werkzeug automatisch aus der Firmwaredatei berechnet.
+Für Entwicklung und Abnahme steht zusätzlich zur Verfügung:
 
-Beispiel für eine analysierte V3.4:
+```text
+./foxair-updater same-version MANIFEST --confirm
+```
+
+Wird bei Manifest oder Firmware nur ein Dateiname angegeben, sucht der Launcher
+automatisch im lokalen Ordner `./firmware/`.
+
+## 1. Originalzustand kontrollieren
 
 ```sh
-cd ~/FoxAir_updater
-
-python3 tools/phnix_ota/create_firmware_manifest.py \
-  --firmware FW3.4.bin \
-  --software-code 82400644 \
-  --display-version V3.4 \
-  --target-ssid 0063 \
-  --output FW3.4.json
+./foxair-updater status
 ```
 
-Das Werkzeug leitet aus `V3.4` automatisch die Busversion `0034` ab und setzt
-standardmäßig die geprüfte Image-Basis `0x08050000`. Falls eine andere Basis
-tatsächlich analysiert und freigegeben wurde, existiert dafür die Expertenoption
-`--image-base`; derzeit akzeptiert das Manifestformat jedoch ausschließlich
-`0x08050000`.
+Dieser Befehl ist vollständig lesend. Er benötigt weder Firmware noch Manifest.
+Geprüft werden unter anderem:
 
-Die Werte dürfen nicht geraten werden:
-
-- `--software-code` muss zum Zielimage und Mainboard passen;
-- `--display-version` muss das Format `Vn.n` verwenden;
-- `--target-ssid` ist die vierstellige hexadezimale Mainboard-SSID;
-- Firmwaredatei und erzeugtes Manifest sollten im selben Verzeichnis liegen.
-
-Erzeugtes Manifest anzeigen:
-
-```sh
-cat FW3.4.json
-```
-
-Der anschließende Dry-Run lädt das Manifest erneut, prüft alle Felder und
-vergleicht Dateiname, Dateigröße, MD5 und SHA-256 mit der Firmwaredatei. Eine
-nachträglich veränderte oder falsch benannte Firmware wird dadurch abgelehnt.
-
-Hinweis: `wire_version`, `size`, `md5` und `sha256` werden automatisch erzeugt
-und sind keine notwendigen Kommandozeilenschalter.
-
-## Die vier normalen Anwenderbefehle
-
-### 1. Originalzustand kontrollieren
-
-```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py \
-  --adb adb \
-  run --check status
-```
-
-Dieser Befehl ist vollständig lesend. Er benötigt weder Firmware noch Manifest
-oder Runtime-Helfer. Geprüft werden unter anderem:
-
-- Originaldienst, Programmpfad und SHA-256;
+- Originaldienst und Programmpfad;
+- SHA-256 der Originaldatei;
 - Prozesszustand und fehlender Debugger;
 - Update-, Injektions- und Transfermarker;
-- Cloud-Sperren und aktuelle MQTT-Verbindung;
+- lokale Cloud-Sperren;
+- aktuelle Cloud-/MQTT-Verbindung;
 - beide Überwachungsdienste;
 - lokaler Firmware-Webserver und Zwischendateien;
 - Abwesenheit des temporären Runtime-Helfers;
 - CRC der OTA-Statusdatei.
 
-Eine kurzzeitig fehlende MQTT-Verbindung kann sich beim nächsten Aufruf wieder
-aufgebaut haben. Solange keine Cloud-Sperre aktiv ist und Dienst sowie
-Watchdogs laufen, ist dies zunächst ein Wiederverbindungszustand. Die aktuelle
-Version zeigt ihn noch als Fehler an; die verständlichere Warnmeldung ist für
-eine spätere Änderung vorgesehen.
+Ein vollständig sauberer Zustand endet mit:
 
-### 2. Dry-Run vor einem Update
-
-```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py \
-  --adb adb \
-  run \
-  --manifest FW3.4.json \
-  --firmware FW3.4.bin
+```text
+[OK] Originalzustand vollstaendig bestaetigt
 ```
 
-Ohne `--execute` wird nichts kopiert, kein Dienst angehalten und nichts zum
-Mainboard gesendet. Der Dry-Run prüft Firmware, Manifest, ADB-Verbindung,
-Originaldienst, Modemwerkzeuge, Speicherplatz, OTA_INFO und den lokalen
-Runtime-Helfer.
+## 2. Dry-Run vor einem Update
 
-Ist `firmware_file` im Manifest korrekt gesetzt und liegt die Firmware neben
-dem Manifest, kann `--firmware` entfallen:
+Beispiel mit `FW3.4.json` im lokalen Firmwareordner:
 
 ```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py \
-  --adb adb \
-  run --manifest FW3.4.json
+./foxair-updater check FW3.4.json
 ```
 
-### 3. Vollständiges Update starten
+Ohne echte Ausführungsfreigabe wird nichts zum Mainboard übertragen und kein
+Dienst für einen Updatevorgang angehalten.
+
+Der Dry-Run prüft insbesondere:
+
+- Manifest und Firmwaredatei;
+- Dateiname, Größe, MD5 und SHA-256;
+- ADB-Verbindung;
+- geprüften Originaldienst;
+- benötigte Werkzeuge auf dem LTE-Modem;
+- Speicherplatz;
+- OTA_INFO;
+- lokalen Runtime-Helfer.
+
+Vor einem echten Update sollte dieser Dry-Run erfolgreich sein.
+
+## 3. Vollständiges Firmwareupdate starten
+
+Beispiel:
 
 ```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py \
-  --adb adb \
-  run \
-  --manifest FW3.4.json \
-  --firmware FW3.4.bin \
-  --execute \
-  --confirm PHNIX-FULL-UPDATE \
-  --state-dir phnix-ota-state
+./foxair-updater update FW3.4.json --confirm
 ```
+
+Der Launcher setzt intern die notwendige explizite Freigabe
+`PHNIX-FULL-UPDATE` und verwendet den lokalen Zustandsordner
+`~/FoxAir_updater/phnix-ota-state`.
 
 Der Controller führt dabei automatisch aus:
 
 1. Firmware, Manifest, Modem und Originaldienst prüfen;
 2. Runtime-Helfer lokal prüfen;
-3. Helfer zunächst unter einem temporären Namen übertragen;
-4. SHA-256 prüfen, Rechte `755` setzen und atomar aktivieren;
+3. Helfer unter einem temporären Namen übertragen;
+4. SHA-256 prüfen, Rechte setzen und Helfer atomar aktivieren;
 5. OTA_INFO und Statistik auf dem Rechner sichern;
-6. Firmware zum Modem kopieren und über `127.0.0.1:8081` bereitstellen;
-7. Originaldienst kontrolliert in den lokalen OTA-Pfad führen;
-8. Status und Fortschritt anzeigen;
-9. nach einem sicher bestätigten Ende Dienst, Watchdogs und Cloud prüfen;
-10. Firmwareablage, Zustandsdateien und Runtime-Helfer wieder löschen.
+6. Firmware zum LTE-Modem kopieren;
+7. Firmware lokal über `127.0.0.1:8081` bereitstellen;
+8. Originaldienst kontrolliert in den lokalen OTA-Pfad führen;
+9. Status und Fortschritt beobachten;
+10. nach sicher bestätigtem Abschluss Originaldienst, Watchdogs und Cloud prüfen;
+11. temporäre Firmwareablage, Marker und Runtime-Helfer wieder entfernen.
 
-Ein externer Buslogger ist für diesen normalen Vollupdate-Aufruf nicht
-erforderlich. Er kann bei einem ersten Test einer neuen Firmware trotzdem als
-zusätzliche Beobachtung verwendet werden.
+Ein externer Buslogger ist für den normalen Vollupdate-Aufruf nicht erforderlich.
+Bei einem ersten Test einer neuen Firmware kann er trotzdem als zusätzliche
+Beobachtung verwendet werden.
 
-### 4. Originalzustand wiederherstellen
+## 4. Originalzustand wiederherstellen
 
 ```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py \
-  --adb adb \
-  run --restore original
+./foxair-updater restore
 ```
 
 Dieser Befehl ist für einen vor dem Firmwaretransfer angehaltenen oder
-unvollständig aufgeräumten lokalen OTA-Lauf vorgesehen. Er:
+unvollständig aufgeräumten lokalen OTA-Lauf vorgesehen.
 
-- installiert den geprüften Helfer automatisch, falls er fehlt;
-- stellt gesicherte Persistenzdateien wieder her;
-- entfernt lokale Cloud-Sperren;
-- beendet übrig gebliebene Debugger und Helfer;
-- stellt Originaldienst und Watchdogs wieder her;
-- entfernt Firmwareablage, Marker und Runtime-Helfer;
-- führt anschließend den vollständigen Statuscheck aus.
+Er kann unter anderem:
 
-Sobald der erste C5A8-Firmwareblock beobachtet wurde, verweigert dieses Kommando
-absichtlich den Eingriff. Ab diesem Zeitpunkt ist der Originaldienst für
-Übertragung und Abschluss zuständig.
+- den geprüften Runtime-Helfer erneut installieren, falls er fehlt;
+- gesicherte Persistenzdateien wiederherstellen;
+- lokale Cloud-Sperren entfernen;
+- übrig gebliebene Debugger und Helfer beenden;
+- Originaldienst und Watchdogs wiederherstellen;
+- lokale Firmwareablage und Marker entfernen;
+- anschließend den vollständigen Statuscheck durchführen.
+
+**Wichtig:** Sobald der erste C5A8-Firmwareblock beobachtet wurde, verweigert
+dieser Recoveryweg absichtlich den Eingriff. Ab diesem Zeitpunkt ist der
+Originaldienst für Übertragung und Abschluss zuständig.
+
+## Manifest für eine Firmware erstellen
+
+Liegt beispielsweise folgende Firmware vor:
+
+```text
+~/FoxAir_updater/firmware/FW3.4.bin
+```
+
+kann das Manifest über den Launcher erzeugt werden:
+
+```sh
+./foxair-updater manifest FW3.4.bin \
+  --software-code 82400644 \
+  --display-version V3.4 \
+  --target-ssid 0063
+```
+
+Standardmäßig wird daneben automatisch erzeugt:
+
+```text
+~/FoxAir_updater/firmware/FW3.4.json
+```
+
+Das Werkzeug berechnet automatisch:
+
+- `wire_version` aus der Displayversion, zum Beispiel `V3.4` → `0034`;
+- Dateigröße;
+- MD5;
+- SHA-256;
+- standardmäßig die geprüfte Image-Basis `0x08050000`.
+
+Ein eigener Schalter `--wire-version` ist deshalb nicht notwendig.
+
+Die manuell angegebenen Werte dürfen nicht geraten werden:
+
+- `--software-code` muss zum Zielimage und Mainboard passen;
+- `--display-version` muss das Format `Vn.n` verwenden;
+- `--target-ssid` ist die vierstellige hexadezimale Mainboard-SSID.
+
+Das erzeugte Manifest kann anschließend angesehen werden:
+
+```sh
+cat firmware/FW3.4.json
+```
+
+Danach sollte immer zuerst ein Dry-Run erfolgen:
+
+```sh
+./foxair-updater check FW3.4.json
+```
+
+## Gleichversionstest – nur für Entwicklung und Abnahme
+
+Der bekannte V3.3-Gleichversionstest ist **kein normaler Endanwenderbefehl**.
+Er dient dazu, den Reaktionsweg des Updaters auf eine bereits installierte
+Firmware zu prüfen.
+
+Mit `FW3.3.bin` und `FW3.3.json` im Firmwareordner:
+
+```sh
+./foxair-updater same-version FW3.3.json --confirm
+```
+
+Der Launcher setzt intern die für diesen Test festgelegten Freigaben:
+
+```text
+PHNIX-C350-SAME-V33
+PASSIVE-LOGGER-RUNNING
+```
+
+Der passive Buslogger muss bei diesem Test tatsächlich laufen.
+
+Bei bereits installierter V3.3 antwortet das Mainboard mit der bekannten
+Gleichversionsablehnung. Es werden dann keine Firmwareblöcke übertragen und
+der temporäre Updatezustand wird nach sicher bestätigtem Ende wieder entfernt.
+
+## Installierten Programmstand anzeigen
+
+```sh
+./foxair-updater version
+```
+
+Damit wird der aktuell installierte Git-Commit angezeigt. Diese Angabe ist bei
+Support- oder Testmeldungen hilfreich.
 
 ## Was geschieht bei einem Fehler?
 
-Es gibt zwei unterschiedliche Fehlerklassen:
+Es gibt zwei grundsätzlich unterschiedliche Fehlerklassen.
 
 ### Sicher terminal beendet
 
-Beispiele sind Gleichversionsablehnung, Parserablehnung oder ein bestätigter
-Fehlerabschluss mit Rückkehr auf Mainboard-Schritt 12. In diesem Fall räumt der
-Controller automatisch auf und löscht auch den Runtime-Helfer.
+Beispiele sind:
+
+- sichere Gleichversionsablehnung;
+- Parserablehnung;
+- bestätigter Fehlerabschluss mit Rückkehr auf Mainboard-Schritt 12.
+
+In einem eindeutig terminalen Zustand kann der Controller automatisch
+aufräumen und den Runtime-Helfer wieder entfernen.
 
 ### Guarded Hold
 
 Bei einem unerwarteten oder nicht eindeutig terminalen Zustand hält der
-Controller den Ablauf geschützt an. Cloud-Sperre, Diagnosezustand und
-Runtime-Helfer bleiben absichtlich erhalten.
+Controller den Ablauf geschützt an.
 
-Dann:
+Dabei können Cloud-Sperre, Diagnosezustand und Runtime-Helfer absichtlich
+bestehen bleiben, damit keine unkontrollierte Zustandsänderung erfolgt.
 
-- LTE-Modem und Wärmepumpe nicht stromlos machen;
+Dann gilt:
+
+- LTE-Modem und Wärmepumpe **nicht** stromlos machen;
 - keinen neuen Updatebefehl starten;
-- Status und Buslog sichern;
-- anschließend den bewusst gewählten Recoveryweg verwenden.
+- Konsolenausgabe und gegebenenfalls Buslog sichern;
+- Status nur gezielt prüfen;
+- anschließend den passenden Recoveryweg verwenden.
 
-`run --restore original` ist nur vor begonnenem C5A8 zulässig.
+`./foxair-updater restore` ist nur vor begonnenem C5A8-Firmwaretransfer zulässig.
 
 ## Konsolenausgabe
 
-- `[OK]` in Grün: Prüfung oder sicherer Meilenstein erfolgreich;
-- `[..]` in Cyan: laufender Zustand;
-- `[WARNUNG]` in Gelb: prüfen, aber nicht automatisch fehlgeschlagen;
-- `[FEHLER]` in Rot: Abbruch, Guarded Hold oder unvollständiger Zustand.
+Die normale Terminalansicht verwendet:
+
+- `[OK]`: Prüfung oder sicherer Meilenstein erfolgreich;
+- `[..]`: laufender Zustand;
+- `[WARNUNG]`: Prüfung erforderlich, aber nicht automatisch fehlgeschlagen;
+- `[FEHLER]`: Abbruch, Guarded Hold oder unvollständiger Zustand.
 
 Bei einem vollständigen Transfer zeigt der Controller den vom Originaldienst
-gemeldeten Fortschritt an. Er greift aufgrund dieser Anzeige nicht in den
-Transfer ein.
+gemeldeten Fortschritt an. Die Fortschrittsanzeige selbst löst keine Eingriffe
+in einen laufenden C5A8-Transfer aus.
 
-## Allgemeine Schalter
+## Experten- und Laborzugriff
 
-Diese Schalter stehen vor dem jeweiligen Unterbefehl:
+Der Launcher ist nur eine komfortable Hülle. Die eigentliche Sicherheits- und
+OTA-Logik bleibt vollständig im bestehenden Controller:
 
-| Schalter | Bedeutung |
-|---|---|
-| `--adb PFAD` | ADB-Programm auswählen, unter Linux meist `adb` |
-| `--serial ID` | bestimmtes ADB-Gerät auswählen, falls mehrere verbunden sind |
-| `--runtime-helper DATEI` | anderen lokalen Pfad zum mitgelieferten Helfer verwenden |
-| `--output auto` | Terminalansicht automatisch auswählen; Standard |
-| `--output human` | kurze, lesbare Benutzeransicht erzwingen |
-| `--output json` | vollständige maschinenlesbare Ausgabe |
-| `--no-color` | ANSI-Farben abschalten |
-
-Beispiel mit fest gewähltem ADB-Gerät:
-
-```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py \
-  --adb adb \
-  --serial DEVICE_ID \
-  run --check status
+```text
+tools/phnix_ota/phnix_local_ota_controller.py
 ```
 
-## Schalter des Updatebefehls
+Für Entwicklung und Diagnose können dessen vollständige Optionen weiterhin
+direkt verwendet werden. Dazu gehören unter anderem:
 
-| Schalter | Bedeutung |
-|---|---|
-| `--manifest DATEI` | verpflichtende Firmware-Metadaten |
-| `--firmware DATEI` | Firmwaredatei; optional, wenn das Manifest sie eindeutig findet |
-| `--execute` | wechselt vom Dry-Run zur echten Ausführung |
-| `--confirm PHNIX-FULL-UPDATE` | notwendige zweite Bestätigung für echte Hardware |
-| `--state-dir VERZEICHNIS` | lokale Sicherungen und Laufzustände; Standard `phnix-ota-state` |
-| `--firmware-url URL` | Expertenoption; Standard ist der lokale Modem-Webserver |
-| `--poll-interval SEKUNDEN` | Abfrageintervall; Standard 2 Sekunden |
-| `--start-timeout SEKUNDEN` | Zeitlimit vor Beginn des Handshakes; Standard 60 Sekunden |
-| `--handshake-timeout SEKUNDEN` | Zeitlimit zwischen frühen Handshakephasen; Standard 20 Sekunden |
-| `--block-timeout` | nur noch veraltete Kompatibilitätsoption; nicht verwenden |
+- rohe `status`-Ausgabe;
+- `cancel-probe-plan`;
+- `pre-c5a8-vm-test`;
+- `pre-c5a8-real-plan`;
+- `same-version-test`;
+- die weiterhin bewusst eingeschränkten Cancel-Pfade.
 
-Die Standardwerte sollten von Endanwendern nicht verändert werden.
+Für den normalen Linux-Anwender sollten jedoch die Befehle über
+`./foxair-updater` verwendet werden.
 
-## Gleichversionstest – nur für Entwicklung und Abnahme
+## Kurzfassung
 
-Der bereits verwendete V3.3-Test ist kein normaler Endnutzerbefehl. Er verlangt
-bewusst einen passiven Logger und eine eigene Bestätigung:
+Installation:
 
 ```sh
-python3 tools/phnix_ota/phnix_local_ota_controller.py \
-  --adb adb \
-  same-version-test \
-  --manifest FW3.3.json \
-  --firmware FW3.3.bin \
-  --execute \
-  --confirm PHNIX-C350-SAME-V33 \
-  --logger-confirm PASSIVE-LOGGER-RUNNING \
-  --state-dir phnix-ota-state
+wget -O install.sh \
+  https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/updater/linux/install.sh
+bash install.sh
 ```
 
-Das Mainboard antwortet bei bereits installierter V3.3 mit C36E Status 0. Es
-werden dann keine Firmwareblöcke übertragen. Auch hier werden Helfer und
-Zwischendateien nach dem bestätigten Ende automatisch gelöscht.
+Firmware und Manifest ablegen:
 
-## Entwickler- und Laborbefehle
+```text
+~/FoxAir_updater/firmware/
+```
 
-Folgende Unterbefehle gehören nicht zum normalen Endnutzerablauf:
+Danach:
 
-- `status`: rohe OTA_INFO-/Hook-Ausgabe;
-- `cancel-probe-plan`: Analyse eines möglichen Cancel-Tests;
-- `pre-c5a8-vm-test`: ausschließlich für den markierten VM-Simulator;
-- `pre-c5a8-real-plan`: erzeugt nur einen beaufsichtigten Realtestplan;
-- `same-version-test`: Abnahme- und Entwicklungstest;
-- `cancel`: auf realer Hardware weiterhin absichtlich nicht als allgemeiner
-  Live-Cancel freigegeben.
+```sh
+cd ~/FoxAir_updater
+./foxair-updater status
+./foxair-updater check FW3.4.json
+./foxair-updater update FW3.4.json --confirm
+```
 
-Für normale Anwender sind `run --check status`, der Dry-Run, `run --execute`
-und bei Bedarf `run --restore original` ausreichend.
+Bei Bedarf vor begonnenem Firmwaretransfer:
 
-## Geplantes Installationsskript
-
-Ein späteres Installationsskript soll Repository/Dateien, Verzeichnisstruktur,
-Python-Voraussetzungen, ADB-Erreichbarkeit und Dateirechte automatisch
-einrichten. Dieser Installer ist noch nicht Bestandteil des aktuellen Stands;
-bis dahin gelten die Git- oder wget-Schritte aus dieser Anleitung.
+```sh
+./foxair-updater restore
+```
