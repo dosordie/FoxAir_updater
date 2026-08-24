@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Windows release version, for example 0.1.2"
+        description: "Windows release version, for example 0.1.5"
         required: true
         type: string
       prerelease:
@@ -39,7 +39,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Version must use x.y.z, for example 0.1.2"
+            throw "Version must use x.y.z, for example 0.1.5"
           }
           git fetch origin main --tags
           $tag = "windows-v$env:VERSION"
@@ -54,6 +54,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
+          $appFile = 'updater/windows/foxair_updater_app.py'
+          $app = Get-Content $appFile -Raw
+          $app = $app -replace '(?m)^APP_VERSION\s*=\s*"[^"]+"', "APP_VERSION = `"$env:VERSION`""
+          Set-Content -Path $appFile -Value $app -NoNewline -Encoding utf8
+
+          # Keep the underlying base-GUI source version synchronized as well.
           $guiFile = 'updater/windows/foxair_updater_gui.py'
           $gui = Get-Content $guiFile -Raw
           $gui = $gui -replace '(?m)^APP_VERSION\s*=\s*"[^"]+"', "APP_VERSION = `"$env:VERSION`""
@@ -75,10 +81,12 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $app = Select-String -Path updater/windows/foxair_updater_app.py -Pattern '^APP_VERSION\s*=\s*"(.+)"$'
           $gui = Select-String -Path updater/windows/foxair_updater_gui.py -Pattern '^APP_VERSION\s*=\s*"(.+)"$'
           $bat = Select-String -Path updater/windows/build_windows_portable.bat -Pattern '^set "APP_VERSION=([^"]+)"$'
           $iss = Select-String -Path updater/windows/installer/FoxAir_Updater.iss -Pattern '^#define MyAppVersion "([^"]+)"$'
-          if (-not $gui -or $gui.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'GUI version mismatch' }
+          if (-not $app -or $app.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'App entrypoint version mismatch' }
+          if (-not $gui -or $gui.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'Base GUI version mismatch' }
           if (-not $bat -or $bat.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'Portable build version mismatch' }
           if (-not $iss -or $iss.Matches[0].Groups[1].Value -ne $env:VERSION) { throw 'Installer version mismatch' }
 
@@ -87,9 +95,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Compile Windows GUI source
+      - name: Compile Windows GUI sources
         shell: pwsh
-        run: python -m py_compile updater/windows/foxair_updater_gui.py
+        run: |
+          python -m py_compile updater/windows/foxair_updater_gui.py
+          python -m py_compile updater/windows/foxair_updater_app.py
 
       - name: Build portable package
         shell: cmd
@@ -121,7 +131,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add updater/windows/foxair_updater_gui.py updater/windows/build_windows_portable.bat updater/windows/installer/FoxAir_Updater.iss
+          git add updater/windows/foxair_updater_app.py updater/windows/foxair_updater_gui.py updater/windows/build_windows_portable.bat updater/windows/installer/FoxAir_Updater.iss
 
           $PSNativeCommandUseErrorActionPreference = $false
           git diff --cached --quiet
@@ -148,8 +158,10 @@ jobs:
             - Portable ZIP und Setup EXE
             - ADB ist nicht enthalten; die GUI verweist auf die offiziellen Android Platform Tools.
             - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi.
-            - Die Windows-GUI verwendet weiterhin den bestehenden gemeinsamen Python-OTA-Controller unverändert.
-            - Ein echter Firmware-Versionswechsel ist weiterhin noch nicht live validiert.
+            - Benutzerfreundliche Dry-Run-/OTA-Statusanzeige mit farbigen Prüfschritten und Fortschrittsbalken.
+            - Der Windows-/Remote-ADB-Pfad wurde real bis zur sicheren V3.3→V3.3-Gleichversionsablehnung bestätigt; dabei wurden keine Firmwaredaten übertragen.
+            - Ein echter Firmware-Versionswechsel mit C5A8-Datenübertragung ist weiterhin noch nicht live validiert.
+            - Die gemeinsame sicherheitsrelevante OTA-Logik bleibt im bytegleich übernommenen Python-Controller-Core.
           files: |
             dist/FoxAir_Updater_Portable_v${{ inputs.version }}.zip
             updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ inputs.version }}.exe
