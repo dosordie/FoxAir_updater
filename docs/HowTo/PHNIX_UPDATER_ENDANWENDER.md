@@ -2,6 +2,30 @@
 
 Stand: 24. August 2026
 
+> [!CAUTION]
+> ## Experimentelles Tool – echtes Firmwareupdate noch nicht live getestet
+>
+> Dieser Updater befindet sich weiterhin im **experimentellen Entwicklungs- und Teststadium**.
+> Ein vollständiges Firmwareupdate von einer installierten Version auf eine andere Version
+> wurde auf realer Hardware **noch nicht erfolgreich durchgeführt und bestätigt**.
+>
+> Bisher wurde der reale Ablauf nur mit der bereits installierten Firmware **V3.3 → V3.3**
+> getestet. Das Mainboard hat dieses Angebot erwartungsgemäß als Gleichversion abgelehnt,
+> weil V3.3 bereits installiert war. Dabei wurden keine Firmwareblöcke geschrieben.
+>
+> Daraus folgt ausdrücklich **nicht**, dass beispielsweise ein echtes Update
+> **V3.3 → V3.4** bereits als sicher oder funktionsfähig nachgewiesen ist.
+>
+> Bei der Verwendung können Fehler auftreten. Im ungünstigsten Fall können unter anderem
+> das Mainboard, das LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt
+> werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
+>
+> **Nutzung ausschließlich auf eigenes Risiko.** Jeder Anwender muss selbst entscheiden,
+> ob er dieses experimentelle Werkzeug verwendet und die möglichen Folgen verantworten
+> kann. Der Ersteller übernimmt, **soweit gesetzlich zulässig**, keine Gewährleistung,
+> Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung
+> oder Fehlfunktion dieses Tools entstehen.
+
 Diese Anleitung beschreibt den aktuellen Linux-/Raspberry-Pi-Ablauf des
 FoxAir-Updaters. Die Installation und der normale Betrieb erfolgen inzwischen
 über den Linux-Installer und den einfachen Launcher `./foxair-updater`.
@@ -10,10 +34,10 @@ Der vorherige Stand der Anleitung ist zur Referenz unter
 [`PHNIX_UPDATER_ENDANWENDER_OLD.md`](PHNIX_UPDATER_ENDANWENDER_OLD.md)
 archiviert.
 
-## Wichtige Sicherheitsgrenze
+## Wichtige technische Sicherheitsgrenze
 
-Der Updater ist derzeit ein experimentelles Werkzeug für genau den geprüften
-Originaldienst `phnixIot4G`:
+Der Updater ist derzeit für genau den geprüften Originaldienst `phnixIot4G`
+ausgelegt:
 
 ```text
 Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
@@ -75,6 +99,7 @@ Der Installer:
 - installiert eine udev-Regel für das PHNIX-LTE-Modem `1e0e:9001`;
 - lädt die udev-Regeln neu;
 - startet den ADB-Server neu;
+- berücksichtigt ein kurzzeitig `offline` erscheinendes ADB-Gerät und versucht einmal `adb reconnect`;
 - prüft Controller, Manifestwerkzeug und Launcher;
 - zeigt den erkannten ADB-Status und den installierten Git-Commit an.
 
@@ -284,6 +309,11 @@ Vor einem echten Update sollte dieser Dry-Run erfolgreich sein.
 
 ## 3. Vollständiges Firmwareupdate starten
 
+> [!WARNING]
+> Dieser Befehl startet den bislang **nicht mit einer anderen Firmwareversion live validierten**
+> Schreibpfad. Ein erfolgreicher Dry-Run beweist nicht, dass das anschließende echte Update
+> fehlerfrei abgeschlossen wird.
+
 Beispiel:
 
 ```sh
@@ -410,6 +440,10 @@ Der passive Buslogger muss bei diesem Test tatsächlich laufen.
 Bei bereits installierter V3.3 antwortet das Mainboard mit der bekannten
 Gleichversionsablehnung. Es werden dann keine Firmwareblöcke übertragen und
 der temporäre Updatezustand wird nach sicher bestätigtem Ende wieder entfernt.
+
+Dieser Test validiert damit den frühen Handshake und den sicheren Abbruch bei
+einer bereits installierten Version. Er validiert **nicht** den späteren
+Firmware-Schreibpfad eines echten Versionswechsels.
 
 ## Installierten Programmstand anzeigen
 
