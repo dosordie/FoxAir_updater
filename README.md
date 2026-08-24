@@ -50,10 +50,14 @@ Für Entwicklung und Abnahme existiert zusätzlich:
 ./foxair-updater same-version MANIFEST --confirm
 ```
 
-Zusätzlich existiert inzwischen eine **erste experimentelle Windows-GUI v0.1**. Sie
-refaktoriert die OTA-Logik bewusst nicht, sondern startet denselben vorhandenen
+Zusätzlich existiert eine **experimentelle Windows-GUI v0.1.1**. Sie refaktoriert
+die OTA-Logik bewusst nicht, sondern startet denselben vorhandenen
 `phnix_local_ota_controller.py` als separates Backend. Details stehen unter
 [`updater/windows/README.md`](updater/windows/README.md).
+
+Öffentliche Windows-Builds werden als eindeutig bezeichnete **Prereleases** unter
+[GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases) veröffentlicht.
+Die Windows-Tags verwenden das Schema `windows-v...`.
 
 Die eigentliche Sicherheits- und OTA-Logik bleibt im Controller
 `tools/phnix_ota/phnix_local_ota_controller.py`.
@@ -85,7 +89,7 @@ Ausführliche Updater-Anleitung:
 Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
 [`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
 
-## Windows GUI v0.1
+## Windows GUI v0.1.1
 
 Die Windows-Version verfolgt bewusst denselben Backend-Ansatz wie Linux:
 
@@ -105,7 +109,7 @@ PHNIX LTE-Modem
 Google-Seite für Android SDK Platform Tools und erlaubt anschließend die Auswahl
 einer vorhandenen `adb.exe`.
 
-Die GUI bietet in der ersten Version:
+Die GUI bietet unter anderem:
 
 - ADB-Erkennung und `adb reconnect` bei kurzzeitigem `offline`;
 - read-only LTE-Backup/Firmware-Download per `adb pull`;
@@ -113,15 +117,16 @@ Die GUI bietet in der ersten Version:
 - Dry-Run;
 - vollständigen Update-Aufruf über den bestehenden Controller;
 - Restore über den bestehenden Controller;
-- Manifest-Erzeugung über das bestehende Manifest-Tool;
+- Manifest-Vorschau mit der vorhandenen `--full --show`-Funktion;
+- automatische Full-Manifest-Erzeugung sowie manuellen Fallback;
 - Gleichversionstest im Bereich „Erweitert“;
-- Loganzeige und Logexport.
+- Loganzeige, Logexport und Protokoll leeren.
 
 Beim Portable-Build werden Controller, Runtime-Helfer und `updater/common/*.py`
 bytegleich aus dem Repository kopiert und mit `fc /b` geprüft. Damit entsteht
 bewusst keine zweite Windows-OTA-Implementierung.
 
-Build-Anleitung:
+Build-/Release-Anleitung:
 [`updater/windows/README.md`](updater/windows/README.md)
 
 ## Firmware bereitstellen
