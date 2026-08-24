@@ -3,6 +3,8 @@ name: Windows Updater Build
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     paths:
       - "updater/windows/**"
       - "updater/common/**"
@@ -10,6 +12,9 @@ on:
       - ".github/workflows/windows-build.yml"
       - "LICENSE"
       - "README.md"
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -24,6 +29,17 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Read Windows app version
+        shell: powershell
+        run: |
+          $text = Get-Content updater/windows/foxair_updater_gui.py -Raw
+          $match = [regex]::Match($text, 'APP_VERSION\s*=\s*"([^"]+)"')
+          if (-not $match.Success) { throw "APP_VERSION not found" }
+          $version = $match.Groups[1].Value
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WINDOWS_RELEASE_TAG=windows-v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Windows version: $version"
+
       - name: Build portable package
         shell: cmd
         run: updater\windows\build_windows_portable.bat
@@ -36,16 +52,56 @@ jobs:
         shell: cmd
         run: updater\windows\build_windows_setup.bat
 
-      - name: Upload portable ZIP
+      # Actions artifacts are themselves downloaded as ZIP archives. Upload the
+      # portable directory here, not our already zipped release asset, so an
+      # Actions download is no longer ZIP-inside-ZIP.
+      - name: Upload portable files
         uses: actions/upload-artifact@v4
         with:
-          name: FoxAir_Updater_Portable_v0.1.0
-          path: dist/FoxAir_Updater_Portable_v0.1.0.zip
+          name: FoxAir_Updater_Portable_v${{ env.APP_VERSION }}
+          path: dist/FoxAir_Updater/
           if-no-files-found: error
 
       - name: Upload Windows setup
         uses: actions/upload-artifact@v4
         with:
-          name: FoxAir_Updater_Setup_v0.1.0
-          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.0.exe
+          name: FoxAir_Updater_Setup_v${{ env.APP_VERSION }}
+          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ env.APP_VERSION }}.exe
           if-no-files-found: error
+
+      - name: Publish Windows prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:WINDOWS_RELEASE_TAG
+          $version = $env:APP_VERSION
+          $portable = "dist/FoxAir_Updater_Portable_v$version.zip"
+          $setup = "updater/windows/installer/Output/FoxAir_Updater_Setup_v$version.exe"
+
+          if (-not (Test-Path $portable)) { throw "Portable ZIP missing: $portable" }
+          if (-not (Test-Path $setup)) { throw "Setup missing: $setup" }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; leaving the published release unchanged."
+            exit 0
+          }
+
+          $notes = @"
+          Experimentelle Windows-Version des FoxAir Updaters.
+
+          - Portable ZIP und Setup EXE
+          - ADB ist nicht enthalten; die GUI verweist auf die offiziellen Android Platform Tools.
+          - Die Windows-GUI verwendet weiterhin den bestehenden gemeinsamen Python-OTA-Controller.
+          - Ein echter Firmware-Versionswechsel ist weiterhin noch nicht live validiert.
+          "@
+
+          gh release create $tag `
+            $portable `
+            $setup `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "FoxAir Updater Windows v$version" `
+            --notes $notes `
+            --prerelease
