@@ -1,10 +1,15 @@
 # Kontrollierter PHNIX-Mainboard-OTA-Sender
 
+> [!NOTE]
+> Für Endanwender existiert inzwischen eine separate **FoxAir-Updater-Windows-GUI** als Portable-ZIP und Setup-EXE unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases).
+>
+> Diese GUI verwendet den rekonstruierten Originaldienst-/ADB-OTA-Pfad und ist **nicht** identisch mit dem hier beschriebenen direkten RS485-Sender. Unter Windows sind ADB-Verbindung, Originalstatus und Backup real getestet; ein echter Firmware-Versionswechsel ist weiterhin nicht live bestätigt.
+
 Für passive Buslogger und die vollständige Benennung der Startup-/OTA-Register
 siehe
 [`PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md).
 
-Stand: 23. August 2026
+Stand: 24. August 2026
 
 [`devtools/phnix_ota_sender.py`](../../devtools/phnix_ota_sender.py) bildet die
 LTE→Mainboard-Seite des rekonstruierten PHNIX-OTA-Protokolls nach. Das Werkzeug
@@ -216,15 +221,24 @@ Er bindet ausschließlich an Loopback, validiert alle Requests gegen die lokale
 Firmwaredatei, rekonstruiert diese und quittiert den letzten Block mit `ackB=2`.
 Er besitzt keinen Flash- oder Cloudcode.
 
-## Möglicher zweiter Schritt: Windows-Programm
+## Windows-Endanwenderprogramm existiert inzwischen
 
-Der Protokollkern ist bewusst unabhängig von einer Oberfläche. Eine spätere
-PySide6-Anwendung kann ihn verwenden und als Windows-EXE gebaut werden. Sinnvolle
-Oberflächen-Gates wären:
+Der frühere Plan einer späteren PySide6-Oberfläche wurde inzwischen als **FoxAir Updater Windows** umgesetzt. Diese Anwendung ist jedoch bewusst **kein GUI-Frontend für den direkten RS485-Sender aus diesem Dokument**.
 
-1. Firmware auswählen und Hash/Boardprofil anzeigen,
-2. Offline-Simulation zwingend erfolgreich abschließen,
-3. Transport getrennt auswählen und Verbindung nur passiv testen,
-4. C350/C357 und C5A8 als getrennte Freigabestufen,
-5. sichtbares Ereignisprotokoll mit Export,
-6. Abschluss-/Status-3-/Status-5-Pfad separat gesperrt halten.
+Die Windows-Endanwenderanwendung arbeitet über ADB mit dem originalen `phnixIot4G`-Dienst und verwendet den gemeinsamen `phnix_local_ota_controller.py` unverändert als Controller-Core. Sie bietet unter anderem:
+
+1. lokale oder Remote-ADB-Verbindung;
+2. read-only LTE-Backup/Firmware-Download;
+3. Originalstatus und Dry-Run;
+4. Manifest-Full/Show und automatische Manifest-Erzeugung;
+5. experimentellen vollständigen OTA-Aufruf mit zusätzlichem Full-Abgleich und LTE-Cache-Sicherung;
+6. Restore und Gleichversionstest;
+7. sichtbares Ereignisprotokoll mit Export.
+
+Download und weitere Informationen:
+
+- [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)
+- [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md)
+- [`firmware_backup_lte.md`](firmware_backup_lte.md)
+
+Der hier dokumentierte `phnix_ota_sender.py` bleibt dagegen ein separates Laborwerkzeug für Offline-Simulation und kontrollierte direkte RS485-Protokolltests.
