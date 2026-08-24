@@ -71,6 +71,46 @@ Beispiel für das bestätigte V3.3-Format:
 }
 ```
 
+## V3.3 zusätzlich gegen originale PHNIX-OTA-Metadaten verifiziert
+
+Für die vorhandene V3.3-Referenzdatei liegt inzwischen auch eine gesicherte originale Datei
+
+```text
+/data/phnixIot_device_OTA_INFO
+```
+
+vor. Deren CRC ist gültig. Aus ihr wurden folgende vom Originaldienst `phnixIot4G` persistent gespeicherte Werte dekodiert:
+
+```text
+Firmware-MD5     CEB6A4BF386FF644E23E410023E74673
+SoftwareCode     82400644
+SoftwareVersion  0033
+```
+
+Die gesicherte V3.3-Firmware besitzt lokal exakt denselben MD5:
+
+```text
+CEB6A4BF386FF644E23E410023E74673
+```
+
+und enthält dieselbe Identität:
+
+```text
+82400644 / 0033 -> V3.3
+```
+
+Damit ist die V3.3-Referenzfirmware nicht nur strukturell plausibel und lokal gehasht, sondern zusätzlich **gegen die original vom PHNIX-Updatedienst gespeicherten OTA-Metadaten verifiziert**.
+
+Wichtig: Das ist ein MD5-Integritätsnachweis gegen die originale PHNIX-Sollreferenz, keine digitale Herstellersignatur. Der zusätzliche SHA-256-Wert stammt aus unserer lokalen Sicherung und dient der späteren eindeutigen Wiedererkennung.
+
+Die zugehörige gesicherte `phnixIot_device_statisic` enthält außerdem die Board-OTA-SSID `99` dezimal = `0x63` und bestätigt damit zusätzlich die Verwendung von `target_ssid = "0063"` für FoxAir.
+
+Details zur Persistenzstruktur und zum realen Abgleich stehen unter:
+
+```text
+docs/reverse_engineering/PHNIX_phnixIot4G_ota_persistence.md
+```
+
 ## Herkunft der Felder
 
 | Feld | Standardmodus | `--full` | Bedeutung |
