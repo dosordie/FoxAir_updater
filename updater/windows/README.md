@@ -1,4 +1,4 @@
-# Windows Updater v0.1.1 (experimentell)
+# Windows Updater v0.1.2 (experimentell)
 
 Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden Linux-/Raspberry-Pi-Backend** gebaut.
 
@@ -32,7 +32,8 @@ Die GUI bietet:
 - Link zur zentralen LTE-/USB-Anleitung;
 - `adb devices -l`;
 - bei `offline` einen einmaligen automatischen `adb reconnect`;
-- manuellen `adb reconnect`.
+- manuellen `adb reconnect`;
+- optionalen **Remote-ADB-Modus über einen Raspberry Pi**.
 
 Offizielle Downloadseite:
 
@@ -42,13 +43,46 @@ LTE-/USB-Anleitung:
 
 https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md
 
-## Funktionen der GUI v0.1.1
+## Remote ADB über Raspberry Pi
+
+Dieser Modus ist für Spezialfälle gedacht, in denen das LTE-Modem per USB an einem Raspberry Pi hängt, die Windows-GUI aber auf einem anderen Rechner läuft.
+
+Auf dem Raspberry Pi kann der ADB-Server kurzfristig im lokalen LAN freigegeben werden:
+
+```bash
+adb kill-server
+adb -a -P 5038 nodaemon server
+```
+
+Der zweite Befehl bleibt im Vordergrund. Zum Beenden einfach **Strg+C** drücken.
+
+In der Windows-GUI anschließend auswählen:
+
+```text
+Remote – ADB-Server auf Raspberry Pi
+Raspberry-Pi-IP: <IP_DES_PI>
+ADB-Server-Port: 5038
+```
+
+Die GUI setzt für ihre gestarteten Prozesse nur:
+
+```text
+ADB_SERVER_SOCKET=tcp:<IP_DES_PI>:5038
+```
+
+Dadurch verwenden auch der bestehende Controller und alle `adb pull`-Aufrufe denselben entfernten ADB-Server, **ohne Änderung am gemeinsamen OTA-Code**.
+
+Auch im Remote-Modus wird auf Windows weiterhin eine lokale `adb.exe` als ADB-Client benötigt. Der Remote-Port sollte nur kurzfristig in einem vertrauenswürdigen LAN offen sein.
+
+## Funktionen der GUI v0.1.2
 
 ### Verbindung
 
+- lokaler oder Remote-ADB-Modus;
 - ADB-Pfad auswählen und lokal merken;
 - ADB-Gerät prüfen;
-- `offline` erkennen und einmal `adb reconnect` versuchen.
+- `offline` erkennen und einmal `adb reconnect` versuchen;
+- Remote-Host und Port lokal merken.
 
 ### Backup / Firmware Downloader
 
@@ -91,7 +125,7 @@ create_firmware_manifest.py
 
 Der empfohlene Ablauf entspricht der Linux-Funktionalität:
 
-1. Firmwaredatei auswählen;
+1. originale Firmwaredatei auswählen;
 2. **Vorschau aus Firmware (Full / Show)** ausführen;
 3. die automatisch erkannten und berechneten Werte prüfen;
 4. **Manifest automatisch erzeugen (Full)** verwenden.
@@ -99,17 +133,31 @@ Der empfohlene Ablauf entspricht der Linux-Funktionalität:
 Intern entsprechen diese beiden Aktionen:
 
 ```text
-create_firmware_manifest.py --firmware FW.bin --full --show
-create_firmware_manifest.py --firmware FW.bin --full --output FW.json
+create_firmware_manifest.py --firmware FIRMWARE --full --show
+create_firmware_manifest.py --firmware FIRMWARE --full --output FIRMWARE.json
 ```
+
+Die Firmwaredatei muss **keine `.bin`-Endung** besitzen. Der Dateidialog zeigt daher standardmäßig alle Dateien an. Die originale Firmware wird nicht verändert.
 
 Die Full-Variante validiert das Cortex-M-Image, sucht die Firmware-Identität im Image, liest daraus Software-Code und Wire-/Display-Version und berechnet Dateigröße, MD5 und SHA-256. Feste FoxAir-Werte wie Target-SSID und Image-Basis werden weiterhin durch dasselbe gemeinsame Tool geprüft.
 
-Wenn die automatische Firmwareanalyse nicht möglich ist, bleibt als letzter Fallback **Manifest manuell erzeugen** mit Software-Code, Display-Version und Target-SSID erhalten. Die eigentliche Manifestvalidierung erfolgt auch dabei weiterhin im gemeinsamen Tool.
+Wenn die automatische Firmwareanalyse nicht möglich ist, bleibt als letzter Fallback **Manifest manuell erzeugen** mit Software-Code, Display-Version und Target-SSID erhalten.
 
 ### Protokoll
 
 Das Protokoll kann gespeichert oder mit **Protokoll leeren** direkt in der GUI geleert werden.
+
+## Programmlogo
+
+Die Windows-Version verwendet dasselbe `app_icon.ico` wie `FoxAir_Control`.
+
+Der Build lädt die Datei direkt aus dem öffentlichen `FoxAir_Control`-Repository und prüft anschließend mit `git hash-object`, dass exakt der gepinnte Git-Blob
+
+```text
+0ae281034216f69c4f18dbdb55cc70d8b78e47e1
+```
+
+verwendet wird. Das Logo wird als EXE-Icon, Fenster-Icon und Setup-Icon verwendet.
 
 ## Experimenteller Stand
 
@@ -117,37 +165,60 @@ Ein echter Versionswechsel wurde weiterhin **nicht live bestätigt**. Bisher wur
 
 Die GUI ändert daran nichts. Sie macht den bestehenden Ablauf nur komfortabler bedienbar.
 
-## Automatische Windows Releases
+## GitHub Actions: Build und Release getrennt
 
-Der Workflow `.github/workflows/windows-build.yml` baut die Windows-Version nach relevanten Änderungen auf `main` automatisch.
+### Windows Updater Build
 
-Nach einem erfolgreichen Build wird für die in `foxair_updater_gui.py` eingetragene `APP_VERSION` automatisch ein öffentliches GitHub-**Prerelease** erzeugt, sofern das Release noch nicht existiert.
+`.github/workflows/windows-build.yml` läuft nach relevanten Änderungen auf `main` beziehungsweise manuell. Dieser Workflow ist nur zum Bauen und Testen gedacht und veröffentlicht **kein GitHub Release** mehr.
 
-Namensschema:
+Die Actions-Artefakte enthalten:
+
+- den Portable-Ordner als ein von GitHub einmal gepacktes ZIP;
+- die Setup-EXE.
+
+Dadurch gibt es beim Actions-Download kein ZIP-in-ZIP mehr.
+
+### Release Windows
+
+Für eine öffentliche Version unter **GitHub Releases** gibt es den separaten Workflow:
 
 ```text
-Tag:     windows-v0.1.1
-Release: FoxAir Updater Windows v0.1.1
+Actions → Release Windows → Run workflow
 ```
 
-Damit sind Windows-Versionen in der gemeinsamen GitHub-Release-Liste klar an `windows-v...` und dem Release-Titel erkennbar. GitHub bietet innerhalb eines Repositorys keine getrennte eigene Release-Kategorie nur für Windows.
-
-Das Release enthält direkt:
+Dort wird nur die Zielversion eingetragen, zum Beispiel:
 
 ```text
-FoxAir_Updater_Portable_v0.1.1.zip
-FoxAir_Updater_Setup_v0.1.1.exe
+0.1.2
 ```
 
-Diese Release-Dateien sind bei einem öffentlichen Repository auch ohne GitHub-Anmeldung herunterladbar.
+Optional kann festgelegt werden, ob das Release als Prerelease markiert wird.
 
-### Warum das Actions-Portable vorher doppelt gezippt erschien
+Der Workflow:
 
-GitHub Actions verpackt jedes heruntergeladene Artifact selbst als ZIP. Zuvor wurde darin noch unser bereits erzeugtes Portable-ZIP abgelegt. Dadurch entstand beim Download aus **Actions** effektiv ZIP-in-ZIP.
+1. setzt die eingegebene Version synchron in GUI, Portable-Build und Inno-Setup-Datei;
+2. prüft die Python-Syntax der GUI;
+3. baut Portable und Setup;
+4. prüft, dass beide Release-Dateien vorhanden sind;
+5. committed eine eventuell geänderte Versionsnummer nach `main`;
+6. erzeugt den Tag `windows-v<Version>`;
+7. veröffentlicht ein normales GitHub Release mit Portable-ZIP und Setup-EXE.
 
-Der Workflow lädt dort jetzt stattdessen direkt den Portable-Ordner als Artifact hoch. Ein Actions-Download enthält dadurch nur noch die eine von GitHub erzeugte ZIP-Hülle.
+Beispiel:
 
-Für **Releases** wird weiterhin das eigentliche einmal gepackte `FoxAir_Updater_Portable_v0.1.1.zip` direkt als Release-Asset veröffentlicht.
+```text
+Tag:     windows-v0.1.2
+Release: FoxAir Updater Windows v0.1.2
+```
+
+Release-Assets:
+
+```text
+FoxAir_Updater_Portable_v0.1.2.zip
+FoxAir_Updater_Setup_v0.1.2.exe
+```
+
+Diese Dateien sind bei einem öffentlichen Repository auch ohne GitHub-Anmeldung über die normale Releases-Seite herunterladbar.
 
 ## Portable Build
 
@@ -155,6 +226,7 @@ Voraussetzungen auf dem **Build-PC**:
 
 - Windows x64;
 - installierte Python-Version mit `py` Launcher;
+- Git;
 - Internetzugriff beim ersten Build.
 
 Aus dem Repository-Root:
@@ -166,24 +238,23 @@ updater\windows\build_windows_portable.bat
 Der Build:
 
 1. installiert PySide6/PyInstaller für den Build-PC;
-2. baut `FoxAir_Updater.exe` als PyInstaller-One-Folder-Anwendung;
-3. kopiert das bestehende Backend bytegleich nach `dist\FoxAir_Updater\backend`;
-4. lädt von `python.org` die offizielle Python-3.11.9-Embeddable-Runtime;
-5. prüft die gepinnte MD5 `6d9aa08531d48fcc261ba667e2df17c4`;
-6. prüft Controller und Manifest-Tool mit dieser privaten Runtime;
-7. legt GPL-/Python-Lizenzen und HowTo-Dokumentation bei;
-8. erzeugt ein Portable-ZIP.
+2. lädt und verifiziert das FoxAir-Control-Programmlogo;
+3. baut `FoxAir_Updater.exe` als PyInstaller-One-Folder-Anwendung;
+4. kopiert das bestehende Backend bytegleich nach `dist\FoxAir_Updater\backend`;
+5. prüft die Bytegleichheit des gemeinsamen Backends;
+6. lädt von `python.org` die offizielle Python-3.11.9-Embeddable-Runtime;
+7. prüft die gepinnte MD5 `6d9aa08531d48fcc261ba667e2df17c4`;
+8. prüft Controller und Manifest-Tool mit dieser privaten Runtime;
+9. legt Dokumentation/Lizenzen bei und erzeugt das Portable-ZIP.
 
 Ergebnis:
 
 ```text
 dist/FoxAir_Updater/
-dist/FoxAir_Updater_Portable_v0.1.1.zip
+dist/FoxAir_Updater_Portable_v0.1.2.zip
 ```
 
-Der Endanwender benötigt **keine Python-Installation**.
-
-Die private Runtime ist nur dazu da, die unveränderten Backend-`.py`-Dateien auszuführen. ADB ist ausdrücklich nicht Bestandteil des Pakets.
+Der Endanwender benötigt **keine Python-Installation**. ADB ist ausdrücklich nicht Bestandteil des Pakets.
 
 ## Setup bauen
 
@@ -196,7 +267,7 @@ updater\windows\build_windows_setup.bat
 Ergebnis:
 
 ```text
-updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.1.exe
+updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.2.exe
 ```
 
 Das Setup installiert denselben Inhalt wie die Portable-Version nach `Program Files`. Laufzeitdaten und OTA-State werden von der GUI in das lokale Benutzer-Anwendungsdatenverzeichnis geschrieben, nicht in `Program Files`.
