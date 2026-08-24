@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, QStandardPaths, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -23,12 +23,14 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QRadioButton,
+    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 ADB_URL = "https://developer.android.com/tools/releases/platform-tools?hl=de#downloads"
 HOWTO_URL = "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md"
 
@@ -68,16 +70,22 @@ class MainWindow(QMainWindow):
         self.signals = Signals()
         self.signals.line.connect(self._line)
         self.signals.done.connect(self._done)
+
         self.busy = False
         self.pending_after_reconnect = False
+        self.pending_manifest_output: Path | None = None
+
         self.controller = backend_dir() / "tools/phnix_ota/phnix_local_ota_controller.py"
         self.manifest_tool = backend_dir() / "tools/phnix_ota/create_firmware_manifest.py"
         self.state_dir = data_dir() / "phnix-ota-state"
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.pending_manifest_output: Path | None = None
 
         self.setWindowTitle(f"FoxAir Updater {APP_VERSION} – EXPERIMENTELL")
-        self.resize(930, 740)
+        self.resize(950, 780)
+        icon = root_dir() / "app_icon.ico"
+        if icon.is_file():
+            self.setWindowIcon(QIcon(str(icon)))
+
         self._ui()
         self._load()
         self._buttons()
@@ -109,11 +117,9 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.addWidget(QLabel("<b>Protokoll</b>"))
         row.addStretch()
-
         clear_button = QPushButton("Protokoll leeren")
         clear_button.clicked.connect(self._clear_log)
         row.addWidget(clear_button)
-
         save_button = QPushButton("Log speichern…")
         save_button.clicked.connect(self._save_log)
         row.addWidget(save_button)
@@ -122,7 +128,6 @@ class MainWindow(QMainWindow):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         layout.addWidget(self.log, 1)
-
         self.setCentralWidget(central)
 
     def _connection(self):
@@ -149,6 +154,34 @@ class MainWindow(QMainWindow):
         row.addStretch()
         layout.addLayout(row)
 
+        layout.addWidget(QLabel("<b>ADB-Verbindungsmodus</b>"))
+        row = QHBoxLayout()
+        self.adb_local = QRadioButton("Lokal – LTE-Modem direkt an diesem Windows-PC")
+        self.adb_remote = QRadioButton("Remote – ADB-Server auf Raspberry Pi")
+        self.adb_local.toggled.connect(self._remote_changed)
+        self.adb_remote.toggled.connect(self._remote_changed)
+        row.addWidget(self.adb_local)
+        row.addWidget(self.adb_remote)
+        row.addStretch()
+        layout.addLayout(row)
+
+        remote_form_widget = QWidget()
+        remote_form = QFormLayout(remote_form_widget)
+        self.remote_host = QLineEdit()
+        self.remote_host.setPlaceholderText("192.168.1.100")
+        self.remote_host.textChanged.connect(self._remote_changed)
+        remote_form.addRow("Raspberry-Pi-IP:", self.remote_host)
+        self.remote_port = QSpinBox()
+        self.remote_port.setRange(1, 65535)
+        self.remote_port.setValue(5038)
+        self.remote_port.valueChanged.connect(self._remote_changed)
+        remote_form.addRow("ADB-Server-Port:", self.remote_port)
+        layout.addWidget(remote_form_widget)
+
+        self.remote_help = QLabel()
+        self.remote_help.setWordWrap(True)
+        layout.addWidget(self.remote_help)
+
         self.adb_state = QLabel("ADB noch nicht geprüft.")
         self.adb_state.setWordWrap(True)
         layout.addWidget(self.adb_state)
@@ -164,8 +197,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
 
         note = QLabel(
-            "ADB wird nicht mitgeliefert. Der Download-Button öffnet nur die "
-            "offizielle Google-Seite."
+            "ADB wird nicht mitgeliefert. Auch im Remote-Modus wird lokal eine "
+            "adb.exe als Client benötigt; nur der ADB-Server und das USB-Modem "
+            "laufen auf dem Raspberry Pi."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -175,7 +209,6 @@ class MainWindow(QMainWindow):
     def _backup(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-
         row = QHBoxLayout()
         self.backup_path = QLineEdit()
         button = QPushButton("Zielordner…")
@@ -191,21 +224,14 @@ class MainWindow(QMainWindow):
         self.backup_stat = QCheckBox("Statistik")
         self.backup_stat.setChecked(True)
         self.backup_service = QCheckBox("Originaldienst phnixIot4G")
-        for item in (
-            self.backup_fw,
-            self.backup_info,
-            self.backup_stat,
-            self.backup_service,
-        ):
+        for item in (self.backup_fw, self.backup_info, self.backup_stat, self.backup_service):
             layout.addWidget(item)
 
         self.backup_button = QPushButton("Backup erstellen")
         self.backup_button.clicked.connect(self._backup_run)
         layout.addWidget(self.backup_button)
-
         note = QLabel(
-            "Read-only: Die Funktion verwendet ausschließlich adb pull und verändert "
-            "nichts am LTE-Modem."
+            "Read-only: Die Funktion verwendet ausschließlich adb pull und verändert nichts am LTE-Modem."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -215,7 +241,6 @@ class MainWindow(QMainWindow):
     def _update(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-
         row = QHBoxLayout()
         self.update_manifest = QLineEdit()
         self.update_manifest.textChanged.connect(self._manifest_summary)
@@ -228,22 +253,18 @@ class MainWindow(QMainWindow):
         self.summary = QLabel("Noch kein Manifest ausgewählt.")
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
-
         self.progress_text = QLabel("Kein Update aktiv.")
         layout.addWidget(self.progress_text)
         self.progress = QProgressBar()
         layout.addWidget(self.progress)
-
         self.dry = QPushButton("Vorprüfung / Dry-Run")
         self.dry.clicked.connect(self._dry)
         layout.addWidget(self.dry)
-
         self.risk = QCheckBox(
             "Risiko eines noch nicht live validierten Versionswechsels verstanden."
         )
         self.risk.toggled.connect(self._buttons)
         layout.addWidget(self.risk)
-
         self.update_btn = QPushButton("FIRMWAREUPDATE STARTEN")
         self.update_btn.clicked.connect(self._update_run)
         layout.addWidget(self.update_btn)
@@ -253,22 +274,17 @@ class MainWindow(QMainWindow):
     def _status(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-
         self.status_btn = QPushButton("Originalzustand prüfen")
         self.status_btn.clicked.connect(self._status_run)
         layout.addWidget(self.status_btn)
-
         self.status_text = QLabel("Noch kein Statuscheck.")
         self.status_text.setWordWrap(True)
         layout.addWidget(self.status_text)
-
         note = QLabel(
-            "Restore ist nur vor begonnenem C5A8 zulässig. Die Entscheidung trifft "
-            "ausschließlich der bestehende Controller."
+            "Restore ist nur vor begonnenem C5A8 zulässig. Die Entscheidung trifft ausschließlich der bestehende Controller."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
-
         self.restore_btn = QPushButton("Originalzustand wiederherstellen")
         self.restore_btn.clicked.connect(self._restore)
         layout.addWidget(self.restore_btn)
@@ -278,7 +294,6 @@ class MainWindow(QMainWindow):
     def _manifest(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-
         row = QHBoxLayout()
         self.firmware = QLineEdit()
         button = QPushButton("Firmware…")
@@ -289,10 +304,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
 
         auto_note = QLabel(
-            "<b>Empfohlen:</b> Die Full-Variante analysiert die Firmware selbst, "
-            "liest Software-Code und Version aus dem Image und berechnet die übrigen "
-            "Manifestfelder. Sie arbeitet fail-closed, wenn die Firmware-Identität "
-            "nicht eindeutig erkannt wird."
+            "<b>Empfohlen:</b> Die Full-Variante analysiert die originale Firmwaredatei selbst, "
+            "liest Software-Code und Version aus dem Image und berechnet die übrigen Manifestfelder. "
+            "Die Firmwaredatei muss keine .bin-Endung besitzen und wird nicht verändert."
         )
         auto_note.setWordWrap(True)
         layout.addWidget(auto_note)
@@ -301,7 +315,6 @@ class MainWindow(QMainWindow):
         self.manifest_preview_btn = QPushButton("Vorschau aus Firmware (Full / Show)")
         self.manifest_preview_btn.clicked.connect(self._manifest_preview_full)
         row.addWidget(self.manifest_preview_btn)
-
         self.manifest_full_btn = QPushButton("Manifest automatisch erzeugen (Full)")
         self.manifest_full_btn.clicked.connect(self._manifest_full)
         row.addWidget(self.manifest_full_btn)
@@ -317,8 +330,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.manifest_preview)
 
         fallback = QLabel(
-            "<b>Fallback / manuell:</b> Nur verwenden, wenn die automatische "
-            "Firmwareanalyse nicht möglich ist und die Werte sicher bekannt sind."
+            "<b>Fallback / manuell:</b> Nur verwenden, wenn die automatische Firmwareanalyse "
+            "nicht möglich ist und die Werte sicher bekannt sind."
         )
         fallback.setWordWrap(True)
         layout.addWidget(fallback)
@@ -345,7 +358,6 @@ class MainWindow(QMainWindow):
     def _advanced(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-
         row = QHBoxLayout()
         self.same_manifest = QLineEdit()
         self.same_manifest.textChanged.connect(self._buttons)
@@ -354,11 +366,9 @@ class MainWindow(QMainWindow):
         row.addWidget(self.same_manifest, 1)
         row.addWidget(button)
         layout.addLayout(row)
-
         self.logger = QCheckBox("Passiver RS485-Logger läuft tatsächlich")
         self.logger.toggled.connect(self._buttons)
         layout.addWidget(self.logger)
-
         self.same_btn = QPushButton("Gleichversionstest starten")
         self.same_btn.clicked.connect(self._same)
         layout.addWidget(self.same_btn)
@@ -373,6 +383,16 @@ class MainWindow(QMainWindow):
         self.backup_path.setText(
             str(self.settings.value("backup", Path.home() / "FoxAir_LTE_Backup"))
         )
+        remote = str(self.settings.value("adb_mode", "local")) == "remote"
+        self.adb_remote.setChecked(remote)
+        self.adb_local.setChecked(not remote)
+        self.remote_host.setText(str(self.settings.value("remote_host", "") or ""))
+        try:
+            port = int(self.settings.value("remote_port", 5038))
+        except (TypeError, ValueError):
+            port = 5038
+        self.remote_port.setValue(port)
+        self._remote_changed()
 
     def _find_adb(self):
         candidates = []
@@ -380,14 +400,8 @@ class MainWindow(QMainWindow):
         if found:
             candidates.append(Path(found))
         if os.environ.get("LOCALAPPDATA"):
-            candidates.append(
-                Path(os.environ["LOCALAPPDATA"])
-                / "Android/Sdk/platform-tools/adb.exe"
-            )
-        candidates += [
-            Path.home() / "platform-tools/adb.exe",
-            Path(r"C:\platform-tools\adb.exe"),
-        ]
+            candidates.append(Path(os.environ["LOCALAPPDATA"]) / "Android/Sdk/platform-tools/adb.exe")
+        candidates += [Path.home() / "platform-tools/adb.exe", Path(r"C:\platform-tools\adb.exe")]
         return next((path for path in candidates if path.is_file()), None)
 
     def _adb_path(self):
@@ -399,6 +413,44 @@ class MainWindow(QMainWindow):
         self.settings.setValue("adb", self.adb.text().strip().strip('"'))
         self._buttons()
 
+    def _remote_changed(self, *args):
+        remote = hasattr(self, "adb_remote") and self.adb_remote.isChecked()
+        if hasattr(self, "remote_host"):
+            self.remote_host.setEnabled(remote)
+            self.remote_port.setEnabled(remote)
+            self.settings.setValue("adb_mode", "remote" if remote else "local")
+            self.settings.setValue("remote_host", self.remote_host.text().strip())
+            self.settings.setValue("remote_port", self.remote_port.value())
+            port = self.remote_port.value()
+            if remote:
+                self.remote_help.setText(
+                    "<b>Raspberry Pi für Remote ADB:</b><br>"
+                    "<code>adb kill-server</code><br>"
+                    f"<code>adb -a -P {port} nodaemon server</code><br>"
+                    "Der Befehl bleibt im Vordergrund. Zum Beenden auf dem Raspberry Pi "
+                    "<b>Strg+C</b> drücken. Nur kurzfristig in einem vertrauenswürdigen LAN verwenden."
+                )
+            else:
+                self.remote_help.setText(
+                    "Im lokalen Modus wird der normale ADB-Server auf diesem Windows-PC verwendet."
+                )
+        self._buttons()
+
+    def _adb_env(self) -> dict[str, str]:
+        if not self.adb_remote.isChecked():
+            return {}
+        host = self.remote_host.text().strip()
+        if not host:
+            return {}
+        return {"ADB_SERVER_SOCKET": f"tcp:{host}:{self.remote_port.value()}"}
+
+    def _adb_ready(self) -> bool:
+        if self._adb_path() is None:
+            return False
+        if self.adb_remote.isChecked() and not self.remote_host.text().strip():
+            return False
+        return True
+
     def _browse_adb(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "adb.exe auswählen", str(Path.home()), "ADB (adb.exe)"
@@ -408,9 +460,7 @@ class MainWindow(QMainWindow):
             self._adb_changed()
 
     def _browse_backup(self):
-        directory = QFileDialog.getExistingDirectory(
-            self, "Backup-Ziel", self.backup_path.text()
-        )
+        directory = QFileDialog.getExistingDirectory(self, "Backup-Ziel", self.backup_path.text())
         if directory:
             self.backup_path.setText(directory)
             self.settings.setValue("backup", directory)
@@ -427,7 +477,7 @@ class MainWindow(QMainWindow):
             self,
             "Firmware auswählen",
             str(Path.home()),
-            "Firmware (*.bin);;Alle Dateien (*)",
+            "Alle Dateien (*);;BIN-Dateien (*.bin)",
         )
         if file_name:
             self.firmware.setText(file_name)
@@ -443,6 +493,11 @@ class MainWindow(QMainWindow):
                 "Bitte zuerst adb.exe auswählen oder über den offiziellen Link herunterladen.",
             )
             self.tabs.setCurrentIndex(0)
+            return None
+        if self.adb_remote.isChecked() and not self.remote_host.text().strip():
+            QMessageBox.warning(self, "Remote ADB", "Bitte die IP-Adresse des Raspberry Pi eintragen.")
+            self.tabs.setCurrentIndex(0)
+            return None
         return path
 
     def _run(self, op, command, cwd=None):
@@ -450,15 +505,18 @@ class MainWindow(QMainWindow):
             return
         self.busy = True
         self._buttons()
+        adb_env = self._adb_env()
+        if adb_env:
+            self._log("[Remote ADB] ADB_SERVER_SOCKET=" + adb_env["ADB_SERVER_SOCKET"])
         self._log("$ " + subprocess.list2cmdline([str(item) for item in command]))
 
         def work():
-            flags = (
-                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-            )
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
             env = os.environ.copy()
             env["PYTHONUTF8"] = "1"
             env["PYTHONUNBUFFERED"] = "1"
+            env.pop("ADB_SERVER_SOCKET", None)
+            env.update(adb_env)
             output = []
             try:
                 process = subprocess.Popen(
@@ -504,13 +562,7 @@ class MainWindow(QMainWindow):
         if not firmware.is_file():
             QMessageBox.warning(self, "Firmware fehlt", "Bitte zuerst eine Firmwaredatei auswählen.")
             return None
-
-        command = [
-            str(backend_python()),
-            str(self.manifest_tool),
-            "--firmware",
-            str(firmware),
-        ]
+        command = [str(backend_python()), str(self.manifest_tool), "--firmware", str(firmware)]
         if full:
             command.append("--full")
         if show:
@@ -527,23 +579,19 @@ class MainWindow(QMainWindow):
             return
         if not isinstance(record, dict):
             return
-
         event = record.get("event")
         if event in ("guarded-hold", "manual-recovery-required"):
             QMessageBox.critical(
                 self,
                 "Guarded Hold",
-                "Keine weiteren Befehle ausführen und Wärmepumpe/LTE-Modem "
-                "nicht stromlos machen.",
+                "Keine weiteren Befehle ausführen und Wärmepumpe/LTE-Modem nicht stromlos machen.",
             )
-
         label = record.get("event")
         hook = record.get("hook")
         if isinstance(hook, dict) and hook.get("phase"):
             label = hook["phase"]
         if label:
             self.progress_text.setText(str(label))
-
         info = record.get("ota_info")
         if (
             isinstance(info, dict)
@@ -551,9 +599,7 @@ class MainWindow(QMainWindow):
             and isinstance(info.get("length"), int)
             and info["length"] > 0
         ):
-            self.progress.setValue(
-                min(100, round(info["offset"] * 100 / info["length"]))
-            )
+            self.progress.setValue(min(100, round(info["offset"] * 100 / info["length"])))
 
     def _done(self, op, code, output):
         self.busy = False
@@ -561,116 +607,80 @@ class MainWindow(QMainWindow):
         self._log(f"[Exit {code}]")
 
         if op == "adb":
-            device = next(
-                (
-                    line
-                    for line in output.splitlines()
-                    if "\tdevice" in line or " device " in line
-                ),
-                "",
-            )
-            offline = next(
-                (
-                    line
-                    for line in output.splitlines()
-                    if "\toffline" in line or " offline " in line
-                ),
-                "",
+            device = next((line for line in output.splitlines() if "\tdevice" in line or " device " in line), "")
+            offline = next((line for line in output.splitlines() if "\toffline" in line or " offline " in line), "")
+            source = (
+                f"Remote {self.remote_host.text().strip()}:{self.remote_port.value()}"
+                if self.adb_remote.isChecked()
+                else "Lokal"
             )
             if device:
-                self.adb_state.setText(
-                    "<b>ADB verbunden:</b><br><code>" + device + "</code>"
-                )
+                self.adb_state.setText(f"<b>ADB verbunden ({source}):</b><br><code>{device}</code>")
                 self.pending_after_reconnect = False
             elif offline and not self.pending_after_reconnect:
                 self.pending_after_reconnect = True
-                self.adb_state.setText("ADB offline – reconnect wird versucht…")
+                self.adb_state.setText(f"ADB-Gerät über {source} ist offline – reconnect wird versucht…")
                 self._reconnect(auto=True)
             else:
                 self.adb_state.setText(
-                    "Kein ADB-Gerät im Status device erkannt."
+                    f"Kein ADB-Gerät über {source} im Status device erkannt."
                     if not offline
-                    else "ADB-Gerät bleibt offline."
+                    else f"ADB-Gerät über {source} bleibt offline."
                 )
-
         elif op == "reconnect":
             if code == 0:
                 adb = self._adb_path()
                 if adb:
                     self._run("adb", [str(adb), "devices", "-l"])
-
         elif op == "status":
             try:
                 data = json.loads(output)
                 checks = data.get("checks", {})
-                lines = [
-                    ("✓ " if ok else "✗ ") + name for name, ok in checks.items()
-                ]
+                lines = [("✓ " if ok else "✗ ") + name for name, ok in checks.items()]
                 self.status_text.setText(
                     ("<b>OK</b><br>" if data.get("original_ok") else "<b>NICHT OK</b><br>")
                     + "<br>".join(lines)
                 )
             except Exception:
                 self.status_text.setText("Status beendet – Details im Log.")
-
         elif op == "manifest-preview-full":
             self.manifest_preview.setPlainText(output)
             if code != 0:
                 QMessageBox.critical(
                     self,
                     "Manifest-Vorschau",
-                    "Automatische Firmwareanalyse fehlgeschlagen. Details stehen in "
-                    "der Vorschau und im Protokoll.",
+                    "Automatische Firmwareanalyse fehlgeschlagen. Details stehen in der Vorschau und im Protokoll.",
                 )
-
         elif op == "manifest-full":
             if code == 0 and self.pending_manifest_output:
                 try:
-                    self.manifest_preview.setPlainText(
-                        self.pending_manifest_output.read_text(encoding="utf-8")
-                    )
+                    self.manifest_preview.setPlainText(self.pending_manifest_output.read_text(encoding="utf-8"))
                 except OSError:
                     pass
             QMessageBox.information(
                 self,
                 "Manifest",
-                "Manifest automatisch erzeugt."
-                if code == 0
-                else "Automatische Manifest-Erzeugung fehlgeschlagen.",
+                "Manifest automatisch erzeugt." if code == 0 else "Automatische Manifest-Erzeugung fehlgeschlagen.",
             )
-
         elif op == "manifest":
             if code == 0 and self.pending_manifest_output:
                 try:
-                    self.manifest_preview.setPlainText(
-                        self.pending_manifest_output.read_text(encoding="utf-8")
-                    )
+                    self.manifest_preview.setPlainText(self.pending_manifest_output.read_text(encoding="utf-8"))
                 except OSError:
                     pass
             QMessageBox.information(
                 self,
                 "Manifest",
-                "Manifest manuell erzeugt."
-                if code == 0
-                else "Manifest-Erzeugung fehlgeschlagen.",
+                "Manifest manuell erzeugt." if code == 0 else "Manifest-Erzeugung fehlgeschlagen.",
             )
-
         elif op == "backup":
             QMessageBox.information(
                 self,
                 "Backup",
-                "Backup abgeschlossen."
-                if code == 0
-                else "Backup fehlgeschlagen – Details im Log.",
+                "Backup abgeschlossen." if code == 0 else "Backup fehlgeschlagen – Details im Log.",
             )
-
         elif op in ("dry", "update", "restore", "same"):
-            text = {
-                "dry": "Dry-Run",
-                "update": "Firmwareupdate",
-                "restore": "Restore",
-                "same": "Gleichversionstest",
-            }[op]
+            text = {"dry": "Dry-Run", "update": "Firmwareupdate", "restore": "Restore", "same": "Gleichversionstest"}[op]
             (QMessageBox.information if code == 0 else QMessageBox.critical)(
                 self, text, f"{text}: Exit-Code {code}"
             )
@@ -690,29 +700,21 @@ class MainWindow(QMainWindow):
         adb = self._require_adb()
         if not adb:
             return
-
         target = Path(self.backup_path.text().strip())
         target.mkdir(parents=True, exist_ok=True)
-
         items = []
         if self.backup_fw.isChecked():
             items.append(("/cache/phnixIot_device_OTA", "phnixIot_device_OTA"))
         if self.backup_info.isChecked():
-            items.append(
-                ("/data/phnixIot_device_OTA_INFO", "phnixIot_device_OTA_INFO")
-            )
+            items.append(("/data/phnixIot_device_OTA_INFO", "phnixIot_device_OTA_INFO"))
         if self.backup_stat.isChecked():
-            items.append(
-                ("/data/phnixIot_device_statisic", "phnixIot_device_statisic")
-            )
+            items.append(("/data/phnixIot_device_statisic", "phnixIot_device_statisic"))
         if self.backup_service.isChecked():
             items.append(("/data/phnixIot4G", "phnixIot4G"))
         if not items:
             return
-
         command_text = " && ".join(
-            f'"{adb}" pull "{remote}" "{target / name}"'
-            for remote, name in items
+            f'"{adb}" pull "{remote}" "{target / name}"' for remote, name in items
         )
         self._run("backup", ["cmd.exe", "/d", "/s", "/c", command_text])
 
@@ -744,14 +746,8 @@ class MainWindow(QMainWindow):
         self._backend(
             "update",
             [
-                "run",
-                "--manifest",
-                str(manifest),
-                "--execute",
-                "--confirm",
-                "PHNIX-FULL-UPDATE",
-                "--state-dir",
-                str(self.state_dir),
+                "run", "--manifest", str(manifest), "--execute", "--confirm",
+                "PHNIX-FULL-UPDATE", "--state-dir", str(self.state_dir),
             ],
         )
 
@@ -775,16 +771,9 @@ class MainWindow(QMainWindow):
         self._backend(
             "same",
             [
-                "same-version-test",
-                "--manifest",
-                str(manifest),
-                "--execute",
-                "--confirm",
-                "PHNIX-C350-SAME-V33",
-                "--logger-confirm",
-                "PASSIVE-LOGGER-RUNNING",
-                "--state-dir",
-                str(self.state_dir),
+                "same-version-test", "--manifest", str(manifest), "--execute", "--confirm",
+                "PHNIX-C350-SAME-V33", "--logger-confirm", "PASSIVE-LOGGER-RUNNING",
+                "--state-dir", str(self.state_dir),
             ],
         )
 
@@ -797,9 +786,7 @@ class MainWindow(QMainWindow):
     def _manifest_full(self):
         firmware = Path(self.firmware.text().strip())
         if not firmware.is_file():
-            QMessageBox.warning(
-                self, "Firmware fehlt", "Bitte zuerst eine Firmwaredatei auswählen."
-            )
+            QMessageBox.warning(self, "Firmware fehlt", "Bitte zuerst eine Firmwaredatei auswählen.")
             return
         output = firmware.with_suffix(".json")
         self.pending_manifest_output = output
@@ -810,37 +797,23 @@ class MainWindow(QMainWindow):
     def _manifest_run(self):
         firmware = Path(self.firmware.text().strip())
         if not firmware.is_file() or not all(
-            (
-                self.sw_code.text().strip(),
-                self.display_ver.text().strip(),
-                self.ssid.text().strip(),
-            )
+            (self.sw_code.text().strip(), self.display_ver.text().strip(), self.ssid.text().strip())
         ):
             QMessageBox.warning(
                 self,
                 "Manifest",
-                "Für die manuelle Fallback-Erzeugung werden Firmware, Software Code, "
-                "Display-Version und Target SSID benötigt.",
+                "Für die manuelle Fallback-Erzeugung werden Firmware, Software Code, Display-Version und Target SSID benötigt.",
             )
             return
-
         output = firmware.with_suffix(".json")
         self.pending_manifest_output = output
         self._run(
             "manifest",
             [
-                str(backend_python()),
-                str(self.manifest_tool),
-                "--firmware",
-                str(firmware),
-                "--software-code",
-                self.sw_code.text().strip(),
-                "--display-version",
-                self.display_ver.text().strip(),
-                "--target-ssid",
-                self.ssid.text().strip(),
-                "--output",
-                str(output),
+                str(backend_python()), str(self.manifest_tool), "--firmware", str(firmware),
+                "--software-code", self.sw_code.text().strip(), "--display-version",
+                self.display_ver.text().strip(), "--target-ssid", self.ssid.text().strip(),
+                "--output", str(output),
             ],
             str(backend_dir()),
         )
@@ -851,38 +824,27 @@ class MainWindow(QMainWindow):
             data = json.loads(path.read_text(encoding="utf-8"))
             firmware = path.parent / str(data.get("firmware_file", ""))
             self.summary.setText(
-                f"Version: <b>{data.get('display_version', '?')}</b> | "
-                f"Wire: {data.get('wire_version', '?')} | "
-                f"Software Code: {data.get('software_code', '?')} | "
-                f"SSID: {data.get('target_ssid', '?')}<br>"
-                f"Firmware: {data.get('firmware_file', '?')} "
-                f"({'vorhanden' if firmware.is_file() else 'FEHLT'})"
+                f"Version: <b>{data.get('display_version', '?')}</b> | Wire: {data.get('wire_version', '?')} | "
+                f"Software Code: {data.get('software_code', '?')} | SSID: {data.get('target_ssid', '?')}<br>"
+                f"Firmware: {data.get('firmware_file', '?')} ({'vorhanden' if firmware.is_file() else 'FEHLT'})"
             )
         except Exception:
             self.summary.setText("Noch kein gültiges Manifest ausgewählt.")
         self._buttons()
 
     def _buttons(self):
-        adb_ready = self._adb_path() is not None
+        adb_ready = self._adb_ready() if hasattr(self, "adb_remote") else False
         update_manifest_ready = (
-            Path(self.update_manifest.text().strip()).is_file()
-            if hasattr(self, "update_manifest")
-            else False
+            Path(self.update_manifest.text().strip()).is_file() if hasattr(self, "update_manifest") else False
         )
         same_manifest_ready = (
-            Path(self.same_manifest.text().strip()).is_file()
-            if hasattr(self, "same_manifest")
-            else False
+            Path(self.same_manifest.text().strip()).is_file() if hasattr(self, "same_manifest") else False
         )
         firmware_ready = (
-            Path(self.firmware.text().strip()).is_file()
-            if hasattr(self, "firmware")
-            else False
+            Path(self.firmware.text().strip()).is_file() if hasattr(self, "firmware") else False
         )
-
         if not hasattr(self, "adb_check"):
             return
-
         enabled = not self.busy
         self.adb_check.setEnabled(enabled and adb_ready)
         self.adb_reconnect.setEnabled(enabled and adb_ready)
@@ -890,21 +852,11 @@ class MainWindow(QMainWindow):
         self.status_btn.setEnabled(enabled and adb_ready)
         self.restore_btn.setEnabled(enabled and adb_ready)
         self.dry.setEnabled(enabled and adb_ready and update_manifest_ready)
-        self.update_btn.setEnabled(
-            enabled
-            and adb_ready
-            and update_manifest_ready
-            and self.risk.isChecked()
-        )
+        self.update_btn.setEnabled(enabled and adb_ready and update_manifest_ready and self.risk.isChecked())
         self.manifest_preview_btn.setEnabled(enabled and firmware_ready)
         self.manifest_full_btn.setEnabled(enabled and firmware_ready)
         self.manifest_btn.setEnabled(enabled and firmware_ready)
-        self.same_btn.setEnabled(
-            enabled
-            and adb_ready
-            and same_manifest_ready
-            and self.logger.isChecked()
-        )
+        self.same_btn.setEnabled(enabled and adb_ready and same_manifest_ready and self.logger.isChecked())
 
     def _log(self, text):
         self.log.appendPlainText(text)
@@ -920,9 +872,7 @@ class MainWindow(QMainWindow):
             "Log (*.log);;Text (*.txt)",
         )
         if file_name:
-            Path(file_name).write_text(
-                self.log.toPlainText() + "\n", encoding="utf-8"
-            )
+            Path(file_name).write_text(self.log.toPlainText() + "\n", encoding="utf-8")
 
     def closeEvent(self, event):
         if self.busy:
@@ -940,6 +890,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("FoxAir Updater")
     app.setOrganizationName("FoxAir")
+    icon = root_dir() / "app_icon.ico"
+    if icon.is_file():
+        app.setWindowIcon(QIcon(str(icon)))
     window = MainWindow()
     window.show()
     return app.exec()
