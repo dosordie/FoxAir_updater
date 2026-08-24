@@ -10,6 +10,32 @@ from tools.phnix_ota import phnix_local_ota_controller_hardened as hardened
 
 
 class OtaHardeningTests(unittest.TestCase):
+    def test_df_parser_ignores_header_and_uses_last_valid_data_row(self):
+        output = (
+            "Filesystem 1K-blocks Used Available Use% Mounted on\n"
+            "sim 1048576 1 1048575 1% /data\n"
+        )
+        result = hardened.parse_df_output(output, "/data")
+        self.assertEqual(result["filesystem"], "sim")
+        self.assertEqual(result["free_bytes"], 1048575 * 1024)
+
+    def test_df_parser_fails_closed_without_numeric_data_row(self):
+        with self.assertRaises(hardened.core.OtaError):
+            hardened.parse_df_output(
+                "Filesystem 1K-blocks Used Available Use% Mounted on\n",
+                "/data",
+            )
+
+    def test_remote_df_is_parsed_on_host_without_tail_pipeline(self):
+        adb = Mock()
+        adb.shell.return_value = (
+            "Filesystem 1K-blocks Used Available Use% Mounted on\n"
+            "sim 1048576 1 1048575 1% /data\n"
+        )
+        result = hardened.remote_filesystem_stat(adb, "/data")
+        adb.shell.assert_called_once_with("df -k /data 2>/dev/null")
+        self.assertEqual(result["filesystem"], "sim")
+
     def test_same_filesystem_storage_requires_two_firmware_copies_plus_margin(self):
         adb = Mock()
         adb.shell.side_effect = [
@@ -61,7 +87,7 @@ class OtaHardeningTests(unittest.TestCase):
             self.assertIn("updated_at", value)
             self.assertFalse(path.with_name("run-state.json.tmp").exists())
 
-    def test_transfer_complete_message_distinguishes_transport_from_promotion(self):
+    def test_transfer_complete_message_distinguishes_transport_from_final_completion(self):
         hardened.core.COLOR_ENABLED = False
         output = io.StringIO()
         with redirect_stdout(output):
@@ -71,25 +97,21 @@ class OtaHardeningTests(unittest.TestCase):
             )
         rendered = output.getvalue()
         self.assertIn("100 % Firmware uebertragen", rendered)
-        self.assertIn("programmiert und verifiziert intern weiter", rendered)
+        self.assertIn("intern noch programmieren und verifizieren", rendered)
 
-    def test_runtime_hook_cleanup_never_sigstops_after_transfer_started(self):
+    def test_pr1_does_not_replace_the_core_ota_lifecycle(self):
+        source = Path("tools/phnix_ota/phnix_local_ota_controller_hardened.py").read_text(encoding="utf-8")
+        self.assertIn("_ORIGINAL_RUN_UPDATE = core.run_update", source)
+        self.assertIn("return _ORIGINAL_RUN_UPDATE(args, adb)", source)
+        self.assertNotIn("REMOTE_HELPER} hold", source)
+        self.assertNotIn("host-supervision-lost", source)
+        self.assertNotIn("transfer-unattended", source)
+
+    def test_runtime_hook_keeps_original_guarded_hold_semantics_in_pr1(self):
         hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         cleanup = hook.split("cleanup() {", 1)[1].split("stop_hook() {", 1)[0]
-        post_transfer = cleanup.split('if test -f "$TRANSFER_STARTED"; then', 1)[1].split("\n        fi", 1)[0]
-        self.assertIn("transfer-unattended", post_transfer)
-        self.assertIn("return", post_transfer)
-        self.assertNotIn("kill -STOP", post_transfer)
         self.assertIn("kill -STOP", cleanup)
-
-    def test_hardened_host_exception_has_no_hold_after_point_of_no_return(self):
-        source = Path("tools/phnix_ota/phnix_local_ota_controller_hardened.py").read_text(encoding="utf-8")
-        exception = source.split("except BaseException as error:", 1)[1].split("\n    finally:", 1)[0]
-        started_branch = exception.split("if started:", 1)[1].split("\n            else:", 1)[0]
-        pre_transfer_branch = exception.split("\n            else:", 1)[1]
-        self.assertIn("host-supervision-lost", started_branch)
-        self.assertNotIn(" hold --status ", started_branch)
-        self.assertIn(" hold --status ", pre_transfer_branch)
+        self.assertNotIn("transfer-unattended", cleanup)
 
     def test_linux_launcher_requires_full_for_real_update(self):
         launcher = Path("foxair-updater").read_text(encoding="utf-8")
@@ -102,12 +124,17 @@ class OtaHardeningTests(unittest.TestCase):
     def test_windows_wrapper_uses_stable_ota_state_and_same_version_cache_restore(self):
         wrapper = Path("updater/windows/phnix_windows_controller_wrapper.py").read_text(encoding="utf-8")
         self.assertIn('windows_app_state_root() / "ota-state"', wrapper)
-        self.assertIn('core = here / "phnix_local_ota_controller_hardened.py"', wrapper)
+        self.assertIn("phnix_local_ota_controller_hardened.py", wrapper)
         full = wrapper.split("if is_full_update:", 1)[1].split("if is_same:", 1)[0]
         self.assertIn('if phase == "same-version":', full)
         self.assertIn("restore_update_cache(base)", full)
         self.assertIn('elif phase == "success":', full)
         self.assertIn("clear_cache_pending()", full)
+
+    def test_windows_gui_development_mode_uses_wrapper(self):
+        gui = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        self.assertIn("phnix_windows_controller_wrapper.py", gui)
+        self.assertIn("controller_path()", gui)
 
 
 if __name__ == "__main__":
