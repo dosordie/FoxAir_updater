@@ -2,7 +2,7 @@
 
 Stand: 24. August 2026
 
-Diese Datei fasst **alle unmittelbar software-relevanten Änderungen** aus dem abgeschlossenen V3.3-Modbusaudit zusammen.
+Diese Datei fasst **alle unmittelbar software-relevanten Änderungen** aus dem abgeschlossenen V3.3-Modbusaudit einschließlich der inzwischen erfolgten Live-Verifikation von SG Ready über Register `8801` zusammen.
 
 Vergleichsbasis:
 
@@ -12,7 +12,7 @@ data/foxair_phnix_registers.json
 Blob SHA: ff24c160813f12304b7b8c403be0287b49a84686
 ```
 
-Die Datei ist eine Implementierungsvorlage. `FoxAir_Control` selbst wird durch diesen Audit **nicht automatisch verändert**.
+Die Datei ist eine Implementierungsvorlage. `FoxAir_Control/data` selbst wird durch diesen Audit nicht automatisch verändert.
 
 ---
 
@@ -38,6 +38,7 @@ Die Datei ist eine Implementierungsvorlage. `FoxAir_Control` selbst wird durch d
 | 2119 | Reserviert | Highword 32-Bit-Zähler 2119/2120 | 32-Bit-Paar modellieren |
 | 2121 | Reserviert | Highword 32-Bit-Zähler 2121/2122 | 32-Bit-Paar modellieren |
 | 2123 | Reserviert | Highword 32-Bit-Zähler 2123/2124 | 32-Bit-Paar modellieren |
+| **2133** | aktiver SG-Modus | **effektiver SG-Ready-Modus 0..4; Umschaltung mit festem 10-Minuten-Hold** | Verhalten/Tooltip ergänzen |
 | 2136 | unbekannter x0.1-Wert | **T04 Außentemperatur, zweiter Publikationspfad** | korrigieren |
 | 2137 | Spiegel 2054 Kandidat | **reine WP-/Inverter-Eingangsleistung**, raw/10 kW | korrigieren |
 | 2138 | Spiegel 2059 Kandidat | **reine thermische WP-Leistung**, raw/10 kW | korrigieren |
@@ -47,56 +48,121 @@ Die Datei ist eine Implementierungsvorlage. `FoxAir_Control` selbst wird durch d
 
 ---
 
-# 2. Priorität A – SG Ready: fehlender Modus in MAIN:1334
+# 2. Priorität A – SG Ready über MAIN:1334 und ENG:CTRL:8801
 
-Aktueller Softwarestand:
+Dieser Punkt ist inzwischen **Binary + live am realen Gerät bestätigt**.
+
+## MAIN:1334 / SG01
+
+Bisheriger Softwarestand:
 
 ```text
-1334 / SG01
 0 = Aus
-1 = Einfach / 1 Kontakt
+1 = 1 Kontakt
 2 = 2 Kontakte
 ```
 
-V3.3 besitzt zusätzlich einen expliziten Pfad:
+Ergänzen:
 
 ```text
-1334 == 3
+3 = SG Ready über Modbus / virtueller SG-Eingang
 ```
 
-In diesem Modus werden die physischen SG-Kontakte nicht benutzt; die Firmware liest stattdessen:
+Bei `1334 = 3` benutzt die V3.3-State-Machine nicht die beiden physischen SG-Kontakte als Quelle, sondern:
 
 ```text
-ENG:CTRL:8801
+ENG:CTRL:8801 / 0x2261
 ```
 
-Daher ergänzen:
+## ENG:CTRL:8801
+
+Mapping:
 
 ```text
-1334 value 3 = SG Ready über Modbus / virtueller SG-Eingang
+1 → virtuelle Kontakte (1,0) → Mode 1 / Schlafmodus
+2 → virtuelle Kontakte (0,0) → Mode 2 / wenig PV / Normal
+3 → virtuelle Kontakte (0,1) → Mode 3 / mittel PV
+4 → virtuelle Kontakte (1,1) → Mode 4 / High PV
 ```
 
-Sicherheitskennzeichnung des Labels:
+Direkter User-/Mainboard-Modbus am realen Gerät:
 
 ```text
-Codefunktion: bestätigt
-Herstellerwortlaut: sehr wahrscheinlich
+8801 initial 0
+lesen -> funktioniert
+0..4 schreiben -> funktioniert
+Rücklesen -> funktioniert
+Werte bleiben stehen
+SG-Wirkung -> bestätigt
 ```
 
-## 8801 Werte
+Explizit beobachtet:
 
 ```text
-1 → virtuelle Kontakte (1,0)
-2 → virtuelle Kontakte (0,0)
-3 → virtuelle Kontakte (0,1)
-4 → virtuelle Kontakte (1,1)
+8801 = 1 -> Mode 1 / Schlafmodus; WP startet nicht
+8801 = 4 -> Mode 4 / High Power; WP startet
 ```
 
-Empfehlung für Software:
+Damit sollte `8801` nicht mehr nur als „Advanced-Kandidat“, sondern als **bestätigte SG-Ready-Steuerfunktion** modelliert werden.
 
-- als Advanced-Funktion implementieren
-- nicht automatisch aktivieren
-- UI sollte deutlich anzeigen, dass bei SG01=3 die Hardwarekontakte durch den Modbuswert ersetzt werden
+## Fester 10-Minuten-Hold
+
+Nach jeder tatsächlich akzeptierten SG-Modusänderung setzt V3.3 intern:
+
+```text
+0x2001696C = 0x04B0 = 1200 Zyklen
+```
+
+Die SG-Routine läuft alle ca. `0,5 s`:
+
+```text
+1200 × 0,5 s = 600 s = 10 Minuten
+```
+
+Während dieses Holds:
+
+```text
+8801 -> ändert sich sofort und ist sofort rücklesbar
+2133 -> bleibt zunächst auf dem zuletzt akzeptierten SG-Modus
+```
+
+Nach Ablauf wird der dann aktuell anliegende gewünschte Zustand übernommen.
+
+## Änderung von 1334 setzt den Hold zurück
+
+**Binary + live bestätigt:** Ändert sich die SG-Quellenauswahl in `1334`, setzt V3.3 den laufenden 10-Minuten-Hold und zugehörige Übergangszustände zurück.
+
+Das bedeutet für die UI/Automatisierung:
+
+- `2133` als effektive Rückmeldung verwenden.
+- Nicht jeden `8801`-Write als sofort aktive Änderung darstellen.
+- Einen laufenden/erwartbaren Hold verständlich anzeigen.
+- Quellenwechsel über `1334` nicht automatisch zum schnellen Umschalten missbrauchen.
+
+## Backend-spezifische Zugriffsrechte
+
+Diese Funktion muss außerdem **transport-/backendabhängig** modelliert werden.
+
+Direkter User-/Mainboard-Modbus:
+
+```text
+8801 lesen/schreiben -> live bestätigt
+```
+
+Warmlink-/LTE-RS485, Slave `0x63`:
+
+```text
+1334 lesen/schreiben -> funktioniert
+2133 lesen           -> funktioniert
+8801 FC03            -> Timeout
+8801 FC16            -> formal korrekter ACK
+```
+
+Der FC16-ACK auf `8801` hat im Cross-Bus-Gegencheck keinen belastbaren Nachweis geliefert, dass das echte User-Modbus-Register `8801` verändert wurde.
+
+Daher:
+
+> `8801` im Warmlink-/LTE-Backend **nicht** automatisch als gleichwertig zum direkten User-Modbus freigeben.
 
 ---
 
@@ -114,7 +180,7 @@ Die bislang aus Display-/Paketwissen vorhandenen:
 1541–1550
 ```
 
-sollten **nicht** als normale MAIN-Parameter dargestellt werden.
+sollten nicht als normale MAIN-Parameter dargestellt werden.
 
 Empfehlung:
 
@@ -140,7 +206,7 @@ Headerblöcke:
 1451–1460
 ```
 
-V3.3:
+V3.3 direkter Dispatcher:
 
 ```text
 FC03 = lesbar
@@ -159,8 +225,6 @@ Keinen generischen FC10-Editor hierfür anbieten.
 ---
 
 # 5. Priorität B – C13–C15 / E20–E21 hochstufen
-
-Aktuell teilweise als reine Display-/unbekannte Parameter geführt.
 
 V3.3 bestätigt echte Livefelder:
 
@@ -213,8 +277,6 @@ Empfohlene erste Aufnahmeform:
 }
 ```
 
-Nicht warten, bis für jedes Feld ein hübscher Herstellername gefunden ist. So bleiben echte Register im Tool sichtbar, ohne falsche Semantik zu behaupten.
-
 Wichtige bekannte Ausnahmen bleiben mit ihren vorhandenen Namen:
 
 ```text
@@ -240,8 +302,6 @@ V3.3 baut und broadcastet:
 2091–2180
 ```
 
-Reale Buswerte wurden auch oberhalb 2149 beobachtet.
-
 Deshalb `2150–2180` als V3.3-Statuskandidaten aufnehmen.
 
 Wo die fachliche Bedeutung offen ist:
@@ -253,11 +313,9 @@ source_ram: ...
 confidence: provenance_confirmed
 ```
 
-Nicht als nicht existent behandeln.
-
 ---
 
-# 8. Neue Namespaces für Engineeringbereiche
+# 8. Neue Namespaces und Zugriffspfade
 
 Empfohlenes Datenmodell:
 
@@ -272,10 +330,11 @@ SPECIAL      60000 / 60010
 INV1         Unit 0x01 Remote
 FAN4         Unit 0x04 Remote
 HMI3/HMI2    Unit 0x03/0x02
-OTA63        0xCxxx
+WARMLINK63   gefilterter Zugriff über LTE/Service-Slave 0x63
+OTA63        0xCxxx auf Service-/Warmlinkpfad
 ```
 
-Damit können identische Registernummern auf verschiedenen Slaves nicht mehr kollidieren.
+Zusätzlich zum Namespace muss künftig der **Zugriffspfad** Teil der Rechtebewertung sein.
 
 ---
 
@@ -287,7 +346,7 @@ Funktion:
 Engineering parameter shadow / apply profile
 ```
 
-Rechte:
+Direkter Dispatcher:
 
 ```text
 FC03 yes
@@ -303,8 +362,6 @@ normal writable UI: no
 expert raw write: optional with explicit confirmation
 ```
 
-Begründung: Der Block kann aktiv in reale Parameter-Livestrukturen zurückgeschrieben werden.
-
 ---
 
 # 10. ENG:B 5091–5180 – Softwarepolicy
@@ -315,7 +372,7 @@ Funktion:
 90-word configuration synchronization / forwarding window
 ```
 
-Rechte:
+Direkter Dispatcher:
 
 ```text
 FC03 yes, state-dependent
@@ -330,21 +387,17 @@ advanced monitor only
 kein normaler Einzelregistereditor
 ```
 
-Ein Write kann einen kompletten Synchronisations-/Forwardingvorgang auslösen.
-
 ---
 
 # 11. DIAG 6001–6090 – ideal für Diagnose
 
-Rechte:
+Direkter Dispatcher:
 
 ```text
 FC03 yes
 FC06 no
 FC10 no
 ```
-
-Diese Gruppe ist daher ein guter Kandidat für eine zusätzliche **Engineering Diagnostics**-Seite in `FoxAir_Control`.
 
 Sicher benennbare Felder:
 
@@ -361,22 +414,22 @@ Sicher benennbare Felder:
 | 6073–6080 | Low-Level-I/O-Diagnostic Bitfields |
 | 6088 | Service-/Handshake-Status |
 
-Weitere Felder als RAW + Source führen.
-
 ---
 
 # 12. ENG:CTRL 8801–8820 – Softwarepolicy
 
 ## 8801
 
-Aktive Funktion vorhanden → gezielt implementierbar.
-
 Empfehlung:
 
 ```text
 Name: Virtual SG Ready State
-R/W: ja
-UI: nur sichtbar/aktiv wenn MAIN:1334 == 3
+Direkter User-Modbus: R/W live bestätigt
+Werte: 1..4
+UI: nur wirksam wenn MAIN:1334 == 3
+Feedback: MAIN:2133
+Hold: 10 Minuten nach akzeptiertem Modewechsel
+Hold reset: bei Änderung von MAIN:1334
 ```
 
 ## 8802–8820
@@ -409,29 +462,26 @@ Reset Mainboard Modbus Unit Address to 1
 
 ## 60010
 
+```text
+FC03 60010 → UID lesen
+FC10 60010 → UID-Echo + neue Unit-Adresse
+```
+
 Benennung:
 
 ```text
 STM32 UID / Modbus Unit Address Provisioning
 ```
 
-Ablauf:
-
-```text
-FC03 60010 → UID lesen
-FC10 60010 → UID-Echo + neue Unit-Adresse
-```
-
 Softwareempfehlung:
 
 - nicht als normales Registerfeld
 - eigene Serviceaktion
-- Warnung, dass danach die bisherige Slave-Adresse nicht mehr antworten kann
-- 60000 als Recovery-Funktion getrennt anbieten, falls überhaupt
+- Warnung vor Adressänderung/Kommunikationsverlust
 
 ---
 
-# 14. R/W-Matrix für den Decoder
+# 14. R/W-Matrix – ausdrücklich für den direkten Dispatcher
 
 ```text
 MAIN:P 1001–1540
@@ -460,27 +510,41 @@ ENG:CTRL 8801–8820
   FC10 yes
 ```
 
-Diese Rechte sollten im Datenmodell hinterlegt werden, nicht nur aus einem generischen `1xxx = R/W / 2xxx = R`-Kommentar abgeleitet werden.
+**Nicht auf `WARMLINK63` vererben.** Rechte müssen pro Backend/Zugriffspfad hinterlegt werden.
 
 ---
 
 # 15. Empfohlene Implementierungsreihenfolge in FoxAir_Control
 
-1. sichere Namens-/Skalierungskorrekturen 2019/2057/2071/2080–2082/2136–2138
-2. 32-Bit-Zählerpaare korrekt modellieren
-3. `1334 value 3` + optional `8801` ergänzen
-4. MAIN-Parameterende auf 1540 normieren und 1541–1550 auslagern
-5. Statusbereich 2150–2180 ergänzen
-6. V3.3-Liveparameter-Lücken 1381ff als RAW+Provenance aufnehmen
-7. Namespace-Modell für ENG/DIAG/INV1/FAN4 etablieren
-8. DIAG 6001–6090 als read-only Engineeringdiagnose integrieren
-9. 5001/5091/8802ff nur im RE-/Servicebereich führen
-10. 60000/60010 ausschließlich als separate Provisionierungsaktionen behandeln
+1. `1334 value 3` + `8801` als bestätigte SG-Ready-Funktion ergänzen
+2. 10-Minuten-Hold, `2133`-Feedback und 1334-Hold-Reset in SG-UI berücksichtigen
+3. direkten User-Modbus und Warmlink-/LTE-0x63 bei Rechten getrennt modellieren
+4. sichere Namens-/Skalierungskorrekturen 2019/2057/2071/2080–2082/2136–2138
+5. 32-Bit-Zählerpaare korrekt modellieren
+6. MAIN-Parameterende auf 1540 normieren und 1541–1550 auslagern
+7. Statusbereich 2150–2180 ergänzen
+8. V3.3-Liveparameter-Lücken 1381ff als RAW+Provenance aufnehmen
+9. Namespace-Modell für ENG/DIAG/INV1/FAN4 etablieren
+10. DIAG 6001–6090 als read-only Engineeringdiagnose integrieren
+11. 5001/5091/8802ff nur im RE-/Servicebereich führen
+12. 60000/60010 ausschließlich als separate Provisionierungsaktionen behandeln
 
 ---
 
 # 16. Abschluss
 
-Nach Umsetzung dieser Delta-Liste entspricht `FoxAir_Control/data` nicht mehr nur dem historisch angesammelten Display-/App-/Livewissen, sondern dem **bytegenau auditierten V3.3-Modbusmodell**.
+Nach Umsetzung dieser Delta-Liste entspricht `FoxAir_Control/data` dem **bytegenau auditierten und an zentralen Stellen live validierten V3.3-Modbusmodell**.
+
+Insbesondere ist SG Ready über `1334=3` + `8801` jetzt keine Hypothese mehr. Bestätigt sind:
+
+```text
+8801 User-Modbus R/W
+Mapping 1..4
+reale SG-Wirkung
+10-Minuten-Hold
+Reset des Holds durch Änderung von 1334
+2133 als effektive Rückmeldung
+abweichendes Verhalten des Warmlink-/LTE-0x63-Pfads
+```
 
 Die verbleibenden offenen Einzelbedeutungen sind bewusst als RAW mit Provenance klassifiziert und blockieren die Softwareintegration nicht.
