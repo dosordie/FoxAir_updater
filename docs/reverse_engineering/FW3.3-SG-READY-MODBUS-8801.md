@@ -31,6 +31,8 @@ Gültige Werte:
 
 `0` löscht den virtuellen Zustand; Werte `>=5` werden als ungültig behandelt und führen ebenfalls nicht zu einem gültigen virtuellen SG-Zustand.
 
+**Neu bestätigt:** Nach jeder tatsächlich übernommenen SG-Modusänderung setzt V3.3 einen festen Hold-/Umschalttimer von **10 Minuten**. `8801` selbst kann währenddessen sofort geändert und zurückgelesen werden, aber der aktive Modus (`MAIN:2133`) bleibt bis zum Ablauf des Timers auf dem zuletzt übernommenen Zustand.
+
 ---
 
 # 1. MAIN:1334 besitzt einen bisher fehlenden Wert 3
@@ -122,199 +124,255 @@ Praktische Interpretation:
 
 ```text
 Mode 1 -> Sperr-/Schlafzustand
-Mode 2 -> Normalzustand
-Mode 3 -> erhöhte/recommended Aufnahme
-Mode 4 -> starke/forced Aufnahme bzw. High-PV
+Mode 2 -> Normalzustand / wenig PV
+Mode 3 -> erhöhte Aufnahme / mittel PV
+Mode 4 -> High-PV / starke Anforderung
 ```
-
-Die physikalische SG-Ready-Normbezeichnung kann je nach Dokumentation unterschiedlich formuliert sein; entscheidend für V3.3 sind die vier oben genannten Firmware-Modi.
 
 ---
 
-# 4. 8801 ist auf dem normalen Mainboard-/User-Modbus erreichbar
+# 4. 8801 auf dem User-Modbus
 
-Das ist ausdrücklich **kein Register der internen Display-Slaves 0x02/0x03**.
-
-Der normale Mainboard-Slave-Dispatcher verwendet:
+Der normale Mainboard-Slave-Dispatcher verarbeitet auch:
 
 ```text
-MAIN:1024
-```
-
-als konfigurierte Modbus-Slave-Adresse und verarbeitet in derselben State-Machine sowohl:
-
-```text
-1001–1540
-2001–2180
-5001–5180
-6001–6090
 8801–8820
 ```
 
-Für 8801–8820 existieren normale Read-/Write-Zweige im Mainboard-Dispatcher.
+mit FC03/FC06/FC10.
 
-Damit gilt:
+Live am untersuchten Gerät bestätigt:
 
-> Wenn eine Schnittstelle bereits `MAIN:1334` und die normalen `MAIN:2xxx`-Register desselben Mainboards lesen/schreiben kann, kann sie grundsätzlich auch `8801` ansprechen.
+- `8801` war initial `0`.
+- Lesen über den User-Modbus funktioniert.
+- Schreiben der Werte `0..4` funktioniert.
+- Geschriebene Werte bleiben im Register stehen und sind wieder lesbar.
 
-Unterstützt:
+Damit ist `8801` auf dem direkten User-/Mainboard-Modbus praktisch bestätigt.
 
-```text
-FC03 -> lesen
-FC06 -> einzelnes Register schreiben
-FC10 -> mehrere Register schreiben
-```
+Für den parallelen Warmlink-/LTE-Pfad mit Slave `0x63` gilt dagegen derzeit:
 
-Der interne Displaybus über USART3 mit Unit `0x02/0x03` ist dafür nicht erforderlich.
+- FC03 auf `8801` -> Timeout / keine Antwort.
+- FC16 auf `8801` -> formal passender ACK beobachtet.
+- Ein sicherer Nachweis, dass dieser LTE-FC16-ACK den Mainboardwert wirklich ändert, liegt derzeit **nicht** vor; der Zwischenstand spricht eher dagegen.
 
----
-
-# 5. Empfohlene Testfolge
-
-Für einen ersten kontrollierten Test:
-
-```text
-1. aktuellen Wert von MAIN:1334 lesen und merken
-2. MAIN:8801 = 2 schreiben
-3. MAIN:1334 = 3 schreiben
-4. MAIN:8801 zurücklesen
-5. MAIN:2133 beobachten
-6. anschließend MAIN:8801 nacheinander auf 1/2/3/4 setzen
-7. MAIN:2133 und Anlagenreaktion vergleichen
-8. nach Test MAIN:1334 wieder auf den ursprünglichen Wert setzen
-```
-
-Warum zuerst `8801=2`:
-
-```text
-8801=2 -> interne Kombination 00 -> SG Mode 2
-```
-
-Das ist innerhalb der vier SG-Zustände der normale/neutrale Zustand und daher der sinnvollste Einstieg.
+Diese beiden Buspfade müssen daher getrennt bewertet werden.
 
 ---
 
-# 6. Welches Register zur Rückmeldung verwenden?
+# 5. Fester 10-Minuten-Umschalttimer
 
-Für die effektive SG-Auswertung ist besonders interessant:
+Die Verzögerung zwischen einem geänderten `8801` und einem neuen effektiven SG-Modus ist jetzt direkt aus V3.3 rekonstruiert.
 
-```text
-MAIN:2133
-```
-
-Dieses Register bildet den effektiven SG-Ready-Modus `0..4` ab.
-
-Die Bits 12/13 in:
+Runtime-Timer:
 
 ```text
-MAIN:2034
+0x20016948 + 0x24 = 0x2001696C
 ```
 
-sind dagegen die **physischen SG-/Digitaleingänge**.
-
-Bei `MAIN:1334 = 3` können diese physischen Rohbits deshalb unverändert bleiben, obwohl die Anlage intern einen durch 8801 vorgegebenen SG-Zustand verarbeitet.
-
-Für einen Test des virtuellen Pfades deshalb primär:
+Bei jeder neu akzeptierten Mode-Umschaltung schreibt V3.3:
 
 ```text
-8801 -> Vorgabe
-2133 -> effektives Ergebnis
+0x04B0 = 1200
 ```
 
-und nicht nur `2034 Bit12/13` beobachten.
+in diesen Timer.
+
+Das ist für alle vier Modi identisch:
+
+```text
+Mode 1 -> aktiver Mode = 1; Timer = 1200
+Mode 2 -> aktiver Mode = 2; Timer = 1200
+Mode 3 -> aktiver Mode = 3; Timer = 1200
+Mode 4 -> aktiver Mode = 4; Timer = 1200
+```
+
+Während der Timer größer als Null ist:
+
+```text
+Timer--
+keine neue SG-Modusübernahme
+```
+
+Der gerade in `8801` stehende neue Wert wird also zwar gelesen bzw. in virtuelle Kontaktzustände umgesetzt, der **effektive Mode bleibt jedoch gesperrt**, bis der Hold-Timer abgelaufen ist.
+
+## Warum 1200 exakt 10 Minuten sind
+
+Die gleiche SG-Routine enthält den Mode-1-Schlafzeitzähler.
+
+`MAIN:1335` ist dort die Schlafzeit in Minuten und wird verglichen mit:
+
+```text
+1335 * 0x78
+1335 * 120
+```
+
+Da 120 SG-Zyklen genau einer Minute entsprechen, läuft die SG-Routine effektiv alle:
+
+```text
+60 s / 120 = 0,5 s
+```
+
+Damit gilt für den Umschalttimer:
+
+```text
+1200 * 0,5 s = 600 s = 10 Minuten
+```
+
+Die 10 Minuten sind damit **byte-/codebasiert bestätigt**, nicht nur aus dem beobachteten Verhalten abgeleitet.
+
+## Praktische Konsequenz
+
+Beispiel:
+
+```text
+2133 = 1  (Mode 1 wurde akzeptiert)
+Timer wird auf 10 min gesetzt
+
+8801 = 3
+-> Registerwert ändert sich sofort
+-> 2133 bleibt zunächst 1
+
+kurz danach 8801 = 2
+-> Registerwert wird 2
+-> 2133 bleibt weiterhin 1
+
+nach Ablauf der 10 min
+-> der dann aktuell anliegende Wert 2 wird übernommen
+-> 2133 springt direkt 1 -> 2
+```
+
+Ein zwischenzeitlich nur kurz anliegender Wert `3` muss deshalb **nie als aktiver Mode erscheinen**.
 
 ---
 
-# 7. Ungültige Werte
+# 6. Änderung von 1334 setzt den Hold-Timer zurück
 
-Die V3.3 prüft den virtuellen Wert explizit.
+Ein weiterer wichtiger Firmwarebefund:
 
-```text
-8801 = 0
-```
+V3.3 vergleicht die aktuelle SG-Quellenauswahl mit der zuvor verwendeten Auswahl. Ändert sich die Quelle (`MAIN:1334`), werden interne SG-Zustände und insbesondere der Hold-Timer zurückgesetzt.
 
-führt nicht zu einem der vier gültigen SG-Modi und löscht/setzt den effektiven virtuellen Zustand zurück.
+Sinngemäß:
 
 ```text
-8801 >= 5
+wenn SG-Quelle geändert:
+    vorherige Quelle = neue Quelle
+    10-min-Hold-Timer = 0
+    interne Übergangszustände zurücksetzen
 ```
 
-wird ebenfalls nicht als gültiger SG-Zustand akzeptiert.
-
-Damit sollte Software ausschließlich:
+Damit lässt sich für gezielte Tests die 10-Minuten-Wartezeit grundsätzlich durch einen bewussten Quellenwechsel zurücksetzen, z. B.:
 
 ```text
-1, 2, 3, 4
+1334 = 0
+kurz warten
+1334 = 3
 ```
 
-als auswählbare Zustände anbieten.
+Danach kann der aktuell in `8801` stehende Wert wieder neu als Mode akzeptiert werden und startet anschließend erneut seinen 10-Minuten-Hold.
+
+Das ist primär als Test-/Diagnosewissen zu verstehen; bei laufender Anlage verändert der Quellenwechsel unmittelbar die SG-Regelung und sollte daher bewusst erfolgen.
 
 ---
 
-# 8. Konsequenz für FoxAir_Control
+# 7. Mode-1-Schlafzeit ist ein separater Timer
 
-Für `data/foxair_phnix_registers.json` sollte ergänzt werden:
+Die feste 10-Minuten-Umschaltsperre darf nicht mit `MAIN:1335` verwechselt werden.
 
-## MAIN:1334 / SG01
+`1335` steuert separat die zulässige Dauer bzw. Zeitlogik des SG Mode 1 / Schlafmodus.
 
-```text
-0 = Aus
-1 = Einfach / 1 Kontakt
-2 = 2 physische Kontakte
-3 = Modbus / virtueller SG-Ready-Zustand
-```
-
-## MAIN/ENG:8801
-
-Neue Definition:
+Firmwareseitig existieren also mindestens zwei unterschiedliche Zeitmechanismen:
 
 ```text
-Name: Virtueller SG-Ready-Zustand
-R/W: FC03 / FC06 / FC10
-Werte:
-1 = SG Mode 1
-2 = SG Mode 2
-3 = SG Mode 3
-4 = SG Mode 4
-```
+10-Minuten-Hold:
+    fest codiert
+    nach jeder akzeptierten SG-Modusänderung
 
-Zusätzlicher Hinweis:
-
-```text
-Nur wirksam, wenn MAIN:1334 == 3.
+MAIN:1335:
+    konfigurierbarer Minutenwert
+    speziell für Mode 1 / Schlafmodus
 ```
 
 ---
 
-# 9. Sicherheits-/Prioritätsverhalten
+# 8. Live-Teststand 24.08.2026
 
-Durch `1334 = 3` wird die SG-Quelle bewusst von den physischen Kontakten auf den Modbuswert umgeschaltet.
+Über den User-Modbus wurden bereits folgende Funktionsreaktionen beobachtet:
 
-Daher sollte ein externer Controller bei dauerhafter Nutzung:
+```text
+8801 = 1
+-> effektiver Mode 1 beobachtet
+-> WP im Schlafmodus, startet nicht
 
-- den gewünschten 8801-Zustand explizit setzen,
-- nach Neustarts den Zustand erneut prüfen,
-- `MAIN:2133` als Rückmeldung überwachen,
-- bei Ausfall des Controllers einen definierten Fallback vorsehen.
+8801 = 4
+-> effektiver Mode 4 beobachtet
+-> WP startet / High-Power-Reaktion beobachtet
+```
 
-Ob `8801` selbst über einen Mainboard-Neustart persistent bleibt, ist für eine externe Automatisierung **nicht als sichere Persistenzannahme zu verwenden**; der Zustand sollte nach Neustart erneut gelesen bzw. gesetzt werden.
+Für `8801 = 3` und `8801 = 2` wurde nach vorheriger Mode-Übernahme zunächst noch der alte effektive Modus beobachtet. Dieser Zwischenstand passt exakt zum jetzt im Binary identifizierten 10-Minuten-Hold.
+
+Für die endgültige Livebestätigung empfiehlt sich:
+
+```text
+1. 8801 = 2 setzen und zurücklesen
+2. 1334 kurz auf 0 und danach wieder auf 3 setzen
+3. 2133 beobachten -> Erwartung 2
+4. danach 8801 = 3 setzen
+5. ohne Quellenreset muss 2133 bis zu 10 min auf 2 bleiben
+6. nach Ablauf -> Erwartung 2133 = 3
+```
 
 ---
 
-# 10. Zusammenfassung
+# 9. Rückmeldung über MAIN:2133
+
+`MAIN:2133` zeigt den aktiven SG-Ready-Modus:
+
+| Wert | Bedeutung |
+|---:|---|
+| 0 | WP aus oder SG deaktiviert |
+| 1 | SG Mode 1 / Schlafmodus |
+| 2 | SG Mode 2 / wenig PV |
+| 3 | SG Mode 3 / mittel PV |
+| 4 | SG Mode 4 / High PV |
+
+Die Bits 12/13 in `MAIN:2034` bleiben die physischen Eingangszustände. Bei `1334 = 3` können diese unverändert sein, obwohl `8801` einen virtuellen Zustand vorgibt.
+
+---
+
+# 10. Konsequenz für externe Steuerungen
+
+Ein externer Controller sollte den 10-Minuten-Hold berücksichtigen und nicht erwarten, dass jeder Schreibzugriff auf `8801` sofort in `2133` sichtbar wird.
+
+Empfohlen:
+
+```text
+8801 schreiben
+-> 8801 zurücklesen
+-> 2133 als effektiven Zustand beobachten
+-> Übergang bis zu 10 min zulassen
+```
+
+Ein häufiges Umschalten innerhalb dieser 10 Minuten bringt keinen zusätzlichen Nutzen; entscheidend ist der **zu Ablaufzeitpunkt aktuell in 8801 stehende Wert**.
+
+---
+
+# 11. Zusammenfassung
 
 ```text
 MAIN:1334 = 3
         ↓
 SG-Quelle = virtueller Modbus
         ↓
-MAIN/ENG:8801 = 1..4
+ENG:CTRL:8801 = 1..4
         ↓
-Firmware erzeugt virtuelle SG-Kontaktkombination
+virtuelle SG-Kontakte werden unmittelbar erzeugt
         ↓
-gewöhnliche SG-Ready-Zustandsmaschine
+10-Minuten-Hold prüft, ob Moduswechsel zulässig ist
         ↓
-MAIN:2133 = effektiver SG-Modus
+MAIN:2133 = neuer effektiver SG-Modus
+        ↓
+bei erfolgreicher Übernahme Hold-Timer erneut auf 10 min
 ```
 
-Damit lässt sich SG Ready in V3.3 vollständig ohne physisches Schalten der beiden SG-Kontakte über den normalen Mainboard-Modbus steuern.
+Damit ist nicht nur die virtuelle SG-Ready-Ansteuerung über `8801`, sondern auch ihre **feste 10-Minuten-Umschaltlogik** in V3.3 strukturell geschlossen.
