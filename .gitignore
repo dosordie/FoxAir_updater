@@ -24,3 +24,6 @@ device_secret*
 
 # End-user firmware staging directory (local only, never distributed by GitHub)
 /firmware/
+
+# Read-only downloads/backups pulled from the LTE modem
+/downloaded_firmware/
