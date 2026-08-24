@@ -3,8 +3,10 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTROLLER="$ROOT_DIR/tools/phnix_ota/phnix_local_ota_controller.py"
+MANIFEST_TOOL="$ROOT_DIR/tools/phnix_ota/create_firmware_manifest.py"
 ADB_BIN="${FOX_AIR_ADB:-adb}"
 STATE_DIR="$ROOT_DIR/phnix-ota-state"
+FIRMWARE_DIR="$ROOT_DIR/firmware"
 
 usage() {
     cat <<'TXT'
@@ -14,22 +16,34 @@ Verwendung:
   ./foxair-updater status
   ./foxair-updater check MANIFEST
   ./foxair-updater update MANIFEST --confirm
+  ./foxair-updater same-version MANIFEST --confirm
   ./foxair-updater restore
+  ./foxair-updater manifest FIRMWARE --software-code CODE --display-version VERSION --target-ssid SSID
   ./foxair-updater version
 
-MANIFEST kann als Pfad angegeben werden. Wird nur ein Dateiname angegeben,
-wird automatisch im lokalen Ordner ./firmware/ gesucht.
+MANIFEST und FIRMWARE können als Pfad angegeben werden. Wird nur ein Dateiname
+angegeben, wird automatisch im lokalen Ordner ./firmware/ gesucht.
 
 Beispiele:
   ./foxair-updater status
   ./foxair-updater check FW3.4.json
   ./foxair-updater update FW3.4.json --confirm
+  ./foxair-updater same-version FW3.3.json --confirm
+  ./foxair-updater manifest FW3.4.bin --software-code 82400644 --display-version V3.4 --target-ssid 0063
+
+Beim Manifest-Befehl wird die JSON-Datei standardmäßig neben der Firmware mit
+dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json. wire_version
+wird automatisch aus display-version abgeleitet.
 TXT
 }
 
 die() {
     printf '[FEHLER] %s\n' "$*" >&2
     exit 1
+}
+
+require_adb() {
+    command -v "$ADB_BIN" >/dev/null 2>&1 || die "ADB wurde nicht gefunden: $ADB_BIN"
 }
 
 resolve_manifest() {
@@ -40,16 +54,30 @@ resolve_manifest() {
         readlink -f "$input"
         return
     fi
-    if [[ -f "$ROOT_DIR/firmware/$input" ]]; then
-        readlink -f "$ROOT_DIR/firmware/$input"
+    if [[ -f "$FIRMWARE_DIR/$input" ]]; then
+        readlink -f "$FIRMWARE_DIR/$input"
         return
     fi
-    die "Manifest nicht gefunden: $input (auch nicht unter $ROOT_DIR/firmware/)"
+    die "Manifest nicht gefunden: $input (auch nicht unter $FIRMWARE_DIR/)"
+}
+
+resolve_firmware() {
+    local input="${1:-}"
+    [[ -n "$input" ]] || die "Firmware fehlt. Beispiel: ./foxair-updater manifest FW3.4.bin ..."
+
+    if [[ -f "$input" ]]; then
+        readlink -f "$input"
+        return
+    fi
+    if [[ -f "$FIRMWARE_DIR/$input" ]]; then
+        readlink -f "$FIRMWARE_DIR/$input"
+        return
+    fi
+    die "Firmware nicht gefunden: $input (auch nicht unter $FIRMWARE_DIR/)"
 }
 
 [[ -f "$CONTROLLER" ]] || die "Controller fehlt: $CONTROLLER"
 command -v python3 >/dev/null 2>&1 || die "python3 wurde nicht gefunden"
-command -v "$ADB_BIN" >/dev/null 2>&1 || die "ADB wurde nicht gefunden: $ADB_BIN"
 
 command="${1:---help}"
 case "$command" in
@@ -58,15 +86,18 @@ case "$command" in
         ;;
     status)
         [[ $# -eq 1 ]] || die "status benötigt keine weiteren Argumente"
+        require_adb
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --check status
         ;;
     check)
         [[ $# -eq 2 ]] || die "Verwendung: ./foxair-updater check MANIFEST"
+        require_adb
         manifest="$(resolve_manifest "$2")"
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --manifest "$manifest"
         ;;
     update)
         [[ $# -eq 3 && "$3" == "--confirm" ]] || die "Verwendung: ./foxair-updater update MANIFEST --confirm"
+        require_adb
         manifest="$(resolve_manifest "$2")"
         exec python3 "$CONTROLLER" \
             --adb "$ADB_BIN" \
@@ -76,9 +107,44 @@ case "$command" in
             --confirm PHNIX-FULL-UPDATE \
             --state-dir "$STATE_DIR"
         ;;
+    same-version)
+        [[ $# -eq 3 && "$3" == "--confirm" ]] || die "Verwendung: ./foxair-updater same-version MANIFEST --confirm"
+        require_adb
+        manifest="$(resolve_manifest "$2")"
+        exec python3 "$CONTROLLER" \
+            --adb "$ADB_BIN" \
+            same-version-test \
+            --manifest "$manifest" \
+            --execute \
+            --confirm PHNIX-C350-SAME-V33 \
+            --logger-confirm PASSIVE-LOGGER-RUNNING \
+            --state-dir "$STATE_DIR"
+        ;;
     restore)
         [[ $# -eq 1 ]] || die "restore benötigt keine weiteren Argumente"
+        require_adb
         exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --restore original
+        ;;
+    manifest)
+        [[ $# -ge 2 ]] || die "Verwendung: ./foxair-updater manifest FIRMWARE --software-code CODE --display-version VERSION --target-ssid SSID"
+        [[ -f "$MANIFEST_TOOL" ]] || die "Manifest-Werkzeug fehlt: $MANIFEST_TOOL"
+        firmware="$(resolve_firmware "$2")"
+        shift 2
+
+        output_seen=0
+        for arg in "$@"; do
+            if [[ "$arg" == "--output" || "$arg" == --output=* ]]; then
+                output_seen=1
+                break
+            fi
+        done
+
+        if (( output_seen == 0 )); then
+            output="${firmware%.*}.json"
+            exec python3 "$MANIFEST_TOOL" --firmware "$firmware" "$@" --output "$output"
+        else
+            exec python3 "$MANIFEST_TOOL" --firmware "$firmware" "$@"
+        fi
         ;;
     version)
         [[ $# -eq 1 ]] || die "version benötigt keine weiteren Argumente"
