@@ -1,6 +1,6 @@
-import io
 import json
 import unittest
+from pathlib import Path
 
 from updater.windows import release_check
 
@@ -47,6 +47,19 @@ class WindowsReleaseCheckTests(unittest.TestCase):
         self.assertEqual(value["tag"], "windows-v0.1.6")
         self.assertEqual(seen["url"], release_check.UPDATE_API_URL)
         self.assertEqual(seen["timeout"], 12)
+
+    def test_windows_app_keeps_driver_before_platform_tools_and_persists_requested_values(self):
+        source = Path("updater/windows/foxair_updater_app.py").read_text(encoding="utf-8")
+        base = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        self.assertIn("SIMCOM_Windows_USB_Drivers_V1.0.2.zip", source)
+        self.assertIn('layout.insertLayout(1, driver_row)', source)
+        self.assertIn('self.settings.setValue("adb"', source)
+        self.assertIn('self.settings.setValue("backup"', source)
+        self.assertIn('self.settings.setValue("remote_host"', source)
+        self.assertIn('self.settings.setValue("remote_port"', source)
+        self.assertIn('self._remember_parent("manifest_dir"', source)
+        self.assertIn('self._remember_parent("firmware_dir"', source)
+        self.assertIn('QSettings("FoxAir", "FoxAir Updater")', base)
 
 
 if __name__ == "__main__":
