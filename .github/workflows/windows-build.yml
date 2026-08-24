@@ -37,12 +37,18 @@ jobs:
         id: version
         shell: powershell
         run: |
-          $text = Get-Content updater/windows/foxair_updater_gui.py -Raw
+          $text = Get-Content updater/windows/foxair_updater_app.py -Raw
           $match = [regex]::Match($text, 'APP_VERSION\s*=\s*"([^"]+)"')
           if (-not $match.Success) { throw "APP_VERSION not found" }
           $version = $match.Groups[1].Value
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Windows version: $version"
+
+      - name: Compile Windows GUI sources
+        shell: powershell
+        run: |
+          python -m py_compile updater/windows/foxair_updater_gui.py
+          python -m py_compile updater/windows/foxair_updater_app.py
 
       - name: Build portable package
         shell: cmd
