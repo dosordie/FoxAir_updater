@@ -1,13 +1,18 @@
-# PHNIX OTA Updater – Safety-Hardening vor dem ersten Versionswechsel
+# PHNIX OTA Updater – Safety-Hardening PR #1
 
 Stand: 24. August 2026
 
-Dieses Dokument beschreibt die Sicherheitsänderungen, die nach einer erneuten
-End-to-End-Prüfung des realen Mainboard-OTA-Pfads vorgenommen wurden. Ziel war
-**nicht**, den PHNIX-OTA-Ablauf neu zu entwerfen, sondern ausschließlich
-zusätzliche Fehlerquellen unseres Host-Updaters zu entfernen.
+Dieses Dokument hält den bewusst verkleinerten Umfang von PR #1 fest. Nach dem
+ersten Review wurde entschieden, die Änderungen rund um **USB-/ADB-Ausfall nach
+begonnenem C5A8, Remote-Supervisor und Post-C5A8-Recovery** nicht zusammen mit
+den einfacheren Preflight-/Portabilitätsänderungen zu mergen.
 
-Der bekannte und bereits live getestete Gleichversionspfad bleibt unverändert:
+Ziel von PR #1 ist deshalb:
+
+> **Vorprüfungen und Beobachtung verbessern, ohne den bestehenden PHNIX-OTA-
+> Lifecycle oder den Runtime-Cleanup nach C5A8 zu verändern.**
+
+Der bekannte und bereits live getestete Gleichversionspfad bleibt weiterhin:
 
 ```text
 0033 lokal injizieren
@@ -18,139 +23,91 @@ Der bekannte und bereits live getestete Gleichversionspfad bleibt unverändert:
 → persistente LTE-Dateien wiederherstellen
 ```
 
-Der vollständige Versionswechsel ist weiterhin nicht live an realer Hardware
-bis zum Ende ausgeführt worden.
+Ein vollständiger Versionswechsel wurde weiterhin noch nicht live bis zum Ende
+auf realer Hardware ausgeführt.
 
 ---
 
-## 1. Sicherheitsgrenze: erster C5A8
+## 1. Was PR #1 absichtlich nicht mehr ändert
 
-Für den Launcher existieren zwei grundlegend unterschiedliche Zustände.
-
-### Vor dem ersten C5A8
-
-Bis zu diesem Punkt ist ein Fail-Closed-Halt weiterhin sinnvoll:
-
-```text
-C350 / C357 / Vorbereitung
-→ Fehler im Host/Helper
-→ phnixIot4G darf kontrolliert angehalten werden
-→ kein weiterer OTA-Schritt läuft unkontrolliert weiter
-```
-
-Vor C5A8 kann noch kein Firmwareblock durch unseren Full-Update-Pfad in den
-Stagingbereich des Mainboards übertragen worden sein.
-
-### Ab dem ersten C5A8
-
-Sobald der Runtime-Hook den ersten C5A8-Sendepfad erreicht, wird weiterhin der
-bestehende Marker gesetzt:
+Eine erste Fassung des PR hatte im Runtime-Hook nach vorhandenem
+`TRANSFER_STARTED` den bisherigen `SIGSTOP`-Cleanup übersprungen. Das verhinderte
+zwar ein direktes Anhalten von `phnixIot4G`, erzeugte aber einen nicht vollständig
+definierten Zwischenzustand:
 
 ```text
-/tmp/phnix_ota_hook/transfer-started
+Cloud-Sperre möglicherweise aktiv
+Watchdogs möglicherweise angehalten
+GDB/gdbserver möglicherweise vorhanden
+run.active / transfer-started bleiben gesetzt
+Restore ist wegen transfer-started gesperrt
 ```
 
-Ab diesem Zeitpunkt gilt die entgegengesetzte Regel:
+Diese Änderung wurde deshalb aus PR #1 wieder entfernt.
 
-> **Der originale `phnixIot4G`-Dienst ist für den laufenden Board-OTA
-> autoritativ und darf durch einen Host-/ADB-/Helperfehler nicht mehr per
-> `SIGSTOP` angehalten werden.**
+Der Runtime-Hook besitzt in PR #1 wieder exakt die bisherige Guarded-Hold-
+Semantik. Ebenso enthält die neue Host-Safety-Schicht **keine eigene
+Post-C5A8-Exception-/Cleanup-Logik**.
 
-Der Grund: Firmwaredatei und OTA-Metadaten liegen zu diesem Zeitpunkt bereits
-auf dem LTE-Modem; der weitere C5A8/C371-Verkehr findet direkt zwischen
-`phnixIot4G` und dem Mainboard über RS485 statt. Raspberry Pi, Debian-PC oder
-Windows-PC sind für den eigentlichen Blocktransport nicht erforderlich.
+Die Untersuchung wird separat fortgeführt. Vor einem späteren PR #2 sollen am
+realen LTE-Modem zunächst harmlose Prozess-Lifetime-Tests klären, was beim
+Verlust von USB/ADB mit einer entkoppelten Remote-Shell, GDB und Kindprozessen
+tatsächlich passiert.
+
+Für PR #2 vorgesehen sind insbesondere:
+
+```text
+ADB-/USB-Prozess-Persistenztest auf realem LTE-Modem
+entkoppelter Remote-Supervisor
+passive Feststellung aktiv/terminal nach Hostverlust
+sicherer Post-C5A8-Cleanup erst nach Terminalbeweis
+Host-/ADB-/Helper-/GDB-Ausfalltests
+```
 
 ---
 
-## 2. Behobener USB-/ADB-Ausfallpfad
+## 2. Gemeinsamer Core bleibt für den OTA-Lifecycle autoritativ
 
-### Vorher
-
-Der Runtime-Hook hatte für jeden nichtterminalen `EXIT/INT/TERM` denselben
-Cleanup:
-
-```text
-RUN_ACTIVE && !SAFE_TO_CLEAN
-→ kill -STOP phnixIot4G
-→ guarded-hold
-```
-
-Damit konnte ein Verlust der ADB-Shell nach bereits begonnenem C5A8 den
-Originaldienst anhalten und dadurch einen ansonsten selbständig laufenden
-Mainboardtransfer unterbrechen.
-
-Zusätzlich versuchte auch der Host-Controller bei einem nichtterminalen Fehler
-pauschal den Helper-Befehl `hold` auszuführen.
-
-### Jetzt
-
-Der Zustand wird an `TRANSFER_STARTED` getrennt:
-
-```text
-vor C5A8:
-    bisheriger guarded-hold bleibt unverändert
-
-nach C5A8:
-    kein SIGSTOP von phnixIot4G
-    kein Host-seitiger hold-Befehl
-    Originaldienst läuft weiter
-    Status = transfer-unattended / host-supervision-lost
-```
-
-Es wurden dafür **keine** neuen RS485-Kommandos, kein neuer Cancel und keine
-neuen GDB-Breakpoints eingeführt.
-
-Die Cloud-/Watchdog-Behandlung wurde absichtlich nicht zusätzlich umgebaut.
-Der Patch soll nur verhindern, dass unser eigener Fehler den bereits laufenden
-Original-OTA stoppt.
-
----
-
-## 3. Unveränderter Controller-Core + gemeinsame Safety-Schicht
-
-Der bisher verifizierte Controller bleibt als Protokoll-Core erhalten:
+Der bekannte Controller bleibt:
 
 ```text
 tools/phnix_ota/phnix_local_ota_controller.py
 ```
 
-Neu ist eine plattformübergreifende Host-Sicherheitsschicht:
+Die zusätzliche Datei
 
 ```text
 tools/phnix_ota/phnix_local_ota_controller_hardened.py
 ```
 
-Sie übernimmt nur:
+kopiert nicht mehr den kompletten `run_update()`-Loop. Stattdessen delegiert sie
+den eigentlichen Lauf direkt an den bestehenden Core:
 
 ```text
-Speicherplatz-Preflight
-persistenten Host-Run-State
-passive C5A8-Stallwarnung
-100-%-/Promotion-Anzeige
-Post-C5A8-Hostfehlerregel
+Safety-Schicht
+  ├─ Speicherplatz vorprüfen
+  ├─ Statusereignisse passiv beobachten
+  └─ originalen core.run_update() aufrufen
+          ↓
+      unveränderter OTA-Lifecycle
 ```
 
-Linux startet diese Safety-Schicht direkt. Im Windows-Portable-Build bleibt der
-bisherige Controller bytegleich als
-`phnix_local_ota_controller_core.py` erhalten; die gleiche Safety-Schicht liegt
-davor. Damit wird die sicherheitsrelevante Post-C5A8-Logik nicht getrennt für
-Linux und Windows implementiert.
+Damit existiert in PR #1 keine zweite Host-State-Machine für C350/C357/C5A8.
+Insbesondere werden keine zusätzlichen `hold`, `stop`, `cancel` oder
+Restore-Entscheidungen durch die Safety-Schicht eingeführt.
 
 ---
 
-## 4. Vollanalyse bei echten Updates ist Pflicht
+## 3. `--full` ist bei echten Linux-Updates Pflicht
 
-Ein echter Linux-Updateaufruf verlangt jetzt:
+Ein echter Linux-Updateaufruf verlangt:
 
 ```bash
 ./foxair-updater update FW3.4.json --full --confirm
 ```
 
-`--full` ist nicht mehr optional.
-
-Damit wird unmittelbar vor ADB-/Busaktivität die Firmware erneut analysiert und
-mit dem Manifest verglichen:
+Der Full-Abgleich analysiert die Firmware direkt vor ADB-/Busaktivität erneut
+und vergleicht:
 
 ```text
 schema
@@ -165,23 +122,22 @@ sha256
 image_base
 ```
 
-Der Windows-Updater führte diesen Full-Abgleich bereits automatisch aus; dieses
-Verhalten bleibt bestehen.
-
-Ziel ist, dass C350 niemals mit einer Manifestidentität angeboten wird, die
+Damit soll verhindert werden, dass C350 eine Manifestidentität anbietet, die
 nicht zur tatsächlich übertragenen Binärdatei gehört.
+
+Windows führte diesen Full-Abgleich bereits im Sicherheitswrapper durch.
 
 ---
 
-## 5. Harte C357-Größengrenze
+## 4. Harte C357-Größengrenze
 
-Die bekannte V3.3-Mainboard-Firmware akzeptiert bei C357 maximal:
+Die bekannte Mainboardimplementierung akzeptiert bei C357 maximal:
 
 ```text
 0x4B000 = 307200 Byte
 ```
 
-Diese Grenze ist nun direkt im gemeinsamen `FirmwareManifest` verankert:
+Diese Grenze ist nun zentral im gemeinsamen `FirmwareManifest` verankert:
 
 ```text
 size > 307200
@@ -189,58 +145,125 @@ size > 307200
 → kein Update
 ```
 
-Sie gilt dadurch für Linux und Windows bereits vor dem eigentlichen OTA-Lauf.
+Die Prüfung gilt damit für Linux und Windows vor einem echten Transfer.
 
 ---
 
-## 6. Freier Speicher als echte Stopbedingung
+## 5. Freier Speicher wird fail-closed geprüft
 
-Bisher wurde `df -k /cache /data` nur protokolliert. Ein zu voller Datenträger
-konnte deshalb theoretisch erst beim Staging oder beim PHNIX-HTTP-Download
-auffallen.
+Für `/data` und `/cache` wird vor dem Full-Update geprüft, ob genug freier
+Speicher für lokale Stagingdatei und PHNIX-Cache vorhanden ist.
 
-Die Safety-Schicht prüft jetzt den tatsächlich freien Speicher vor einem Full
-Update.
-
-Benötigt werden mindestens:
+Konservative Berechnung:
 
 ```text
-wenn /data und /cache verschiedene Dateisysteme sind:
-    je Dateisystem Firmwaregröße + 1 MiB Sicherheitsreserve
+verschiedene Dateisysteme:
+    je Firmwaregröße + 1 MiB Reserve
 
-wenn /data und /cache dasselbe Dateisystem sind:
-    2 × Firmwaregröße + 1 MiB Sicherheitsreserve
+gleiches Dateisystem:
+    2 × Firmwaregröße + 1 MiB Reserve
 ```
 
-Der zweite Fall berücksichtigt konservativ die lokale Stagingkopie unter
-`/data/phnix_local_ota/` und die PHNIX-Cachedatei unter `/cache/`.
+Zu wenig Speicher beendet den Lauf vor dem eigentlichen OTA.
 
-Bei zu wenig freiem Speicher wird vor dem Update abgebrochen.
+### Warum `df` auf dem Host geparst wird
+
+Die erste Implementierung verwendete:
+
+```text
+df -k <pfad> | tail -n 1
+```
+
+und erwartete eine einzelne Datenzeile. Der ADB-Simulator emuliert jedoch keine
+komplette Shell-Pipeline und lieferte Header plus Datenzeile zurück. Dadurch
+wurde `Available` als Zahlenfeld interpretiert und sämtliche Full-Update-
+VM-Szenarien brachen schon im Preflight ab.
+
+Die robuste Implementierung ruft deshalb nur auf:
+
+```text
+df -k <pfad>
+```
+
+und sucht **auf dem Host von unten nach oben die letzte syntaktisch gültige
+Datenzeile mit numerischen Blockfeldern**. Header oder zusätzliche Textzeilen
+werden ignoriert.
+
+Damit hängt die Sicherheitsprüfung weder von `tail` auf dem Zielgerät noch von
+einer perfekten Shell-Pipeline-Emulation des Testtransports ab.
 
 ---
 
-## 7. Persistenter Host-Run-State
+## 6. End-to-End-VM-Matrix wird CI-Pflicht
 
-Der Modemmarker `transfer-started` liegt unter `/tmp` und ist daher allein kein
-dauerhafter Nachweis, ob der Point-of-no-return in einem früheren Lauf erreicht
-wurde.
+Die normalen Unit-Tests hatten den ursprünglichen `df`-Integrationsfehler nicht
+erkannt. Deshalb reicht für diesen Bereich künftig ein grüner Mock-/Unit-Test
+allein nicht aus.
 
-Für jeden Full-Update-Lauf wird deshalb zusätzlich auf dem Host geschrieben:
+PR #1 enthält eine echte Prozess-/ADB-Simulator-Matrix mit **24 Szenarien**:
+
+```text
+2 Basisfälle
+  status
+  restore-original
+
+11 Full-Update-Szenarien
+  success
+  parser-rejected
+  crc-error
+  metadata-mismatch
+  offset-backwards
+  offset-overflow
+  stall-c350
+  stall-c5a8
+  helper-exit
+  success-without-step12
+  same-version
+
+6 Pre-C5A8-Handshake-Szenarien
+  success
+  wrong-status-1
+  missing-status-2
+  metadata-change
+  c5a8-leak
+  cancel-fail
+
+5 Same-Version-Szenarien
+  success
+  status-1
+  c357-leak
+  c5a8-leak
+  restore-mismatch
+```
+
+Die Matrix startet den realen Controllerprozess über den ADB-kompatiblen
+Simulator. Dadurch durchläuft sie auch die neue Speicherprüfung und fängt
+Integrationsfehler zwischen Controller und Simulator ab.
+
+Merge-Ziel für PR #1:
+
+```text
+Unit-Tests grün
+Shell-Syntax grün
+VM-Matrix 24/24 erwartete Ergebnisse
+```
+
+---
+
+## 7. Persistenter Host-Run-State bleibt rein informativ
+
+Während eines normalen Full-Update-Laufs beobachtet die Safety-Schicht die
+ohnehin vorhandenen Statusereignisse und schreibt zusätzlich:
 
 ```text
 <state-dir>/<Zeitstempel>/run-state.json
 ```
 
-Schema:
-
-```text
-foxair-ota-run-state-v1
-```
-
-Relevante Felder sind unter anderem:
+Relevante Felder:
 
 ```text
 phase
+terminal
 transfer_started
 point_of_no_return
 highest_confirmed_offset
@@ -248,213 +271,180 @@ software_code
 wire_version
 firmware_md5
 firmware_size
-updated_at
 ```
 
-Nach einem Host-/ADB-Verlust nach C5A8 wird beispielsweise gespeichert:
+Diese Datei **steuert keinen Mainboardzustand** und löst keinen `hold`, `stop`,
+`cancel` oder Restore aus.
+
+Sie wird unter anderem benötigt, um nach einem normalen `update` eindeutig
+zwischen
 
 ```text
-phase = host-supervision-lost
-transfer_started = true
-point_of_no_return = true
+phase = same-version
 ```
 
-Die Datei ist **rein informativ**. Sie löst keine Boardaktion aus.
-
-Linux verwendet den bestehenden Ordner:
+und
 
 ```text
-phnix-ota-state/
+phase = success
 ```
 
-Windows verwendet einen stabilen Benutzerpfad unter:
-
-```text
-%LOCALAPPDATA%\FoxAir Updater\ota-state\
-```
-
-Die Implementierung verwendet Python `pathlib` und funktioniert dadurch auf
-beiden Plattformen ohne Linux-spezifische Pfadlogik.
+zu unterscheiden.
 
 ---
 
-## 8. Passive C5A8-Stallwarnung
+## 8. Cache-Restore beim normalen Update mit gleicher Version
 
-Der Full-Update-Controller besitzt weiterhin **keinen automatischen
-C5A8-Abbruchtimeout**. Das ist absichtlich so: Ab dem ersten Firmwareblock soll
-der Host nicht eigenmächtig in die Original-State-Machine eingreifen.
-
-Neu ist nur eine Beobachtung des ohnehin bereits gelesenen, CRC-gültigen
-`OTA_INFO.offset`.
-
-Wenn der bestätigte Offset mindestens 60 Sekunden nicht steigt:
-
-```text
-WARNUNG: C5A8-Fortschritt unverändert
-Originaldienst läuft weiter
-kein automatischer Eingriff
-```
-
-Die Warnung:
-
-- sendet kein RS485-Frame,
-- setzt keinen Mainboardzustand,
-- stoppt keinen Prozess,
-- löst keinen Cancel aus.
-
-Sie macht lediglich einen möglichen Transferstillstand sichtbar.
-
----
-
-## 9. 100 % bedeutet Transportende, nicht Updateende
-
-Ein bestätigter Offset gleich `fileSize` bedeutet zunächst nur:
-
-```text
-alle C5A8-Firmwarebytes wurden vom Mainboard angenommen
-```
-
-Danach folgen auf Mainboardseite weiterhin unter anderem:
-
-```text
-Staging-MD5
-Promotion / Target-Programmierung
-zweite MD5-Prüfung
-Candidate-/Commitpfad
-```
-
-Die Benutzeranzeige unterscheidet das jetzt ausdrücklich:
-
-```text
-100 % Firmware übertragen
-→ Mainboard programmiert und verifiziert intern weiter
-```
-
-Erst der bereits vorhandene terminale PHNIX-Erfolgspfad wird weiterhin als
-Abschluss des aktuellen Updaterlaufs behandelt.
-
-Es wurde **noch keine** neue harte C544-Nachprüfung eingeführt, weil der genaue
-Zeitpunkt eines C544 nach dem ersten realen Versionswechsel noch nicht live
-beobachtet wurde.
-
----
-
-## 10. Cache-Restore beim normalen Update mit gleicher Version
-
-Ein angenommenes Cloudkommando `0033` löscht die vorhandene Datei:
+Der originale PHNIX-`0033`-Handler kann die vorhandene Datei
 
 ```text
 /cache/phnixIot_device_OTA
 ```
 
-bereits vor dem C350-Ergebnis.
+bereits löschen, bevor das Mainboard mit C36E Status 0 auf eine gleiche Version
+antwortet.
 
-Beim dedizierten `same-version`-Befehl wurde das Originalcache-Backup deshalb
-bereits zurückgespielt. Beim normalen `update`-Pfad bestand dagegen ein
-Sonderfall:
+Vorher wurde beim normalen `update` nach Exit 0 nur der Pending-Marker des
+Hostbackups gelöscht. Dadurch konnte die ursprüngliche Cache-Firmware trotz
+Same-Version verschwunden bleiben.
 
-```text
-update mit gleicher Firmware
-→ 0033 löscht Cache
-→ C36E Status 0
-→ Controller Exit 0
-→ Cache-Backup-Marker wurde nur gelöscht
-```
-
-Damit blieb die zuvor vorhandene Cachedatei verschwunden.
-
-Jetzt wird nach einem erfolgreichen normalen Update der **persistente
-Host-Run-State** ausgewertet:
+Jetzt entscheidet der gespeicherte terminale Run-State:
 
 ```text
-phase = same-version
-→ ursprünglichen Cache exakt wiederherstellen
+same-version
+→ ursprünglichen Cache wiederherstellen
 
-phase = success
-→ neuen/aktuellen Cachezustand unverändert lassen
+success
+→ erfolgreichen neuen Cachezustand nicht überschreiben
 ```
 
-Es wird bewusst **nicht** allein aus dem Vorhandensein oder Fehlen der
-Cachedatei auf Erfolg oder Same-Version geschlossen.
-
-Diese Logik ist für Linux und Windows umgesetzt.
+Es wird bewusst nicht allein aus dem Vorhandensein oder Fehlen einer Cachedatei
+auf den Terminalzustand geschlossen.
 
 ---
 
-## 11. Bewusst nicht geändert
+## 9. Passive C5A8-Beobachtung
 
-Diese Überarbeitung fügt ausdrücklich **nicht** hinzu:
+Die Safety-Schicht darf Statusinformationen lesen und darstellen, ändert aber
+nicht den bisherigen OTA-Lifecycle.
+
+### Stall-Hinweis
+
+Wenn während beobachtetem `c5a8` der CRC-gültige bestätigte Offset mindestens
+60 Sekunden nicht steigt, wird nur eine Warnung ausgegeben:
 
 ```text
-keinen zusätzlichen GDB-Halt unmittelbar vor C5A8
-keine neue OTA_INFO-Blockade im Runtimepfad
+C5A8-Fortschritt unverändert
+→ Warnung
+→ kein eigener Timeout
+→ kein Cancel
+→ kein zusätzlicher Prozessbefehl
+```
+
+### 100 % Transport ist nicht automatisch Terminalzustand
+
+Bei
+
+```text
+offset >= length
+```
+
+wird angezeigt, dass **100 % der Firmwarebytes übertragen** wurden. Die Anzeige
+weist gleichzeitig darauf hin, dass das Mainboard intern noch programmieren und
+verifizieren kann.
+
+Der bestehende Core entscheidet weiterhin allein, wann der bisher bekannte
+terminale Erfolgspfad erreicht wurde.
+
+C544 wird in PR #1 weiterhin nicht als neue harte Erfolgsbedingung eingeführt.
+
+---
+
+## 10. Windows: Entwicklungs- und Releasepfad durch dieselben Safety-Schichten
+
+Die gepackte Windows-Version verwendet bereits:
+
+```text
+GUI
+→ Windows-Sicherheitswrapper
+→ gemeinsame Safety-Schicht
+→ bytegleicher Controller-Core
+```
+
+Im direkten Repository-Entwicklungsmodus wählte die GUI vorher dagegen den
+Core unmittelbar aus. Damit wurden Wrapperfunktionen wie Full-Abgleich,
+Cache-Backup/-Restore und stabiler Windows-Run-State umgangen.
+
+PR #1 enthält deshalb einen kleinen Source-Mode-Backend-Router unter:
+
+```text
+backend/tools/phnix_ota/
+```
+
+Der bereits dokumentierte direkte GUI-Start kann damit denselben logischen
+Backendpfad benutzen wie das Release. Kleine Source-Mode-Shims unter
+`updater/windows/` reichen Aufrufe an die gemeinsamen Implementierungen unter
+`tools/phnix_ota/` weiter; es entsteht keine zweite OTA-Implementierung.
+
+---
+
+## 11. LF-Pinning des extensionlosen Linux-Launchers
+
+`.gitattributes` erzwingt bereits LF für Python-, Shell- und mehrere interne
+Skripte. Der extensionlose Launcher
+
+```text
+foxair-updater
+```
+
+war davon nicht ausdrücklich erfasst.
+
+PR #1 ergänzt:
+
+```gitattributes
+foxair-updater text eol=lf
+```
+
+Damit kann ein Windows-Checkout den Shebang-/Shell-Launcher nicht versehentlich
+mit CRLF für eine spätere Nutzung unter WSL/Git Bash/Linux auschecken.
+
+---
+
+## 12. Bewusst auf PR #2 verschoben
+
+Nicht Teil von PR #1 sind:
+
+```text
+kein neuer USB-/ADB-Ausfall-Lifecycle nach C5A8
+kein entkoppelter Remote-Supervisor
+kein neuer Post-C5A8-Recoverypfad
+kein automatisches Aufräumen nach unbekanntem Hostverlust
 keine neuen C36A/C36C-Breakpoints im Full-Update
-keinen aktiven eigenen Cancel nach begonnenem C5A8
+kein eigener aktiver Cancel nach begonnenem C5A8
 keine neuen RS485-Kommandos
-keine Änderung des C350/C357/C5A8/C371-Wireformats
-keinen neuen C544-Zwang als Erfolgsbedingung
-keinen großen Helper-/Daemon-Umbau
+keine neue C544-Erfolgsbedingung
 ```
 
-Der bereits analysierte Originalpfad soll damit so wenig wie möglich verändert
-werden.
+Vor diesen Änderungen sollen reale, harmlose Prozess-Persistenztests auf dem
+LTE-Modem durchgeführt werden.
 
 ---
 
-## 12. Stromausfall
+## 13. Sicherheitsentscheidung für PR #1
 
-Diese Änderungen behaupten nicht, das Power-Loss-Verhalten des residenten
-Mainboard-Loaders zu lösen. Ein Stromausfall während Target-Erase oder Copy ist
-eine grundsätzliche Eigenschaft des PHNIX-Firmwareupdatepfads und kann ebenso
-bei einem regulären Hersteller-/Cloud-OTA auftreten.
-
-Das Ziel dieses Hardening-Patches ist enger:
-
-> **Unser lokaler Updater soll gegenüber dem Original-OTA keine zusätzliche
-> Ausfallursache erzeugen.**
-
-Insbesondere soll ein Ausfall von USB, ADB oder Host nach begonnenem C5A8 nicht
-zusätzlich den weiterhin lokal laufenden Originaldienst stoppen.
-
----
-
-## 13. Tests / Reviewgrenzen
-
-Zusätzliche Tests prüfen unter anderem:
+Der verkleinerte PR folgt damit einer klaren Grenze:
 
 ```text
-C357-Maximalgröße
-Speicherplatzberechnung bei gemeinsamen/getrennten Dateisystemen
-plattformneutralen JSON-Run-State
-100-%-/Promotion-Ausgabe
-kein SIGSTOP im Runtime-Cleanup nach TRANSFER_STARTED
-kein Host-hold nach erkanntem Point-of-no-return
-Linux --full Pflicht
-Linux-/Windows-Cacheentscheidung anhand des Run-State
-stabilen Windows-OTA-State-Pfad
+Preflight härten       → ja
+Manifest härten        → ja
+Tests härten           → ja
+Status passiv beobachten → ja
+Cache-Bookkeeping fixen  → ja
+Windows-Pfade vereinheitlichen → ja
+
+OTA-Lifecycle nach C5A8 verändern → nein, separat untersuchen
 ```
 
-Die vorhandenen Tests für Manifest, OTA-Frames, Controller, Simulator und
-Runtimeprofil bleiben zusätzlich bestehen.
-
----
-
-## 14. Sicherheitsentscheidung
-
-Mit diesem Patch wird die Hostseite konservativer, ohne die bisher
-rekonstruierte PHNIX-State-Machine zu erweitern:
-
-```text
-vor C5A8:
-    fail closed / guarded hold
-
-erster C5A8:
-    point of no return markieren
-
-danach:
-    Original-phnixIot4G niemals wegen Hostfehler anhalten
-    nur beobachten und protokollieren
-```
-
-Damit ist insbesondere der zuvor identifizierte USB-/ADB-Ausfallpfad entschärft,
-ohne einen neuen Recoveryalgorithmus in den Mainboard-OTA einzuführen.
+Damit bleiben weniger gleichzeitig veränderte Komponenten im ersten Merge und
+die schwierigere USB-/ADB-/Recovery-Frage kann anschließend isoliert in PR #2
+entwickelt und getestet werden.
