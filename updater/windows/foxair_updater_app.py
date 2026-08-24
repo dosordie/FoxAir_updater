@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import subprocess
 import sys
 import threading
 from html import escape
@@ -13,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
 )
@@ -23,6 +27,8 @@ import release_check
 
 APP_VERSION = "0.1.8"
 MODEM_DRIVER_URL = "https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip"
+REMOTE_CACHE_FIRMWARE = "/cache/phnixIot_device_OTA"
+REMOTE_CACHE_STAGE = "/cache/.phnixIot_device_OTA.manual-upload"
 
 GREEN = "#16803a"
 YELLOW = "#b26a00"
@@ -56,6 +62,8 @@ class MainWindow(base.MainWindow):
         self.update_manifest.editingFinished.connect(self._persist_settings)
         self.same_manifest.editingFinished.connect(self._persist_settings)
         self.firmware.editingFinished.connect(self._persist_settings)
+        if hasattr(self, "cache_firmware"):
+            self.cache_firmware.editingFinished.connect(self._persist_settings)
         QTimer.singleShot(900, lambda: self._check_for_updates(silent=True))
 
     def _load(self):
@@ -139,6 +147,75 @@ class MainWindow(base.MainWindow):
         layout.insertLayout(insert_at + 2, update_row)
         return widget
 
+    def _backup(self):
+        widget = super()._backup()
+        # A complete diagnostic backup should include the verified original LTE
+        # service by default. Users can still deselect it explicitly.
+        self.backup_service.setChecked(True)
+        return widget
+
+    def _advanced(self):
+        widget = super()._advanced()
+        layout = widget.layout()
+        insert_at = max(0, layout.count() - 1)
+
+        heading = QLabel("<b>Firmware manuell in den LTE-Cache kopieren</b>")
+        layout.insertWidget(insert_at, heading)
+        insert_at += 1
+
+        row = QHBoxLayout()
+        self.cache_firmware = QLineEdit()
+        self.cache_firmware.setPlaceholderText("Firmwaredatei auswählen")
+        self.cache_firmware.textChanged.connect(self._buttons)
+        choose = QPushButton("Firmware…")
+        choose.clicked.connect(self._pick_cache_firmware)
+        row.addWidget(self.cache_firmware, 1)
+        row.addWidget(choose)
+        layout.insertLayout(insert_at, row)
+        insert_at += 1
+
+        note = QLabel(
+            "Kopiert die gewählte Datei ausschließlich nach "
+            "<code>/cache/phnixIot_device_OTA</code> auf dem LTE-Modem. "
+            "Es wird kein OTA gestartet und nichts an das Mainboard gesendet. "
+            "Die Datei wird zuerst unter einem temporären Namen übertragen, per SHA-256 "
+            "geprüft und erst danach atomar auf den Originalpfad verschoben."
+        )
+        note.setWordWrap(True)
+        layout.insertWidget(insert_at, note)
+        insert_at += 1
+
+        self.cache_copy_btn = QPushButton("Firmware nach /cache/phnixIot_device_OTA kopieren")
+        self.cache_copy_btn.clicked.connect(self._manual_cache_copy)
+        layout.insertWidget(insert_at, self.cache_copy_btn)
+        return widget
+
+    def _update(self):
+        widget = super()._update()
+        layout = widget.layout()
+
+        heading = QLabel("<b>Ablauf / Sicherheitsstatus</b>")
+        layout.insertWidget(2, heading)
+
+        self.flow_status = QLabel()
+        self.flow_status.setWordWrap(True)
+        self.flow_status.setStyleSheet(
+            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
+        )
+        flow_font = self.flow_status.font()
+        if flow_font.pointSize() > 0:
+            flow_font.setPointSize(flow_font.pointSize() + 1)
+        elif flow_font.pixelSize() > 0:
+            flow_font.setPixelSize(flow_font.pixelSize() + 1)
+        self.flow_status.setFont(flow_font)
+        layout.insertWidget(3, self.flow_status)
+
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("Noch keine Firmwareübertragung")
+        self._render_flow()
+        return widget
+
     def _settings_directory(self, key: str, fallback: Path | None = None) -> Path:
         value = str(self.settings.value(key, "") or "").strip()
         if value:
@@ -165,6 +242,8 @@ class MainWindow(base.MainWindow):
         self._remember_parent("manifest_dir", self.update_manifest.text())
         self._remember_parent("manifest_dir", self.same_manifest.text())
         self._remember_parent("firmware_dir", self.firmware.text())
+        if hasattr(self, "cache_firmware"):
+            self._remember_parent("firmware_dir", self.cache_firmware.text())
         self.settings.sync()
 
     def _browse_adb(self):
@@ -229,6 +308,26 @@ class MainWindow(base.MainWindow):
             self.manifest_preview.clear()
             self._buttons()
 
+    def _pick_cache_firmware(self):
+        current = self.cache_firmware.text().strip()
+        current_path = Path(current) if current else None
+        start = (
+            current_path.parent
+            if current_path and current_path.parent.is_dir()
+            else self._settings_directory("firmware_dir")
+        )
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Firmware für LTE-Cache auswählen",
+            str(start),
+            "Alle Dateien (*);;BIN-Dateien (*.bin)",
+        )
+        if file_name:
+            self.cache_firmware.setText(file_name)
+            self.settings.setValue("firmware_dir", str(Path(file_name).parent))
+            self.settings.sync()
+            self._buttons()
+
     def _check_for_updates(self, *, silent: bool) -> None:
         if self._release_check_running:
             return
@@ -277,26 +376,6 @@ class MainWindow(base.MainWindow):
 
     def _open_latest_release(self) -> None:
         QDesktopServices.openUrl(QUrl(self._latest_release_url))
-
-    def _update(self):
-        widget = super()._update()
-        layout = widget.layout()
-
-        heading = QLabel("<b>Ablauf / Sicherheitsstatus</b>")
-        layout.insertWidget(2, heading)
-
-        self.flow_status = QLabel()
-        self.flow_status.setWordWrap(True)
-        self.flow_status.setStyleSheet(
-            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
-        )
-        layout.insertWidget(3, self.flow_status)
-
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress.setFormat("Noch keine Firmwareübertragung")
-        self._render_flow()
-        return widget
 
     def _reset_flow(self, title: str, *, transfer_expected: bool = False):
         self._flow_steps.clear()
@@ -368,6 +447,21 @@ class MainWindow(base.MainWindow):
             if record.get("event") == "warning" and "Gleiche Firmware" in str(record.get("message", "")):
                 return True
         return False
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _summary_record(output: str, event: str) -> dict | None:
+        for record in reversed(MainWindow._records(output)):
+            if record.get("event") == event:
+                return record
+        return None
 
     def _handle_plain_status(self, text: str):
         prefix = "[Windows-Sicherheitswrapper] "
@@ -567,7 +661,287 @@ class MainWindow(base.MainWindow):
         if isinstance(record, dict):
             self._handle_record(record)
 
+    def _backup_run(self):
+        adb = self._require_adb()
+        if not adb:
+            return
+        target = Path(self.backup_path.text().strip())
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            QMessageBox.critical(self, "Backup", f"Backup-Ziel konnte nicht angelegt werden:\n{error}")
+            return
+
+        items = []
+        if self.backup_fw.isChecked():
+            items.append(("Firmware", "/cache/phnixIot_device_OTA", "phnixIot_device_OTA"))
+        if self.backup_info.isChecked():
+            items.append(("OTA_INFO", "/data/phnixIot_device_OTA_INFO", "phnixIot_device_OTA_INFO"))
+        if self.backup_stat.isChecked():
+            items.append(("Statistik", "/data/phnixIot_device_statisic", "phnixIot_device_statisic"))
+        if self.backup_service.isChecked():
+            items.append(("Originaldienst phnixIot4G", "/data/phnixIot4G", "phnixIot4G"))
+        if not items:
+            QMessageBox.information(self, "Backup", "Bitte mindestens eine Datei für das Backup auswählen.")
+            return
+
+        self.busy = True
+        self._buttons()
+        adb_env = self._adb_env()
+        if adb_env:
+            self._log("[Remote ADB] ADB_SERVER_SOCKET=" + adb_env["ADB_SERVER_SOCKET"])
+
+        def work():
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            output: list[str] = []
+            copied: list[dict] = []
+            missing: list[dict] = []
+            failed: list[dict] = []
+
+            def run(command: list[str]) -> subprocess.CompletedProcess:
+                command_text = "$ " + subprocess.list2cmdline(command)
+                output.append(command_text)
+                self.signals.line.emit(command_text)
+                completed = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=flags,
+                    env=self._process_env(),
+                    check=False,
+                )
+                for line in completed.stdout.splitlines():
+                    output.append(line)
+                    self.signals.line.emit(line)
+                return completed
+
+            try:
+                for label, remote, name in items:
+                    probe = run([
+                        str(adb),
+                        "shell",
+                        f"if [ -f '{remote}' ]; then echo PRESENT; else echo ABSENT; fi",
+                    ])
+                    state = probe.stdout.replace("\r", "").strip().splitlines()
+                    state_value = state[-1].strip() if state else ""
+                    if probe.returncode != 0:
+                        failed.append({"label": label, "remote": remote, "reason": "ADB-Dateiprüfung fehlgeschlagen"})
+                        continue
+                    if state_value != "PRESENT":
+                        missing.append({"label": label, "remote": remote})
+                        warning = json.dumps(
+                            {"event": "backup-missing", "label": label, "remote": remote},
+                            ensure_ascii=False,
+                        )
+                        output.append(warning)
+                        self.signals.line.emit(warning)
+                        continue
+
+                    destination = target / name
+                    pull = run([str(adb), "pull", remote, str(destination)])
+                    if pull.returncode == 0 and destination.is_file():
+                        copied.append({"label": label, "remote": remote, "local": str(destination)})
+                    else:
+                        failed.append({"label": label, "remote": remote, "reason": "adb pull fehlgeschlagen"})
+
+                summary = json.dumps(
+                    {
+                        "event": "backup-summary",
+                        "copied": copied,
+                        "missing": missing,
+                        "failed": failed,
+                        "target": str(target),
+                    },
+                    ensure_ascii=False,
+                )
+                output.append(summary)
+                self.signals.line.emit(summary)
+                self.signals.done.emit("backup", 0 if not failed else 2, "\n".join(output))
+            except Exception as error:
+                message = "[Backup-Prozessfehler] " + str(error)
+                output.append(message)
+                self.signals.line.emit(message)
+                self.signals.done.emit("backup", -1, "\n".join(output))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _manual_cache_copy(self):
+        adb = self._require_adb()
+        if not adb:
+            return
+        firmware = Path(self.cache_firmware.text().strip().strip('"'))
+        if not firmware.is_file():
+            QMessageBox.warning(self, "Firmware fehlt", "Bitte zuerst eine Firmwaredatei auswählen.")
+            return
+
+        size = firmware.stat().st_size
+        if (
+            QMessageBox.warning(
+                self,
+                "LTE-Firmware-Cache überschreiben",
+                "Die ausgewählte Datei wird nach erfolgreicher SHA-256-Prüfung auf\n\n"
+                f"{REMOTE_CACHE_FIRMWARE}\n\n"
+                f"kopiert. Eine dort vorhandene Cache-Datei wird ersetzt.\n"
+                f"Datei: {firmware.name}\nGröße: {size:,} Byte\n\n"
+                "Dadurch wird kein Mainboard-Update gestartet. Fortfahren?".replace(",", "."),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            != QMessageBox.Yes
+        ):
+            return
+
+        expected_sha256 = self._sha256_file(firmware)
+        self.busy = True
+        self._buttons()
+        adb_env = self._adb_env()
+        if adb_env:
+            self._log("[Remote ADB] ADB_SERVER_SOCKET=" + adb_env["ADB_SERVER_SOCKET"])
+
+        def work():
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            output: list[str] = []
+
+            def run(command: list[str]) -> subprocess.CompletedProcess:
+                command_text = "$ " + subprocess.list2cmdline(command)
+                output.append(command_text)
+                self.signals.line.emit(command_text)
+                completed = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=flags,
+                    env=self._process_env(),
+                    check=False,
+                )
+                for line in completed.stdout.splitlines():
+                    output.append(line)
+                    self.signals.line.emit(line)
+                return completed
+
+            def finish(code: int, error: str | None = None):
+                record = {
+                    "event": "manual-cache-copy",
+                    "ok": code == 0,
+                    "local": str(firmware),
+                    "remote": REMOTE_CACHE_FIRMWARE,
+                    "size": size,
+                    "sha256": expected_sha256,
+                }
+                if error:
+                    record["error"] = error
+                line = json.dumps(record, ensure_ascii=False)
+                output.append(line)
+                self.signals.line.emit(line)
+                self.signals.done.emit("cache-copy", code, "\n".join(output))
+
+            try:
+                push = run([str(adb), "push", str(firmware), REMOTE_CACHE_STAGE])
+                if push.returncode != 0:
+                    finish(2, "Übertragung der temporären Datei fehlgeschlagen")
+                    return
+
+                verify_stage = run([
+                    str(adb),
+                    "shell",
+                    f"sha256sum '{REMOTE_CACHE_STAGE}' | awk '{{print $1}}'",
+                ])
+                remote_stage_hash = verify_stage.stdout.replace("\r", "").strip().splitlines()
+                remote_stage_hash = remote_stage_hash[-1].strip().lower() if remote_stage_hash else ""
+                if verify_stage.returncode != 0 or remote_stage_hash != expected_sha256.lower():
+                    run([str(adb), "shell", f"rm -f '{REMOTE_CACHE_STAGE}'"])
+                    finish(2, "SHA-256 der temporär übertragenen Datei stimmt nicht")
+                    return
+
+                promote = run([
+                    str(adb),
+                    "shell",
+                    f"mv '{REMOTE_CACHE_STAGE}' '{REMOTE_CACHE_FIRMWARE}' && sync && "
+                    f"sha256sum '{REMOTE_CACHE_FIRMWARE}' | awk '{{print $1}}'",
+                ])
+                remote_final_hash = promote.stdout.replace("\r", "").strip().splitlines()
+                remote_final_hash = remote_final_hash[-1].strip().lower() if remote_final_hash else ""
+                if promote.returncode != 0 or remote_final_hash != expected_sha256.lower():
+                    finish(2, "Finale SHA-256-Prüfung am Originalpfad fehlgeschlagen")
+                    return
+
+                finish(0)
+            except Exception as error:
+                finish(-1, str(error))
+
+        threading.Thread(target=work, daemon=True).start()
+
     def _done(self, op, code, output):
+        if op == "backup":
+            super()._done("handled-result", code, output)
+            summary = self._summary_record(output, "backup-summary")
+            if not summary:
+                QMessageBox.critical(
+                    self,
+                    "Backup fehlgeschlagen",
+                    "Das Backup konnte nicht vollständig ausgewertet werden. Details stehen im Protokoll.",
+                )
+                return
+
+            copied = summary.get("copied") if isinstance(summary.get("copied"), list) else []
+            missing = summary.get("missing") if isinstance(summary.get("missing"), list) else []
+            failed = summary.get("failed") if isinstance(summary.get("failed"), list) else []
+            lines = [f"Gesichert: {len(copied)} Datei(en)."]
+            if copied:
+                lines.extend(f"  ✓ {item.get('label', '?')}" for item in copied if isinstance(item, dict))
+            if missing:
+                lines.append("\nNicht auf dem LTE-Modem vorhanden:")
+                lines.extend(
+                    f"  • {item.get('label', '?')}: {item.get('remote', '?')}"
+                    for item in missing
+                    if isinstance(item, dict)
+                )
+            if failed:
+                lines.append("\nFehlgeschlagen:")
+                lines.extend(
+                    f"  • {item.get('label', '?')}: {item.get('reason', 'unbekannter Fehler')}"
+                    for item in failed
+                    if isinstance(item, dict)
+                )
+            lines.append(f"\nZielordner:\n{summary.get('target', self.backup_path.text())}")
+            text = "\n".join(lines)
+            if failed or code != 0:
+                QMessageBox.critical(self, "Backup teilweise fehlgeschlagen", text)
+            elif missing:
+                QMessageBox.warning(self, "Backup abgeschlossen mit Hinweis", text)
+            else:
+                QMessageBox.information(self, "Backup vollständig", text)
+            return
+
+        if op == "cache-copy":
+            super()._done("handled-result", code, output)
+            result = self._summary_record(output, "manual-cache-copy")
+            if code == 0 and result and result.get("ok") is True:
+                QMessageBox.information(
+                    self,
+                    "Firmware in LTE-Cache kopiert",
+                    "Die Firmwaredatei wurde erfolgreich übertragen und per SHA-256 geprüft.\n\n"
+                    f"Ziel: {REMOTE_CACHE_FIRMWARE}\n"
+                    f"SHA-256: {result.get('sha256', '?')}\n\n"
+                    "Es wurde kein OTA gestartet und nichts an das Mainboard gesendet.",
+                )
+            else:
+                detail = result.get("error") if isinstance(result, dict) else None
+                QMessageBox.critical(
+                    self,
+                    "Kopieren in LTE-Cache fehlgeschlagen",
+                    "Die Firmwaredatei wurde nicht sicher am Originalpfad bestätigt."
+                    + (f"\n\n{detail}" if detail else "")
+                    + "\n\nDetails stehen im Protokoll.",
+                )
+            return
+
         if op not in {"dry", "update", "restore", "same"}:
             super()._done(op, code, output)
             return
@@ -701,6 +1075,12 @@ class MainWindow(base.MainWindow):
     def _same(self):
         self._reset_flow("Gleichversionstest wird vorbereitet", transfer_expected=False)
         super()._same()
+
+    def _buttons(self):
+        super()._buttons()
+        if hasattr(self, "cache_copy_btn"):
+            firmware_ready = Path(self.cache_firmware.text().strip().strip('"')).is_file()
+            self.cache_copy_btn.setEnabled(not self.busy and self._adb_ready() and firmware_ready)
 
     def closeEvent(self, event):
         self._persist_settings()
