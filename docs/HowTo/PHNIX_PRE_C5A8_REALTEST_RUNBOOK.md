@@ -1,6 +1,11 @@
 # PHNIX Pre-C5A8-Realtest – vorbereitetes Runbook
 
-Stand: 2026-08-23
+Stand: 2026-08-24
+
+> [!NOTE]
+> Für normale Endanwender steht inzwischen zusätzlich eine Windows-GUI unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases) zur Verfügung. Dort sind ADB-Verbindung, Originalstatus und Backup real getestet.
+>
+> Dieses Runbook ist weiterhin ein **separates Entwicklungs-/Laborverfahren** und wird durch die Windows-GUI nicht ersetzt. Ein echter Firmware-Versionswechsel ist weder unter Windows noch allgemein bereits live bestätigt.
 
 ## Status
 
@@ -176,5 +181,7 @@ Realtest vor der Loggeraktualisierung zu starten.
 ## Zugehörige Dateien
 
 - [`PHNIX_PRE_C5A8_VM_UND_REALTEST.md`](PHNIX_PRE_C5A8_VM_UND_REALTEST.md)
+- [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md)
+- [`firmware_backup_lte.md`](firmware_backup_lte.md)
 - [`../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md)
 - [`../reverse_engineering/PHNIX_CANCEL_PROBE_LIVE_RESULT.md`](../reverse_engineering/PHNIX_CANCEL_PROBE_LIVE_RESULT.md)
