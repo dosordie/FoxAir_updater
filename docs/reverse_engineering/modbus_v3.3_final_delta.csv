@@ -1,0 +1,53 @@
+namespace,register_or_range,change_type,current_foxair_control,v3_3_result,software_action,confidence,safety
+MAIN:S,2019.bit0,correction,Kompressor-Ausgang,Actual compressor running derived from inverter actual frequency,rename_bit,confirmed,read_only
+MAIN:S,2019.bit2,correction,Fan high-speed output,At least one fan actual feedback nonzero,rename_bit,confirmed,read_only
+MAIN:S,2026,correction,name 9,INV1:2113 high-byte diagnostic,rename_add_provenance,confirmed,read_only
+MAIN:S,2027,correction,name 9,INV1:2113 low-byte diagnostic,rename_add_provenance,confirmed,read_only
+MAIN:S,2028,correction,name 9,INV1:2118 diagnostic,rename_add_provenance,confirmed,read_only
+MAIN:S,2054,confidence_upgrade,Electrical power,Electrical total power RAW/10 kW,confirm_scale,confirmed,read_only
+MAIN:S,2057,correction,Unconfirmed live value,T35 AC Input Current,rename_type,confirmed,read_only
+MAIN:S,2059,confidence_upgrade,Thermal power,Thermal total power RAW/10 kW,confirm_scale,confirmed,read_only
+MAIN:S,2060,confidence_upgrade,COP,Total COP RAW/100,confirm_scale,confirmed,read_only
+MAIN:S,2071,correction,Compressor frequency,Compressor target frequency,rename,confirmed,read_only
+MAIN:S,2080,provenance_upgrade,Candidate/display status,Inverter/driver status from INV1:2099,add_provenance,confirmed,read_only
+MAIN:S,2081,correction,Error 7,Inverter/Driver Fault Word 1,rename_add_bitfield,confirmed,read_only
+MAIN:S,2082,correction,Error 8,Inverter/Driver Fault Word 2,rename_add_bitfield,confirmed,read_only
+MAIN:S,2109,correction,Reserved,V3.3 internally populated status value,remove_reserved,confirmed,read_only
+MAIN:S,2117,correction,Reserved,High word of 32-bit counter 2117/2118,model_u32_pair,confirmed,read_only
+MAIN:S,2119,correction,Reserved,High word of 32-bit counter 2119/2120,model_u32_pair,confirmed,read_only
+MAIN:S,2121,correction,Reserved,High word of 32-bit counter 2121/2122,model_u32_pair,confirmed,read_only
+MAIN:S,2123,correction,Reserved,High word of 32-bit counter 2123/2124,model_u32_pair,confirmed,read_only
+MAIN:S,2136,correction,Unknown x0.1 value,T04 outdoor temperature second publication path,rename,confirmed,read_only
+MAIN:S,2137,correction,Candidate mirror of 2054,Pure heat-pump/inverter electrical input power RAW/10 kW,rename_scale,confirmed,read_only
+MAIN:S,2138,correction,Candidate mirror of 2059,Pure heat-pump thermal power RAW/10 kW,rename_scale,confirmed,read_only
+MAIN:S,2140-2141,structure_upgrade,Two RAW words,One 32-bit value,model_u32_pair,confirmed,read_only
+MAIN:S,2142-2143,structure_upgrade,Two RAW words,One 32-bit value,model_u32_pair,confirmed,read_only
+MAIN:S,2146,structure_upgrade,Unknown,V3.3 capability/status bitfield base 0x002C,set_bitfield_raw_bits,confirmed,read_only
+MAIN:S,2150-2180,add_range,Mostly absent,V3.3 status range with confirmed live RAM sources/additional broadcast words,add_raw_candidates,confirmed_provenance,read_only
+MAIN:P,1334.value3,add_enum,Missing,Virtual/Modbus SG Ready input source,add_enum_value,very_likely_label,operational_control
+ENG:CTRL,8801,add_register,Absent,Virtual SG Ready state command values 1-4,add_advanced_register,confirmed,operational_control
+MAIN:P,1348-1352,confidence_upgrade,Display/unknown C13-C15 E20-E21,Real active V3.3 signed-byte live parameters with defaults,add_ram_defaults,confirmed,configuration
+MAIN:P,1381-1389,add_range,Mostly absent,Confirmed V3.3 live parameter fields,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1402,add_register,Absent/unknown,Confirmed V3.3 live parameter,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1404-1405,add_range,Absent/unknown,Confirmed V3.3 live parameters,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1422-1431,add_range,Partial/absent,Confirmed V3.3 live parameter fields,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1445-1448,add_range,Absent/unknown,Confirmed V3.3 live parameter fields,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1461-1469,add_range,Absent/unknown,Confirmed V3.3 live parameter fields,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1476-1477,add_range,Absent/partial,Confirmed V3.3 live parameter fields,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1481,add_register,Absent,Confirmed V3.3 feature/config parameter,add_raw_with_provenance,confirmed_provenance,configuration
+MAIN:P,1541-1550,namespace_correction,Normal MAIN-like display entries,Not in normal V3.3 MAIN FC03/FC06 parameter dispatcher,move_to_display_compat_namespace,confirmed,avoid_write
+MAIN:P,header_blocks,write_policy,Read-only in current data,V3.3 FC06 blocks but FC10 technically accepts,keep_read_only_and_document_fc10,confirmed,avoid_write
+ENG:A,5001-5090,add_namespace,Absent,Engineering parameter shadow/service profile FC03/06/10,add_advanced_namespace,confirmed,high_write_risk
+ENG:B,5091-5180,add_namespace,Absent,Stateful 90-word synchronization/forwarding window FC03+FC10,add_monitor_namespace,confirmed,high_write_risk
+DIAG,6001-6090,add_namespace,Absent,Read-only engineering diagnostic snapshot FC03 only,add_diagnostics_namespace,confirmed,low
+DIAG,6016,add_register,Absent,T01 inlet-water temperature,add_named_diag,confirmed,read_only
+DIAG,6017,add_register,Absent,T02 outlet-water temperature,add_named_diag,confirmed,read_only
+DIAG,6019,add_register,Absent,T04 outdoor temperature,add_named_diag,confirmed,read_only
+DIAG,6040,add_register,Absent,Compressor actual frequency,add_named_diag,confirmed,read_only
+DIAG,6044,add_register,Absent,Fan actual 1,add_named_diag,confirmed,read_only
+DIAG,6045,add_register,Absent,Fan actual 2,add_named_diag,confirmed,read_only
+DIAG,6073-6080,add_range,Absent,Low-level hardware/IO diagnostic bitfields,add_raw_bitfields,confirmed_provenance,read_only
+DIAG,6088,add_register,Absent,Service/handshake status word,add_advanced_raw,confirmed,stateful_read
+ENG:CTRL,8802-8820,add_range,Absent,Protocol-addressable engineering control slots no direct live consumer found,keep_hidden_raw,confirmed_addressing,unknown_write_risk
+SPECIAL,60000,add_service_action,Absent,Reset MAIN:1024 Modbus Unit Address to 1,separate_service_action,confirmed,very_high
+SPECIAL,60010,add_service_action,Absent,STM32 UID-bound Modbus address provisioning,separate_service_action,confirmed,very_high
