@@ -291,6 +291,14 @@ Nicht Schwerpunkt dieses Repositorys sind:
 - normale Endanwender-Steuerlogik;
 - allgemeine Modbus-Werkzeuge ohne direkten Firmware-/Updater-Bezug.
 
+## 💙 Unterstützung
+
+Ich bastle an diesem Tool in meiner Freizeit.  
+Wenn er dir gefällt oder dir weiterhilft, freue ich mich über eine kleine Spende:
+
+[![Spenden via PayPal](https://img.shields.io/badge/Spenden-PayPal-blue.svg?logo=paypal)](https://www.paypal.com/paypalme/AuhuberD)
+
+
 ## Lizenz
 
 Dieses Repository steht unter der **GNU General Public License v3.0**,
