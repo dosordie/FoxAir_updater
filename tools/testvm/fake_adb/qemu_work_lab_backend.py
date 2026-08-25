@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Runtime backend for the Work-created PHNIX QEMU lab.
 
-This module wraps ``qemu_lab_adapter.py``.  The original adapter owns the stable
-rootfs mapping and process inspection.  This layer adapts two facts confirmed on
+This module wraps ``qemu_lab_adapter.py``. The original adapter owns the stable
+rootfs mapping and process inspection. This layer adapts two facts confirmed on
 the real Debian VM:
 
 * the imported ARM rootfs intentionally has no /bin/sh or BusyBox; ADB shell
   therefore has to be represented on the Debian host while /data, /cache and
   /tmp continue to map into the QEMU rootfs;
-* phnixIot4G is not a permanently running daemon in the lab.  It is started by
+* phnixIot4G is not a permanently running daemon in the lab. It is started by
   tools/run_scenario_lab.sh for a bounded scenario run together with PTYs,
   AT/QMI stubs and rs485_fault_emulator.py.
 
-Only updater-facing shell commands are emulated here.  No command is ever
+Only updater-facing shell commands are emulated here. No command is ever
 executed by blindly substituting absolute paths into a host shell.
 """
 
@@ -115,13 +115,13 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
     """Translate public test names to run_scenario_lab.sh's real knobs.
 
     Only mappings directly supported by the observed rs485_fault_emulator CLI
-    are accepted.  Unsupported historical Python-simulator names fail instead
+    are accepted. Unsupported historical Python-simulator names fail instead
     of being silently approximated.
     """
     env = {
         "RS485_STUB": "1",
         # This makes rs485_fault_emulator validate/ACK actual C5A8 traffic but
-        # does not inject an OTA command itself.  The Windows updater remains the
+        # does not inject an OTA command itself. The Windows updater remains the
         # actor that stages/injects the OTA request.
         "LOCAL_OTA_FULL_TRANSFER": "1",
         "FAULT_SCENARIO": "success",
@@ -228,7 +228,7 @@ def _start_runner(kind: str, value: str) -> tuple[bool, str]:
         encoding="utf-8",
     )
 
-    # run_scenario_lab.sh creates PTYs and then starts qemu.  Do not return
+    # run_scenario_lab.sh creates PTYs and then starts qemu. Do not return
     # success until the original ARM process is observable.
     deadline = time.monotonic() + 8.0
     while time.monotonic() < deadline:
@@ -309,6 +309,18 @@ def _host_listener(port: int) -> bytes:
     return b""
 
 
+def _test_remote(kind: str, remote: str) -> bool:
+    """Implement Android-style test predicates against the emulated rootfs."""
+    path = root_path(remote)
+    if kind == "e":
+        return path.exists()
+    if kind == "f":
+        return path.is_file()
+    if kind == "x":
+        return path.is_file() and os.access(path, os.X_OK)
+    return False
+
+
 def shell(command: str) -> tuple[int, bytes]:
     command = command.strip()
 
@@ -341,12 +353,15 @@ def shell(command: str) -> tuple[int, bytes]:
         # does not need production MQTT guard rules on the Debian host.
         return 0, b""
 
-    # File primitives that normally reach this module only when they were not
-    # already handled by FakeAdbServer.generic_file_shell().
-    match = re.fullmatch(r"test -([fe]) ['\"]?(?P<path>/[^;'\"]+)['\"]?; echo \$\?", command)
+    # Android/preflight predicates.  The controller intentionally asks whether
+    # debugger/helper tools exist with forms such as:
+    #   test -x /usr/bin/gdb; echo $?
+    # The imported Work rootfs has no shell and no gdb, so this must be answered
+    # from the mapped rootfs rather than attempted through ARM /bin/sh.
+    match = re.fullmatch(r"test -(?P<kind>[efx]) ['\"]?(?P<path>/[^;'\"]+)['\"]?; echo \$\?", command)
     if match:
-        exists = root_path(match.group("path")).exists()
-        return 0, b"0\n" if exists else b"1\n"
+        result = _test_remote(match.group("kind"), match.group("path"))
+        return 0, b"0\n" if result else b"1\n"
 
     match = re.fullmatch(r"chmod [0-7]+ ['\"]?(?P<path>/\S+?)['\"]?", command)
     if match:
@@ -426,6 +441,7 @@ def main() -> int:
     except Exception as exc:
         print(f"FEHLER: {exc}", file=sys.stderr)
         return 2
+    return 2
 
 
 if __name__ == "__main__":
