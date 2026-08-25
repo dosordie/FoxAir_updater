@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
 """Permissive ADB backend for the isolated FoxAir TestVM.
 
-This intentionally exposes a root Debian shell through ADB. The VM is a test
-fixture, so unknown commands are not rejected. PHNIX-specific process/status
-queries are still delegated to qemu_work_lab_backend.py, while every other
-command is executed with /bin/sh -c on the Debian host.
-
-The Debian host filesystem is not globally rewritten to look like the modem.
-Each ADB shell command gets its own bubblewrap mount namespace:
-
-* /data  -> Work QEMU rootfs/data
-* /cache -> Work QEMU rootfs/cache
-* /tmp   -> dedicated fake-ADB device tmp
-
-ADB SYNC uses the same virtual mapping directly through root_path(). This keeps
-normal Debian /data, /cache and /tmp separate from the emulated LTE device.
+The original ARM ``phnixIot4G`` process, /data, /cache and the Work RS485 lab
+remain authoritative.  Unknown ADB shell commands are executed as root in a
+private mount namespace.  The build-specific production runtime hook is the one
+exception: it relies on attaching gdbserver to a real ARM process, which does
+not map to qemu-user host PIDs.  Its updater-facing state machine is therefore
+handled by the repository's deterministic PHNIX simulator while its files and
+OTA_INFO are mapped back into the same QEMU/ADB device namespace.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -28,19 +22,21 @@ from types import ModuleType
 
 HERE = Path(__file__).resolve().parent
 WORK_BACKEND = HERE / "qemu_work_lab_backend.py"
+RUNTIME_SIMULATOR = HERE / "phnix_ota_simulator.py"
 
 
-def _load_work() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("foxair_work_qemu_permissive_base", WORK_BACKEND)
+def _load_module(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"Work-QEMU-Backend nicht ladbar: {WORK_BACKEND}")
+        raise RuntimeError(f"Modul nicht ladbar: {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-work = _load_work()
+work = _load_module(WORK_BACKEND, "foxair_work_qemu_permissive_base")
+runtime_sim = _load_module(RUNTIME_SIMULATOR, "foxair_qemu_runtime_simulator")
 
 sim_home = work.sim_home
 reset_state = work.reset_state
@@ -79,6 +75,89 @@ def root_path(remote: str) -> Path:
     return work.root_path(remote)
 
 
+def _runtime_sim_home() -> Path:
+    return _state_root() / "runtime-sim"
+
+
+# Re-use the already tested OTA state machine, but never its separate fake
+# rootfs. Every remote file it touches is redirected to the QEMU/ADB namespace.
+runtime_sim.sim_home = _runtime_sim_home
+runtime_sim.root_path = root_path
+_original_set_status = runtime_sim.set_status
+
+
+def _mirrored_set_status(phase: str, terminal: bool = False, **extra) -> None:
+    hook = root_path("/tmp/phnix_ota_hook")
+    hook.mkdir(parents=True, exist_ok=True)
+    if phase in {"parser-injection", "accepted", "c350", "c357", "c5a8"}:
+        (hook / "injection-started").touch()
+    if phase == "c5a8":
+        (hook / "transfer-started").touch()
+    _original_set_status(phase, terminal, **extra)
+
+
+runtime_sim.set_status = _mirrored_set_status
+
+
+def _runtime_sim_prepare() -> None:
+    """Mirror the active Work scenario into the deterministic hook state machine."""
+    home = _runtime_sim_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state = scenario_state()
+    config = {
+        "scenario": state.get("scenario", "success"),
+        "cancel_scenario": state.get("cancel_scenario", "success"),
+        "handshake_scenario": state.get("handshake_scenario", "success"),
+        "same_version_scenario": state.get("same_version_scenario", "success"),
+    }
+    if config["scenario"] not in runtime_sim.SCENARIOS:
+        config["scenario"] = "success"
+    if config["cancel_scenario"] not in runtime_sim.CANCEL_SCENARIOS:
+        config["cancel_scenario"] = "success"
+    if config["handshake_scenario"] not in runtime_sim.HANDSHAKE_SCENARIOS:
+        config["handshake_scenario"] = "success"
+    if config["same_version_scenario"] not in runtime_sim.SAME_VERSION_SCENARIOS:
+        config["same_version_scenario"] = "success"
+    runtime_sim.write_json(home / "config.json", config)
+    runtime = home / "runtime.json"
+    if not runtime.exists():
+        runtime_sim.write_json(runtime, {
+            "running": False,
+            "httpd": False,
+            "held": False,
+            "cloud_blocked": False,
+            "watchdogs_paused": False,
+            "recovery_running": False,
+        })
+
+
+def _cleanup_runtime_markers() -> None:
+    hook = root_path("/tmp/phnix_ota_hook")
+    for name in ("run.active", "safe-to-clean", "transfer-started", "injection-started"):
+        (hook / name).unlink(missing_ok=True)
+
+
+def _runtime_helper_shell(command: str) -> tuple[int, bytes]:
+    _runtime_sim_prepare()
+    hook = root_path("/tmp/phnix_ota_hook")
+    hook.mkdir(parents=True, exist_ok=True)
+    action = command.split()[1] if len(command.split()) > 1 else ""
+    if action in {"run", "same-version-probe", "handshake-probe", "cancel", "cancel-probe"}:
+        (hook / "run.active").touch()
+    code, output = runtime_sim.shell(command)
+    if action in {"stop", "restore-original"}:
+        _cleanup_runtime_markers()
+    elif action in {"run", "same-version-probe"}:
+        status_path = root_path("/tmp/phnix_ota_status.json")
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            status = {}
+        if status.get("terminal") is True and status.get("recovery_required") is not True:
+            _cleanup_runtime_markers()
+    return code, output
+
+
 def _phnix_special(command: str) -> bool:
     command = command.strip()
     return (
@@ -95,7 +174,6 @@ def _phnix_special(command: str) -> bool:
 
 
 def _sandbox_command(command: str) -> list[str]:
-    """Build one isolated ADB-shell namespace without mutating host mount paths."""
     bwrap = os.environ.get("FOXAIR_FAKE_ADB_BWRAP", "/usr/bin/bwrap")
     if not Path(bwrap).is_file():
         raise FileNotFoundError(f"bubblewrap fehlt: {bwrap}")
@@ -107,9 +185,6 @@ def _sandbox_command(command: str) -> list[str]:
         if not path.is_dir():
             raise FileNotFoundError(f"ADB-Mountquelle fehlt: {path}")
 
-    # Use a writable host /dev explicitly. Relying on the recursive root bind is
-    # not sufficient with bubblewrap: redirections such as 2>/dev/null could
-    # otherwise fail with EACCES and make unrelated status checks look broken.
     return [
         bwrap,
         "--bind", "/", "/",
@@ -144,15 +219,15 @@ def _host_shell(command: str) -> tuple[int, bytes]:
 def shell(command: str) -> tuple[int, bytes]:
     command = command.strip()
 
-    # These queries need the virtual modem view rather than raw Debian process
-    # names/paths. Everything else is deliberately unrestricted.
+    # The production helper is valid on the real ARM modem. In qemu-user mode
+    # its gdbserver --attach would target the host QEMU process, so use the
+    # deterministic updater-facing state machine instead.
+    if command.startswith("/data/phnix_ota_runtime_hook "):
+        return _runtime_helper_shell(command)
+
     if _phnix_special(command):
         return work.shell(command)
 
-    # The original LTE runtime must not inherit an unrelated Debian test service
-    # that happens to listen on port 8081. The OTA controller starts/stops its
-    # own HTTP service during a run; original-state checks should therefore see
-    # no listener before that run begins.
     if command == "netstat -lnt 2>/dev/null | awk '$4 ~ /:8081$/ {print}'":
         return 0, b""
 
