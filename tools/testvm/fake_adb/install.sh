@@ -25,12 +25,10 @@ if ! need_cmd apt-get; then
     exit 2
 fi
 
-# This VM is deliberately permissive. Install the command set expected by the
-# real LTE updater/runtime helper instead of maintaining an ADB-shell allowlist.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-    wget ca-certificates python3 busybox curl gdb net-tools iproute2 procps
+    wget ca-certificates python3 busybox curl gdb net-tools iproute2 procps bubblewrap
 
 config_value() {
     key=$1
@@ -52,6 +50,7 @@ LAB_ROOT=$(config_value FOXAIR_QEMU_LAB_ROOT "$DEFAULT_LAB_ROOT")
 ROOTFS=$(config_value FOXAIR_QEMU_LAB_ROOTFS "$LAB_ROOT/rootfs")
 SCENARIO_FILE=$(config_value FOXAIR_QEMU_SCENARIO_FILE "$LAB_ROOT/control/foxair-ota-scenario.json")
 RUN_SECONDS=$(config_value FOXAIR_QEMU_RUN_SECONDS 1200)
+DEVICE_TMP=$(config_value FOXAIR_FAKE_ADB_TMP "$STATE_DIR/device-tmp")
 
 if [ ! -f "$ROOTFS/data/phnixIot4G" ]; then
     for candidate in "$LAB_ROOT/rootfs" "$LAB_ROOT/root" "$LAB_ROOT/chroot"; do
@@ -80,12 +79,12 @@ done
 install -d -m 0755 "$ROOTFS/data" "$ROOTFS/cache" "$ROOTFS/tmp"
 install -d -m 0755 "$INSTALL_DIR"
 install -d -m 0750 "$STATE_DIR"
+install -d -m 1777 "$DEVICE_TMP"
 install -d -m 0755 "$LAB_ROOT/control"
 
-# Make the Debian root shell look like the LTE modem for arbitrary adb shell
-# commands.  This is intentionally global because the machine is a dedicated
-# TestVM. /tmp remains the normal host /tmp and the permissive backend maps ADB
-# SYNC /tmp there as well.
+# /data and /cache are intentionally global on this dedicated TestVM so an
+# unrestricted host shell sees the real Work-QEMU files. /tmp is NOT linked:
+# each ADB shell command gets DEVICE_TMP mounted on /tmp via bubblewrap.
 link_rootfs_dir() {
     name=$1
     target=$2
@@ -136,6 +135,7 @@ FOXAIR_FAKE_ADB_BIND=$BIND
 FOXAIR_FAKE_ADB_PORT=$PORT
 FOXAIR_FAKE_ADB_SERIAL=$SERIAL
 FOXAIR_FAKE_ADB_STATE=$STATE_DIR
+FOXAIR_FAKE_ADB_TMP=$DEVICE_TMP
 FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/qemu_permissive_backend.py
 FOXAIR_QEMU_LAB_ROOT=$LAB_ROOT
 FOXAIR_QEMU_LAB_ROOTFS=$ROOTFS
@@ -162,7 +162,7 @@ SERVICE_SHA=$(sha256sum "$ROOTFS/data/phnixIot4G" | awk '{print $1}')
 
 cat <<EOF
 
-FoxAir Fake ADB verwendet jetzt das vorhandene Work-QEMU-Lab mit einer
+FoxAir Fake ADB verwendet das vorhandene Work-QEMU-Lab mit einer
 absichtlich uneingeschränkten Debian-root-ADB-Shell.
 
 ADB-Service:   foxair-fake-adb.service
@@ -170,11 +170,12 @@ QEMU-Lab:      $LAB_ROOT
 QEMU-RootFS:   $ROOTFS
 /data:         -> $ROOTFS/data
 /cache:        -> $ROOTFS/cache
-/tmp:          Host-/tmp
+/tmp (ADB):    -> $DEVICE_TMP (eigener Mount-Namespace)
+/tmp (Debian): unverändert /tmp
 phnixIot4G:    $SERVICE_SIZE Byte
 SHA-256:       $SERVICE_SHA
 
-Installierte Shell-Werkzeuge: busybox, curl, gdb, netstat, ss, ps
+Installierte Shell-Werkzeuge: busybox, curl, gdb, netstat, ss, ps, bubblewrap
 
 Vor einem Status-/Preflight-Test ein QEMU-Szenario starten, z. B.:
   sudo foxair-fake-adbctl scenario same-version
@@ -182,8 +183,8 @@ Vor einem Status-/Preflight-Test ein QEMU-Szenario starten, z. B.:
 Windows:
   \$env:ADB_SERVER_SOCKET="tcp:${IP:-<VM-IP>}:$PORT"
   adb.exe shell "id"
-  adb.exe shell "busybox --list | head"
-  adb.exe shell "ls -l /data /cache"
+  adb.exe shell "echo test >/tmp/adb-only && cat /tmp/adb-only"
 
-Hinweis: Jeder ADB-shell-Befehl wird als root auf dieser TestVM ausgeführt.
+Hinweis: Jeder ADB-shell-Befehl wird als root auf dieser TestVM ausgeführt,
+aber ADB-/tmp ist vom normalen Debian-/tmp getrennt.
 EOF
