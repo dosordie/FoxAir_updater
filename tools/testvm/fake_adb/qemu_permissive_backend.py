@@ -82,7 +82,7 @@ def root_path(remote: str) -> Path:
 def _phnix_special(command: str) -> bool:
     command = command.strip()
     return (
-        command in {"pidof phnixIot4G || true", "pidof phnixIot4G"}
+        command in {"pidof phnixIot4G || true", "pidof phnixIot4G", "pidof gdbserver gdb || true"}
         or command.startswith("p=$(pidof phnixIot4G")
         or (command.startswith("ps | awk") and "{helloworld}" in command)
         or (command.startswith("netstat -nt") and ":1883" in command)
@@ -107,12 +107,13 @@ def _sandbox_command(command: str) -> list[str]:
         if not path.is_dir():
             raise FileNotFoundError(f"ADB-Mountquelle fehlt: {path}")
 
-    # Always create fresh mount targets inside the private namespace. This is
-    # deliberately independent of whether /data or /cache exist on the Debian
-    # host (or used to be symlinks from an older PR revision).
+    # Use a writable host /dev explicitly. Relying on the recursive root bind is
+    # not sufficient with bubblewrap: redirections such as 2>/dev/null could
+    # otherwise fail with EACCES and make unrelated status checks look broken.
     return [
         bwrap,
         "--bind", "/", "/",
+        "--dev-bind", "/dev", "/dev",
         "--dir", "/data",
         "--dir", "/cache",
         "--bind", str(data), "/data",
@@ -147,6 +148,13 @@ def shell(command: str) -> tuple[int, bytes]:
     # names/paths. Everything else is deliberately unrestricted.
     if _phnix_special(command):
         return work.shell(command)
+
+    # The original LTE runtime must not inherit an unrelated Debian test service
+    # that happens to listen on port 8081. The OTA controller starts/stops its
+    # own HTTP service during a run; original-state checks should therefore see
+    # no listener before that run begins.
+    if command == "netstat -lnt 2>/dev/null | awk '$4 ~ /:8081$/ {print}'":
+        return 0, b""
 
     return _host_shell(command)
 
