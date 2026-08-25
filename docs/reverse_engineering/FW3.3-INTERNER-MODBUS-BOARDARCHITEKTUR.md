@@ -571,7 +571,12 @@ Der `0x63`-FC10-Dispatcher kennt zusätzlich:
 
 `5091–5180` ist als 90-Wort-Konfigurations-/Synchronisationsfenster bereits aus dem Engineeringaudit bekannt.
 
-Die beiden 7xxx-Fenster sind als eigenständige Warmlink-/Service-Transferbereiche strukturell bestätigt; ihre vollständige fachliche Einzelbedeutung ist noch nicht geschlossen und sollte nicht als normaler User-Parameterbereich angeboten werden.
+Der Anfang des ersten 7xxx-Fensters ist inzwischen geschlossen: FC10 ab 7001
+mit exakt zehn Wörtern und den Markern `0x00AA`, `0x005A` provisioniert acht
+Device-ID-/Paketkopfwörter und stößt deren EEPROM-Persistierung an. Die
+Semantik von 7011–7090 sowie des Fensters 7091–7180 bleibt offen. Beide Bereiche
+sollten nicht als normale User-Parameterbereiche angeboten werden. Details:
+[Device-ID, EEPROM und Provisionierung](PHNIX_phnixIot4G_device_identity_block.md).
 
 ---
 

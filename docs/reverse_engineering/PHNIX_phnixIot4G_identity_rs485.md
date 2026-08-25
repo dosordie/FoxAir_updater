@@ -184,22 +184,27 @@ Auch `82400644` und `0033` sind Build-/Softwarekennungen und keine
 geräteindividuellen Seriennummern. Die Firmwaredatei selbst besitzt im
 untersuchten OTA-Pfad keine nachgewiesene Bindung an ein einzelnes Mainboard.
 
-Der 12-Byte-Block ab `0x07D1` bleibt davon getrennt. Seine zwölf Livebytes sind
-für die untersuchte Anlage inzwischen bekannt:
+Der 12-Byte-Block ab `0x07D1` bleibt davon getrennt. Ein synthetisches, nicht
+von einem realen Gerät stammendes Beispiel lautet:
 
 ```text
-Register 2001..2006: 0x5746 0x3232 0x3130 0x3235 0x3034 0x3735
-Big-Endian-ASCII:    WF2210250475
+Register 2001..2006: 0x5746 0x3234 0x3033 0x3135 0x3031 0x3233
+Big-Endian-ASCII:    WF2403150123
 ```
 
 FoxAir Control bezeichnet ihn als **WiFi Barcode / Kommunikationsmodul-ID**,
 nicht als Geräte-Serial-No. vom Typenschild. Das vermutete Format ist
-`WF + YYMMDD + laufende Nummer`, hier also `WF + 221025 + 0475`.
+`WF + YYMMDD + laufende Nummer`; die Firmware behandelt die zwölf Bytes selbst
+jedoch als opaque Kennung und validiert dieses Format nicht.
 
 Die Kennung steht weder als Klartext noch als direkte Folge der sechs
-16-Bit-Worte im V3.3-OTA-Image. Sie ist deshalb sehr wahrscheinlich separat und
-geräteindividuell in einem bei OTA nicht mitgelieferten nichtflüchtigen
-Produktions-/Konfigurationsbereich abgelegt.
+16-Bit-Worte im V3.3-OTA-Image. Die Mainboardanalyse lokalisiert sie stattdessen
+in einem CRC-geschützten 22-Byte-Datensatz eines externen, 24C16-kompatiblen
+I²C-EEPROMs: primär ab `0x03B8`, mit Boot-Fallback ab `0x03A0`. Der
+autoritative RAM-Puffer liegt bei `0x20016B50`. Layout, asymmetrische
+Persistierung und der versteckte Provisionierungspfad sind im
+[Device-ID-/EEPROM-Dokument](PHNIX_phnixIot4G_device_identity_block.md)
+vollständig beschrieben.
 
 ---
 
@@ -317,10 +322,14 @@ gelesenen Werte vor und nach dem Wechsel.
 
 - ProductKey und 12-Byte-Identitätsblock werden vor der Cloudinitialisierung
   vom Mainboard über RS485 gelesen.
-- Die zwölf Livebytes der untersuchten Anlage ergeben `WF2210250475` und werden
-  vom LTE-Dienst tatsächlich als `deviceID` übernommen.
-- `WF2210250475` ist nicht als direkter String oder 16-Bit-Wortfolge im
-  V3.3-OTA-Image enthalten.
+- Die ersten zwölf Bytes ab Register 2001 werden vom LTE-Dienst tatsächlich als
+  `deviceID` übernommen.
+- Die geräteindividuelle Kennung ist nicht als direkter String oder
+  16-Bit-Wortfolge im V3.3-OTA-Image enthalten.
+- Der Device-ID-Datensatz wird aus einem externen 24C16-kompatiblen EEPROM
+  geladen und durch CRC16 geschützt.
+- Ein Warmlink-FC10-Sonderpfad ab Register 7001 kann die acht Kopfregister
+  provisionieren und löst die EEPROM-Persistierung aus.
 - Der bei der untersuchten Anlage verwendete ProductKey steht fest im
   V3.3-Mainboardimage.
 - Der aktive Aliyun `DeviceName` der untersuchten LTE-DTU ist identisch mit
@@ -337,12 +346,11 @@ gelesenen Werte vor und nach dem Wechsel.
   vorhandenen LTE-DTU unter derselben bestehenden Cloudidentität weiter.
 - Der fest im Firmwareimage enthaltene ProductKey bezeichnet eine
   Produktfamilie und keine individuelle Mainboard-Seriennummer.
-- `WF2210250475` ist eine separat provisionierte, geräteindividuelle
+- Die 12-Byte-ID ist eine separat provisionierte, geräteindividuelle
   Kommunikationsmodul-/Produktionskennung.
 
 ### Noch offen
 
-- exakter Speicherort und Provisionierungsweg von `WF2210250475`;
 - herstellerseitige Bestätigung des Formats `WF + YYMMDD + laufende Nummer`;
 - serverseitige Reaktion auf einen echten Mainboardwechsel mit abweichender
   12-Byte-Identität;

@@ -264,7 +264,21 @@ Ein 90-Wort-Konfigurations-/Synchronisationsfenster. Der direkte Engineeringdisp
 FC10 = unterstützt
 ```
 
-Warmlink-/Service-Transferfenster A. Adressierung bestätigt, fachliche Einzelbedeutung noch offen.
+Der Beginn dieses Fensters ist als persistente Device-ID-Provisionierung
+rekonstruiert. Akzeptiert wird exakt Startregister 7001 mit zehn Wörtern:
+
+```text
+7001 = 0x00AA   Marker
+7002 = 0x005A   Marker
+7003–7008       sechs Device-ID-Wörter
+7009–7010       zwei reservierte Paketkopfwörter
+```
+
+Nach Prüfung von Function Code, Start, Menge, Bytecount und Markern werden die
+acht Nutzwörter in den autoritativen RAM-Kopf bei `0x20016B50` übernommen. Der
+nachgelagerte Persistenzpfad schreibt sie in ein externes 24C16-kompatibles
+EEPROM. Die Semantik des übrigen Fensters 7011–7090 bleibt offen. Details:
+[Device-ID, EEPROM und Provisionierung](PHNIX_phnixIot4G_device_identity_block.md).
 
 ## 7091–7180
 
@@ -369,7 +383,7 @@ Ein empfangener Schreib-ACK sollte bei Proxy-/Servicepfaden nicht automatisch al
 | FC06 8001–8090 | **bestätigt** |
 | FC10 1001–1540 | **bestätigt** |
 | FC10 5091–5180 | **bestätigt** |
-| FC10 7001–7090 | **bestätigte Adressierung** |
+| FC10 7001–7090 | **7001/10 als Device-ID-Provisionierung bestätigt; Restsemantik offen** |
 | FC10 7091–7180 | **bestätigte Adressierung** |
 | FC10 8001–8090 | **bestätigt** |
 | 8801 fehlt im normalen 0x63-Dispatcher | **bestätigt + Live-Timeout konsistent** |

@@ -1,225 +1,254 @@
-# PHNIX `phnixIot4G` – Device-ID-/Provisioningblock `0x07D1`
+# PHNIX `phnixIot4G` – Device-ID, EEPROM und Provisionierung
 
 Stand: 2026-08-26
 
-Diese Datei ergänzt die statische Analyse der frühen RS485-/Provisioningphase.
+Diese Datei verbindet die Analyse des LTE-Dienstes `phnixIot4G` mit der
+Mainboard-Firmware V3.3. Sie dokumentiert Herkunft, RAM- und EEPROM-Layout,
+CRC-Schutz und den versteckten Schreibpfad der 12-Byte-Device-ID.
 
-## 1. Fest eingebauter Read-Request
+Untersuchtes Mainboardimage:
 
-Im Binary liegt bei `.rodata`:
+```text
+Dateigröße: 287598 Byte
+Imagebasis: 0x08050000
+SHA-256:    6C635D8E9A1E7246EA492B81ACFF5B748E85CC86C0FE0DEF35C2F0A597E4389A
+```
+
+## 1. Ergebnis in Kurzform
+
+- Die individuelle Kennung steht **nicht fest im V3.3-OTA-Image**.
+- Ihre autoritative Laufzeitkopie beginnt bei `0x20016B50`.
+- Beim Start wird ein CRC-geschützter Datensatz aus einem externen,
+  24C16-kompatiblen I²C-EEPROM geladen.
+- Primärer vollständiger Datensatz: EEPROM `0x03B8`.
+- Boot-Fallback: EEPROM `0x03A0`.
+- Die ersten sechs Wörter bilden die 12-Byte-Device-ID; zwei weitere Wörter
+  werden als reservierter Paketkopf mitgeführt.
+- Die vier Bytes bei Datensatzoffset `+0x10..+0x13` sind in V3.3 vollständig
+  rekonstruiert: CRC-geschützte, aber semantisch ungenutzte Reservebytes.
+- Ein verstecktes Warmlink-FC10-Kommando ab Register 7001 kann die acht
+  Paketkopfwörter ändern; die Änderung wird anschließend im EEPROM
+  persistiert.
+- Die öffentlichen Register 2001–2008 und die Diagnosekopie 6001–6008 sind
+  nur Lesespiegel und kein Schreibweg zur autoritativen Identität.
+
+## 2. Öffentlicher Block ab Register 2001 / `0x07D1`
+
+Die LTE-DTU enthält den festen Modbus-RTU-Read:
 
 ```text
 63 03 07 D1 00 5A 9C FE
 ```
 
-Dekodiert als Modbus-RTU:
-
-```text
-Slave      0x63
-Function   0x03
-Start      0x07D1
-Quantity   0x005A = 90 Register
-CRC        0xFE9C / Wire bytes 9C FE
-```
-
-Damit fordert die DTU **90 Register = 180 Datenbytes** ab `0x07D1` an.
-
-## 2. Erwartete Standardantwort
-
-`uart485_get_productKey()` erkennt explizit:
-
-```text
-byte 0 == 0x63
-byte 1 == 0x03
-byte 2 == 0xB4   // 180 Datenbytes
-```
-
-Bei passender Antwort kopiert die Firmware:
+Er fordert von Slave `0x63` 90 Register ab `0x07D1` an. Bei der Antwort
+`63 03 B4 ...` kopiert `uart485_get_productKey()` nur die ersten zwölf
+Datenbytes in den globalen `deviceID`-Puffer:
 
 ```c
 memcpy(aliMqtt_get_deviceID_buf(), &frame[3], 12);
 ```
 
-und verwendet damit **nur die ersten 12 Bytes der 180-Byte-Nutzlast** als Device-ID.
+Ein zweiter LTE-Empfangspfad akzeptiert `63 10 07 D1 ...` und kopiert dieselben
+zwölf Bytes ab Frameoffset 7. Die folgenden 168 Bytes der 90-Register-Antwort
+werden in diesem LTE-Pfad nicht semantisch ausgewertet.
 
-Danach verlässt dieser Pfad die Funktion erfolgreich. Für die verbleibenden **168 Bytes** existiert in diesem Antwortzweig keine weitere Auswertung.
-
-## 3. Liveinhalt der zwölf Device-ID-Bytes
-
-Im realen 90-Register-Block ab `2001 / 0x07D1` wurden in den ersten sechs
-Registern folgende Werte gelesen:
-
-| Register | Dezimal | Hex | Big-Endian-ASCII |
-|---:|---:|---:|---|
-| 2001 | 22342 | `0x5746` | `WF` |
-| 2002 | 12850 | `0x3232` | `22` |
-| 2003 | 12592 | `0x3130` | `10` |
-| 2004 | 12853 | `0x3235` | `25` |
-| 2005 | 12340 | `0x3034` | `04` |
-| 2006 | 14133 | `0x3735` | `75` |
-
-Zusammengesetzt ergibt das exakt:
+Die Mainboard-Firmware baut Register 2001–2008 vollständig aus den acht
+Wörtern bei `0x20016B50 + 0x00..0x0E` auf. Danach folgen die festen Kopfwerte:
 
 ```text
-WF2210250475
+2009 = 0x0210
+2010 = 0x07D1
 ```
 
-FoxAir Control bezeichnet diese Kennung seit der späteren Mappingkorrektur als
-**WiFi Barcode / Kommunikationsmodul-ID** und ausdrücklich nicht als
-Geräte-Serial-No. des Wärmepumpen-Typenschilds. Die derzeit plausibelste, aber
-nicht herstellerseitig bestätigte Formatauslegung ist:
+Der gleiche Acht-Wort-Kopf wird auch in weitere 90-Register-Pakete kopiert.
+
+## 3. Zusammensetzung der 12-Byte-ID
+
+Die Firmware behandelt die ersten sechs Wörter als **opaque 12-Byte-Kennung**.
+Sie prüft weder das Präfix `WF` noch Dezimalziffern oder ein Datumsformat.
+
+Das folgende synthetische Beispiel ist kein Wert eines realen Geräts:
+
+```text
+WF2403150123
+```
+
+| Register | Wort | Big-Endian-ASCII |
+|---:|---:|---|
+| 2001 | `0x5746` | `WF` |
+| 2002 | `0x3234` | `24` |
+| 2003 | `0x3033` | `03` |
+| 2004 | `0x3135` | `15` |
+| 2005 | `0x3031` | `01` |
+| 2006 | `0x3233` | `23` |
+
+Die empirisch plausible Lesart ist:
 
 ```text
 WF + YYMMDD + laufende Nummer
-WF + 221025 + 0475
-     2022-10-25
+WF + 240315 + 0123
 ```
 
-Die gleiche Kennung steht als Paketkopf in mehreren 90-Register-Blöcken. Für
-die LTE-DTU ist speziell die Kopie ab `0x07D1` relevant, weil genau deren erste
-zwölf Bytes in den internen `deviceID`-Puffer kopiert werden.
+Diese Formatbedeutung ist **nicht durch die Firmware bestätigt** und muss durch
+den Vergleich mehrerer Geräte abgesichert werden.
 
-### Liegt `WF2210250475` fest im V3.3-OTA-Image?
-
-Im untersuchten 287598-Byte-Mainboardimage mit SHA-256
-`6C635D8E9A1E7246EA492B81ACFF5B748E85CC86C0FE0DEF35C2F0A597E4389A`
-wurde die Kennung nicht gefunden:
-
-- nicht als zusammenhängender ASCII-String `WF2210250475`;
-- nicht als Folge der sechs Big-Endian-Registerworte;
-- nicht als Folge derselben sechs Little-Endian-16-Bit-Worte;
-- selbst das erste Wort `0x5746` kommt im Image in keiner Byteordnung als
-  16-Bit-Literal vor.
-
-Damit ist die Kennung **nicht als direkter Datenstring oder Worttabelle im
-V3.3-Anwendungsimage enthalten**. Am wahrscheinlichsten stammt sie aus einem
-separat provisionierten nichtflüchtigen Produktionsbereich, beispielsweise
-I²C-EEPROM, residentem Loader-/Datenflash oder einem anderen bei OTA nicht
-mitgelieferten Konfigurationsbereich, und wird beim Start in den Modbusspiegel
-übernommen.
-
-Vollständig ausgeschlossen ist allein durch die Stringsuche noch nicht, dass
-der Programmcode den Wert aus einzelnen Teilwerten zusammensetzt. Wegen des
-datums-/laufnummerartigen Formats und des fehlenden Literals ist eine
-geräteindividuelle Produktionsprovisionierung jedoch deutlich plausibler als
-eine für alle V3.3-Geräte fest einkompilierte Konstante.
-
-## 4. Konsequenz
-
-Der Block `0x07D1..0x082A` ist wesentlich größer als die tatsächlich von `phnixIot4G` benötigte Device-ID.
-
-Belegt aus Sicht der LTE-Firmware:
+Im EEPROM liegen die 16-Bit-Wörter little-endian. Für das Beispiel lauten die
+ersten zwölf physischen Bytes daher:
 
 ```text
-0x07D1 ... erste 12 Byte / 6 Register -> Device-ID
-Restliche 168 Byte / 84 Register      -> von phnixIot4G in diesem Read-Pfad ignoriert
+46 57 34 32 33 30 35 31 31 30 33 32
 ```
 
-Wichtig: „ignoriert“ bedeutet nur, dass **diese LTE-Firmware** die Daten nicht semantisch verwendet. Das sagt nicht aus, dass die Register auf dem Mainboard bedeutungslos sind.
+## 4. Autoritative RAM-Struktur
 
-Gerade deshalb ist der Restblock ein interessanter Kandidat für:
+Die V3.3-Anwendung reserviert bei `0x20016B50` 24 Byte:
 
-- Modell-/Hardwarekennung,
-- Serien-/Produktdaten,
-- Firmware-/Buildinformationen,
-- Produktions-/Serviceparameter,
-- weitere Boardfähigkeiten.
-
-Diese Bedeutungen sind statisch aus `phnixIot4G` nicht belegbar, weil die Bytes nach Offset 12 nicht gelesen werden.
-
-## 5. Zweiter Device-ID-Pfad über FC `0x10`
-
-Neben der Standard-Read-Antwort erkennt `uart485_get_productKey()` zusätzlich ein eingehendes Write-Multiple-Registers-artiges Frame:
-
-```text
-63 10 07 D1 ...
-```
-
-Wenn die Datenlänge/der erste Nutzdatenbereich plausibel ist, kopiert die Firmware erneut:
-
-```c
-memcpy(deviceID, &frame[7], 12);
-```
-
-Damit kann dieselbe 12-Byte-Device-ID offenbar sowohl:
-
-1. als Antwort auf den aktiven `0x03 / 0x07D1 / 90 Register`-Read kommen,
-2. als aktiv vom Mainboard gesendetes `0x10 / 0x07D1`-Frame eintreffen.
-
-Das zeigt, dass `0x07D1` im PHNIX-Protokoll ein echter Geräteidentitätsbereich ist und nicht nur ein zufälliger Startup-Read.
-
-## 6. ProductKey-Pfad `0x00C8`
-
-In derselben Funktion existiert ein weiterer FC10-Sonderfall:
-
-```text
-63 10 00 C8 ...
-```
-
-Nach CRC-Prüfung werden exakt **32 Byte ab Frameoffset 7** in `aliMqtt_get_product_buf()` kopiert.
-
-Damit gilt:
-
-```text
-0x00C8 -> ProductKey / 32 Byte
-0x07D1 -> Device-ID / 12 Byte relevant für LTE-DTU
-```
-
-Der ProductKey ist also nicht Bestandteil des ausgewerteten ersten 12-Byte-Bereichs von `0x07D1`, sondern besitzt einen separaten Mainboard-Pfad.
-
-## 7. Weitere fest eingebaute Read-Requests
-
-Direkt neben dem `0x07D1`-Request liegen im Binary:
-
-```text
-63 03 00 06 00 01 6C 49
-63 03 00 04 00 01 CD 89
-63 03 07 D1 00 5A 9C FE
-```
-
-Damit sind drei feste Reads bestätigt:
-
-| Startregister | Menge | Funktion im LTE-Code |
+| RAM-Offset | Länge | Bedeutung in V3.3 |
 |---:|---:|---|
-| `0x0006` | 1 | früher Startup-/Handshake-Read; genaue Semantik noch offen |
-| `0x0004` | 1 | `uart485_get_device_info()` / nach erfolgreicher MQTT-Initialisierung; live als Trigger für acht Geräteinfoblöcke und späteres C544 bestätigt |
-| `0x07D1` | 90 | Geräteidentitätsblock; erste 12 Datenbytes = Device-ID |
+| `+0x00..+0x0B` | 12 | sechs Wörter Device-ID |
+| `+0x0C..+0x0F` | 4 | zwei reservierte Paketkopfwörter |
+| `+0x10..+0x13` | 4 | CRC-geschützte Reservebytes, ohne semantischen Leser/Writer |
+| `+0x14..+0x15` | 2 | Modbus-CRC16 über `+0x00..+0x13`, little-endian gespeichert |
+| `+0x16..+0x17` | 2 | RAM-Alignment/Padding; nicht Teil der Bootprüfung |
 
-## 8. Interessanter Punkt für Mainboard-RE
+Die nächsten Strukturen beginnen bei `0x20016B68`. Die 24-Byte-Grenze ist
+damit statisch eindeutig.
 
-Für die parallele Mainboard-Firmwareanalyse ist besonders der Bereich
+### Rekonstruktion der bisher unbekannten vier Bytes
 
-```text
-0x07D7 .. 0x082A
-```
+Für `+0x10..+0x13` wurden alle direkten Referenzen auf die Struktur geprüft:
 
-interessant: Nach den ersten sechs Registern der 12-Byte-Device-ID bleiben 84 Register, deren Semantik aus dem LTE-Programm nicht hervorgeht.
+- kein Paket- oder Statusbuilder liest diese Bytes semantisch;
+- kein eigener Anwendungswriter weist ihnen Werte zu;
+- der 7001-Provisionierungspfad verändert sie nicht;
+- sie werden nur im CRC20, im Schattenvergleich und beim Persistieren
+  mitgeführt;
+- wenn beide EEPROM-Datensätze ungültig sind, werden sie zusammen mit den
+  übrigen 20 Nutzbytes auf null gesetzt.
 
-Die beste weitere Quelle dafür ist daher nicht `phnixIot4G`, sondern:
+Damit sind sie für **V3.3** als CRC-geschützte Reserve-/Forward-Compatibility-
+Bytes klassifiziert. Das beweist nicht, dass ein Bootloader oder eine andere
+Firmwareversion ihnen niemals eine Bedeutung gibt.
 
-- Mainboard-Firmware: Suche nach Registeradresse `0x07D1`, Bereichsgrenzen und 90-Register-Readhandler,
-- reale passive RS485-Aufzeichnung der Antwort auf `63 03 07 D1 00 5A 9C FE`,
-- Vergleich mehrerer Boards/Geräte, um konstante und variable Felder zu unterscheiden.
+## 5. Externes EEPROM und Boot-Ladevorgang
 
-## 9. Beweisgrad
+Die Routinen um `0x08050C08` (Write) und `0x08050C5E` (Read) bit-bangen ein
+externes I²C-EEPROM. Sie senden die Geräteadressen `0xA0`/`0xA1` und kodieren
+obere Adressbits in der Slave-Adresse. Das entspricht einem
+**24C16-kompatiblen EEPROM mit 2 KiB**; in 7-Bit-Schreibweise ist die
+Basisadresse `0x50`.
 
-### Bewiesen
+Der Bootpfad um `0x08051106` arbeitet so:
 
-- Read-Request `63 03 07 D1 00 5A 9C FE` ist statisch eingebaut;
-- erwartete Antwort hat `0xB4 = 180` Datenbytes;
-- nur `frame[3..14]` werden als 12-Byte-Device-ID kopiert;
-- die zwölf Livebytes der untersuchten Anlage dekodieren zu `WF2210250475`;
-- die Kennung ist im V3.3-OTA-Image weder als ASCII-String noch als direkte
-  Folge der sechs 16-Bit-Worte enthalten;
-- die übrigen 168 Datenbytes werden in diesem Pfad nicht ausgewertet;
-- alternativer FC10-Pfad `63 10 07 D1` kopiert ebenfalls 12 Byte Device-ID;
-- FC10 `63 10 00 C8` liefert 32 Byte ProductKey.
+1. 22 Byte ab EEPROM `0x03B8` lesen.
+2. CRC16 über die ersten 20 Byte berechnen.
+3. Mit den little-endian gespeicherten Bytes 20/21 vergleichen.
+4. Bei ungültigem Datensatz 22 Byte ab `0x03A0` lesen und gleich prüfen.
+5. Sind beide ungültig, die 20 Nutzbytes im RAM nullen und eine spätere
+   Neupersistierung anstoßen.
+
+| EEPROM-Bereich | Bootrolle | Laufzeitverhalten |
+|---:|---|---|
+| `0x03A0` | Fallback-/Factory-Slot | Laufzeitwriter aktualisiert nur die ersten 16 Byte |
+| `0x03B8` | primärer, vollständiger Datensatz | Laufzeitwriter aktualisiert Nutzdaten und CRC vollständig |
+
+Die Slots sind daher **keine symmetrischen redundanten Kopien**.
+
+## 6. Persistenz und asymmetrischer Schreibplan
+
+Der Änderungsdetektor vergleicht die ersten 20 Byte der Struktur gegen den
+Schatten bei `0x20016B98`. Bei einer Abweichung setzt er einen Countdown von 40
+und aktualisiert den Schatten. Der generische Persistenzworker berechnet die
+CRC neu und schreibt in 8-Byte-Blöcken:
+
+| Schritt | EEPROM-Ziel | RAM-Quelle | Länge |
+|---:|---:|---:|---:|
+| 0 | `0x03A0` | `+0x00` | 8 |
+| 1 | `0x03A8` | `+0x08` | 8 |
+| 2 | `0x03B8` | `+0x00` | 8 |
+| 3 | `0x03C0` | `+0x08` | 8 |
+| 4 | `0x03C8` | `+0x10` | 8 |
+
+Der letzte Schritt schreibt die vier Reservebytes, die zweibyte CRC und zwei
+RAM-Paddingbytes bis `0x03CF`. Beim nächsten Boot werden aus `0x03B8` nur die
+22 relevanten Bytes gelesen; die beiden Paddingbytes werden ignoriert.
+
+Folge der Asymmetrie: Nach einer Laufzeitänderung enthält `0x03A0` zwar die
+ersten 16 neuen Bytes, erhält in diesem Pfad aber weder Reservebytes noch eine
+passende neue CRC. Warum der Hersteller den Fallback so behandelt, ist aus
+V3.3 nicht ersichtlich.
+
+## 7. Versteckter schreibbarer Provisionierungspfad
+
+Der separate Warmlink-/LTE-Dispatcher auf USART1, Slave `0x63`, akzeptiert für
+diese Funktion exakt ein FC10-Telegramm ab **Rohregister 7001** mit **10
+Wörtern**:
+
+| Register | Erforderlicher/Inhalt |
+|---:|---|
+| 7001 | Marker `0x00AA` |
+| 7002 | Marker `0x005A` |
+| 7003–7008 | sechs neue Device-ID-Wörter |
+| 7009–7010 | zwei reservierte Paketkopfwörter |
+
+Der Dispatcher prüft Function Code, Start, Menge, Bytecount und beide Marker.
+Der Applypfad kopiert danach die Wörter 7003–7010 nach
+`0x20016B50 + 0x00..0x0E`. Die vier Reservebytes `+0x10..+0x13` bleiben
+erhalten. Der Änderungsdetektor stößt anschließend die EEPROM-Persistierung an.
+
+Dieser Pfad ist hochriskant: Er ändert eine geräteindividuelle, cloudnahe
+Kennung und besitzt lediglich zwei konstante Marker, keine kryptographische
+Authentifizierung. Er sollte in Werkzeugen nicht als generisches Schreibfenster
+angeboten werden.
+
+## 8. Was ist tatsächlich schreibbar?
+
+| Zugriff | Ergebnis |
+|---|---|
+| Warmlink `0x63`, FC10, 7001, exakt 10 Wörter | autoritativer, persistenter Provisionierungspfad |
+| Register 2001–2008 | öffentlicher Read-/Statusspiegel; kein normaler Schreibpfad |
+| DIAG 6001–6008 | direkter Engineering-Readspiegel; read-only |
+| andere Paketköpfe per generischem FC10 | höchstens Spiegeländerung; nicht autoritativ/persistent belegt |
+| normales OTA-Anwendungsimage | enthält/überschreibt diesen EEPROM-Datensatz nicht |
+
+## 9. Bedeutung für OTA und Mainboardwechsel
+
+Der Device-ID-Datensatz liegt vor den bekannten OTA-Statusbereichen ab
+`0x03D8` und außerhalb des Anwendungsimages. Ein normales V3.3-OTA transportiert
+daher keine individuelle Device-ID und überschreibt sie nicht.
+
+Bei einem Mainboardwechsel wandert die Identität mit dem EEPROM des Boards:
+Ein Ersatzboard liefert grundsätzlich seinen eigenen provisionierten Wert.
+ProductKey, LTE-Modem-IMEI, SIM-ICCID und Cloud-Credentials sind davon getrennte
+Identitäten; die serverseitige Reaktion auf eine geänderte Board-ID ist durch
+die lokale Firmwareanalyse allein nicht beweisbar.
+
+## 10. Beweisgrad und Grenzen
+
+### Statisch bestätigt
+
+- RAM-Adresse und vollständiges 24-Byte-Layout;
+- 20 CRC-geschützte Nutzbytes und little-endian CRC16;
+- primärer EEPROM-Datensatz `0x03B8` und Fallback `0x03A0`;
+- 24C16-kompatibler I²C-Zugriff;
+- vollständige Klassifikation von `+0x10..+0x13` für V3.3;
+- asymmetrischer 8-Byte-Schreibplan;
+- 7001/10-FC10-Provisionierung mit `0x00AA`, `0x005A`;
+- öffentliche und DIAG-Register sind nur Lesespiegel;
+- die individuelle Kennung ist kein Literal des V3.3-OTA-Images.
 
 ### Offen
 
-- exakter nichtflüchtiger Speicherort und Provisionierungsweg von
-  `WF2210250475` auf dem Mainboard;
-- Bestätigung des vermuteten Formats `WF + YYMMDD + laufende Nummer` durch
-  Vergleich mehrerer Geräte;
-- Bedeutung der restlichen 84 Register des `0x07D1`-Blocks;
-- Bedeutung des einzelnen Registerwerts `0x0004` und genaue Semantik des festen Reads `0x0006` auf Mainboardseite. Die Ablaufwirkung von `0x0004` ist dagegen [dynamisch bestätigt](PHNIX_OTA_DYNAMISCHE_VALIDIERUNG.md): acht 90-Register-Blöcke und rund 49 Sekunden später C544.
+- herstellerseitige Bestätigung des Formats `WF + YYMMDD + laufende Nummer`;
+- Zweck der beiden reservierten Paketkopfwörter 2007/2008;
+- mögliche Bedeutung der vier Reservebytes in anderen Firmwareständen oder im
+  Bootloader;
+- Grund für den asymmetrischen Fallback-Schreibplan;
+- serverseitige Konsequenz einer neu provisionierten Mainboard-ID;
+- Bedeutung der übrigen Register des 90-Wort-Blocks jenseits des Paketkopfs.
+
+## 11. Verwandte Dokumente
+
+- [Identity-/ProductKey-Pfad und Mainboardwechsel](PHNIX_phnixIot4G_identity_rs485.md)
+- [Warmlink-/LTE-Dispatcher Slave 0x63](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md)
+- [Service-/Engineering-Modbus-Audit](FW3.3-MODBUS-SERVICE-ENGINEERING-AUDIT.md)

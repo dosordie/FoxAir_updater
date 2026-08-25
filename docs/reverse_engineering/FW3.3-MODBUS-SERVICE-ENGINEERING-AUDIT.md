@@ -229,7 +229,12 @@ Der Snapshot wird aktiv aus Live-RAM aufgebaut.
 6001–6008 ← 0x20016B50 +0x00 … +0x0E
 ```
 
-Acht signed 16-Bit-Livewerte. Die konkrete physische Benennung dieses internen Blocks ist noch nicht vollständig geschlossen.
+Acht 16-Bit-Wörter des Device-ID-/Paketkopfs. 6001–6006 enthalten die
+12-Byte-Kommunikationsmodul-ID, 6007–6008 zwei reservierte Kopfwörter. Dieser
+Diagnosebereich ist nur ein read-only Live-Spiegel; der autoritative Puffer und
+sein EEPROM-/Provisionierungspfad sind in
+[Device-ID, EEPROM und Provisionierung](PHNIX_phnixIot4G_device_identity_block.md)
+dokumentiert.
 
 ## 6.2 Blocksignatur
 
@@ -578,7 +583,7 @@ Offen bleiben nur fachliche Einzelbezeichnungen für:
 
 - Teile von ENG:A 5001–5090
 - einzelne Felder von ENG:B 5091–5180
-- 6001–6008 und diverse DIAG-Rohwerte
+- diverse DIAG-Rohwerte jenseits des identifizierten Kopfes 6001–6008
 - konkrete Bitnamen der Low-Level-I/O-Bitfelder um 6073–6080
 - ENG:CTRL 8802–8820
 - genaue interne Filter-/Proxyregeln des Warmlink-/LTE-0x63-Pfads jenseits der live getesteten Register

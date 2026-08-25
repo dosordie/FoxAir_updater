@@ -694,7 +694,14 @@ Zusätzlich kennt der `0x63`-FC10-Dispatcher die separaten Servicefenster:
 7091–7180
 ```
 
-deren detaillierte Semantik noch offen ist.
+Die detaillierte Semantik dieser Fenster war zunächst offen.
+
+Für den Beginn des ersten Fensters ist die Semantik inzwischen geschlossen:
+FC10 ab 7001 mit exakt zehn Wörtern, `0x00AA`/`0x005A` als Marker und acht
+folgenden Device-ID-/Paketkopfwörtern provisioniert die autoritative Identität
+und löst deren Persistierung im externen EEPROM aus. Offen bleiben 7011–7090
+und das vollständige Fenster 7091–7180. Details:
+[Device-ID, EEPROM und Provisionierung](PHNIX_phnixIot4G_device_identity_block.md).
 
 Details:
 
@@ -1227,7 +1234,7 @@ Nach Abschluss des Mainboard-Modbusaudits und der SG-Ready-Liveverifikation blei
 4. PWM-Pin von TIM5_CH2 bis zur GPIO-/AFIO-Konfiguration verfolgen
 5. Helper `0x0808799C` physikalisch eindeutig einem Sensor zuordnen
 6. Warmlink-Subsystem `8001–8090` fachlich identifizieren
-7. Warmlink-FC10-Servicefenster `7001–7090` und `7091–7180` fachlich identifizieren
+7. Warmlink-FC10-Servicefenster `7011–7090` und `7091–7180` fachlich identifizieren
 8. Register 2140–2143 fachlich benennen
 9. 2146 Bit für Bit auf Ausstattungs-/Capability-Funktionen zurückführen
 10. 2151–2158 vollständig entschlüsseln
