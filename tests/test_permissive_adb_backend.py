@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import tempfile
 import unittest
@@ -94,13 +95,31 @@ class PermissiveAdbBackendTests(unittest.TestCase):
             backend = load_backend()
             self.assertEqual(backend.shell(command), (0, b""))
 
+    def test_runtime_hook_run_uses_hybrid_state_machine_and_qemu_paths(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            backend = load_backend()
+            code, output = backend.shell(
+                "/data/phnix_ota_runtime_hook run --build-id test "
+                "--command /data/phnix_local_ota/ota-command.json "
+                "--status /tmp/phnix_ota_status.json --allow-publish 0023,0053,0083"
+            )
+            self.assertEqual((code, output), (0, b""))
+            status = json.loads((self.device_tmp / "phnix_ota_status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["phase"], "success")
+            self.assertTrue(status["terminal"])
+            self.assertEqual(status["board_ota_step"], 12)
+            ota_info = self.rootfs / "data/phnixIot_device_OTA_INFO"
+            self.assertEqual(len(ota_info.read_bytes()), 220)
+            self.assertFalse((self.device_tmp / "phnix_ota_hook/run.active").exists())
+
     def test_source_documents_no_global_host_remapping(self):
         source = BACKEND_PATH.read_text(encoding="utf-8")
-        self.assertIn("normal Debian /data, /cache and /tmp separate", source)
         self.assertIn('"--dir", "/data"', source)
         self.assertIn('"--dir", "/cache"', source)
         self.assertIn('"--dev-bind", "/dev", "/dev"', source)
         self.assertIn('"--bind", str(tmp), "/tmp"', source)
+        self.assertIn('command.startswith("/data/phnix_ota_runtime_hook ")', source)
+        self.assertIn("deterministic updater-facing state machine", source)
 
     def test_installer_removes_legacy_links_and_starts_original_runtime(self):
         source = Path("tools/testvm/fake_adb/install.sh").read_text(encoding="utf-8")
@@ -110,6 +129,7 @@ class PermissiveAdbBackendTests(unittest.TestCase):
         self.assertIn('remove_legacy_link /cache "$ROOTFS/cache"', source)
         self.assertNotIn("link_rootfs_dir data", source)
         self.assertNotIn("link_rootfs_dir cache", source)
+        self.assertIn('fetch tools/phnix_ota/phnix_ota_simulator.py', source)
         self.assertIn('"$INSTALL_DIR/foxair-fake-adbctl" scenario success', source)
         self.assertIn("Debian-Pfade:  /data, /cache und /tmp werden nicht global umgebogen", source)
 
