@@ -115,9 +115,6 @@ class FakeAdbServer:
     def remote_path(self, remote: str) -> Path:
         if not remote.startswith("/"):
             raise ValueError("Nur absolute Remote-Pfade werden unterstützt")
-        # The backend is the authority for the virtual device namespace. This is
-        # required by the Work-QEMU backend where /data and /cache live in the
-        # QEMU rootfs while /tmp lives in a separate fake-ADB state directory.
         return self.sim.root_path(remote)
 
     def generic_file_shell(self, command: str) -> tuple[int, bytes] | None:
@@ -262,7 +259,10 @@ class FakeAdbServer:
             await send_fail(writer, "unsupported shell service")
             return
         try:
-            code, output = self.execute_shell(command)
+            # Backends may execute real host/QEMU commands for many seconds.
+            # Keep the asyncio smart-socket server responsive for concurrent
+            # adb status/version/device requests while that command is running.
+            code, output = await asyncio.to_thread(self.execute_shell, command)
         except KeyboardInterrupt:
             code, output = 130, b""
         except Exception as exc:
@@ -396,16 +396,10 @@ class FakeAdbServer:
                 if not transport_selected:
                     handled, selected = await self.host_service(request, writer)
                     if handled:
-                        # ADB host queries such as host:version, host:devices-l
-                        # and host:features are one request per connection. The
-                        # real adb client calls ReadOrderlyShutdown() after the
-                        # protocol-string response and waits for EOF. Only a
-                        # transport-selection request keeps the smart socket
-                        # open for a following shell:/sync: service request.
-                        if not selected:
-                            return
-                        transport_selected = True
-                        continue
+                        if selected:
+                            transport_selected = True
+                            continue
+                        return
                 if request.startswith("shell:") or request.startswith("shell,v2"):
                     await self.shell_service(request, writer)
                     return
