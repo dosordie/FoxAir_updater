@@ -82,24 +82,28 @@ install -d -m 0750 "$STATE_DIR"
 install -d -m 1777 "$DEVICE_TMP"
 install -d -m 0755 "$LAB_ROOT/control"
 
-# /data and /cache are intentionally global on this dedicated TestVM so an
-# unrestricted host shell sees the real Work-QEMU files. /tmp is NOT linked:
-# each ADB shell command gets DEVICE_TMP mounted on /tmp via bubblewrap.
-link_rootfs_dir() {
-    name=$1
-    target=$2
-    path="/$name"
-    if [ -L "$path" ]; then
-        ln -sfn "$target" "$path"
-    elif [ -e "$path" ]; then
-        echo "$path existiert bereits und ist kein Symlink; TestVM-Setup bricht ab." >&2
-        exit 2
-    else
-        ln -s "$target" "$path"
+# Older PR revisions exposed QEMU /data and /cache as global Debian symlinks.
+# Remove only those links if they still point at this Work rootfs. Real host
+# directories are never touched; ADB overlays the device paths privately.
+remove_legacy_link() {
+    path=$1
+    expected=$2
+    if [ ! -L "$path" ]; then
+        return
     fi
+    resolved=$(readlink -f "$path" 2>/dev/null || true)
+    expected_resolved=$(readlink -f "$expected" 2>/dev/null || printf '%s' "$expected")
+    if [ "$resolved" = "$expected_resolved" ]; then
+        echo "Entferne alten globalen ADB-Link $path -> $resolved"
+        rm -f "$path"
+        return
+    fi
+    echo "$path ist ein fremder Symlink ($resolved); wird nicht verändert." >&2
+    echo "Bitte manuell klären, bevor Fake-ADB gestartet wird." >&2
+    exit 2
 }
-link_rootfs_dir data "$ROOTFS/data"
-link_rootfs_dir cache "$ROOTFS/cache"
+remove_legacy_link /data "$ROOTFS/data"
+remove_legacy_link /cache "$ROOTFS/cache"
 
 fetch() {
     src=$1
@@ -168,10 +172,10 @@ absichtlich uneingeschränkten Debian-root-ADB-Shell.
 ADB-Service:   foxair-fake-adb.service
 QEMU-Lab:      $LAB_ROOT
 QEMU-RootFS:   $ROOTFS
-/data:         -> $ROOTFS/data
-/cache:        -> $ROOTFS/cache
-/tmp (ADB):    -> $DEVICE_TMP (eigener Mount-Namespace)
-/tmp (Debian): unverändert /tmp
+ADB /data:     -> $ROOTFS/data (nur im ADB-Mount-Namespace)
+ADB /cache:    -> $ROOTFS/cache (nur im ADB-Mount-Namespace)
+ADB /tmp:      -> $DEVICE_TMP (nur im ADB-Mount-Namespace)
+Debian-Pfade:  /data, /cache und /tmp werden nicht umgebogen
 phnixIot4G:    $SERVICE_SIZE Byte
 SHA-256:       $SERVICE_SHA
 
@@ -182,9 +186,11 @@ Vor einem Status-/Preflight-Test ein QEMU-Szenario starten, z. B.:
 
 Windows:
   \$env:ADB_SERVER_SOCKET="tcp:${IP:-<VM-IP>}:$PORT"
+  adb.exe devices -l
   adb.exe shell "id"
+  adb.exe shell "ls -l /data/phnixIot4G"
   adb.exe shell "echo test >/tmp/adb-only && cat /tmp/adb-only"
 
-Hinweis: Jeder ADB-shell-Befehl wird als root auf dieser TestVM ausgeführt,
-aber ADB-/tmp ist vom normalen Debian-/tmp getrennt.
+Hinweis: Jeder ADB-shell-Befehl wird als root ausgeführt, aber die drei
+modemkritischen Pfade /data, /cache und /tmp sind vom Debian-Host getrennt.
 EOF
