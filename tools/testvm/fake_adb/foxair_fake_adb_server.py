@@ -26,6 +26,7 @@ from pathlib import Path
 from types import ModuleType
 
 ADB_SERVER_VERSION = "0029"  # ADB_SERVER_VERSION 41, rendered as hex.
+TRANSPORT_ID = 1
 DEFAULT_BIND = os.environ.get("FOXAIR_FAKE_ADB_BIND", "0.0.0.0")
 DEFAULT_PORT = int(os.environ.get("FOXAIR_FAKE_ADB_PORT", "5038"))
 DEFAULT_SERIAL = os.environ.get("FOXAIR_FAKE_ADB_SERIAL", "foxair-vm")
@@ -123,7 +124,7 @@ class FakeAdbServer:
             return f"{self.serial}\t{state}\n"
         return (
             f"{self.serial}\t{state} product:foxair model:LTE_VM "
-            f"device:foxair transport_id:1\n"
+            f"device:foxair transport_id:{TRANSPORT_ID}\n"
         )
 
     def transport_available(self) -> bool:
@@ -228,6 +229,27 @@ class FakeAdbServer:
             return generic
         return self.sim.shell(command)
 
+    async def select_transport(
+        self,
+        writer: asyncio.StreamWriter,
+        *,
+        modern: bool,
+        serial: str | None = None,
+    ) -> tuple[bool, bool]:
+        if serial is not None and serial != self.serial:
+            await send_fail(writer, f"device '{serial}' not found")
+            return True, False
+        if not self.transport_available():
+            await send_fail(writer, "device offline")
+            return True, False
+        await send_okay(writer)
+        if modern:
+            # Modern adb uses host:tport:* and requires the selected TransportId
+            # immediately after OKAY. AOSP TransportId is uint64_t.
+            writer.write(struct.pack("<Q", TRANSPORT_ID))
+            await writer.drain()
+        return True, True
+
     async def host_service(self, request: str, writer: asyncio.StreamWriter) -> tuple[bool, bool]:
         """Return (handled, transport_selected)."""
         if request == "host:version":
@@ -254,30 +276,29 @@ class FakeAdbServer:
             await send_okay(writer)
             return True, False
 
+        # Current platform-tools uses the tport transport selector and expects
+        # a binary 64-bit transport id after OKAY. Keep the legacy selector too
+        # so old ADB clients remain usable against the test VM.
+        if request in {"host:tport:any", "host:tport:usb", "host:tport:local"}:
+            return await self.select_transport(writer, modern=True)
+        if request.startswith("host:tport:serial:"):
+            return await self.select_transport(
+                writer,
+                modern=True,
+                serial=request.removeprefix("host:tport:serial:"),
+            )
         if request in {"host:transport-any", "host:transport-usb", "host:transport-local"}:
-            if not self.transport_available():
-                await send_fail(writer, "device offline")
-                return True, False
-            await send_okay(writer)
-            return True, True
+            return await self.select_transport(writer, modern=False)
         if request.startswith("host:transport:"):
-            serial = request.removeprefix("host:transport:")
-            if serial != self.serial:
-                await send_fail(writer, f"device '{serial}' not found")
-                return True, False
-            if not self.transport_available():
-                await send_fail(writer, "device offline")
-                return True, False
-            await send_okay(writer)
-            return True, True
-        if request == "host:transport-id:1":
-            if not self.transport_available():
-                await send_fail(writer, "device offline")
-                return True, False
-            await send_okay(writer)
-            return True, True
+            return await self.select_transport(
+                writer,
+                modern=False,
+                serial=request.removeprefix("host:transport:"),
+            )
+        if request == f"host:transport-id:{TRANSPORT_ID}":
+            return await self.select_transport(writer, modern=False)
 
-        for prefix, selector in (("host-serial:", self.serial), ("host-transport-id:", "1")):
+        for prefix, selector in (("host-serial:", self.serial), ("host-transport-id:", str(TRANSPORT_ID))):
             if request.startswith(prefix):
                 rest = request[len(prefix):]
                 selected, sep, sub = rest.partition(":")
