@@ -66,23 +66,30 @@ class PermissiveAdbBackendTests(unittest.TestCase):
             self.assertEqual(backend.root_path("/data/phnixIot4G"), rootfs / "data/phnixIot4G")
             self.assertEqual(backend.root_path("/cache/test.bin"), rootfs / "cache/test.bin")
 
-    def test_shell_namespace_binds_all_modem_state_paths(self):
+    def test_shell_namespace_creates_mount_targets_before_binding(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             backend = load_backend()
             argv = backend._sandbox_command("printf ok")
-        joined = "\n".join(argv)
-        self.assertIn(str(self.rootfs.resolve() / "data"), joined)
-        self.assertIn(str(self.rootfs.resolve() / "cache"), joined)
-        self.assertIn(str(self.device_tmp), joined)
-        self.assertIn("/data", argv)
-        self.assertIn("/cache", argv)
-        self.assertIn("/tmp", argv)
+
+        data_source = str(self.rootfs.resolve() / "data")
+        cache_source = str(self.rootfs.resolve() / "cache")
+        self.assertIn(data_source, argv)
+        self.assertIn(cache_source, argv)
+        self.assertIn(str(self.device_tmp), argv)
+
+        data_dir = argv.index("/data", argv.index("--dir"))
+        cache_dir = argv.index("/cache", data_dir + 1)
+        data_bind = argv.index(data_source)
+        cache_bind = argv.index(cache_source)
+        self.assertLess(data_dir, data_bind)
+        self.assertLess(cache_dir, cache_bind)
         self.assertEqual(argv[-3:], ["/bin/sh", "-c", "printf ok"])
 
     def test_source_documents_no_global_host_remapping(self):
         source = BACKEND_PATH.read_text(encoding="utf-8")
         self.assertIn("normal Debian /data, /cache and /tmp separate", source)
-        self.assertIn('("/data", data), ("/cache", cache)', source)
+        self.assertIn('"--dir", "/data"', source)
+        self.assertIn('"--dir", "/cache"', source)
         self.assertIn('"--bind", str(tmp), "/tmp"', source)
 
     def test_installer_removes_only_legacy_global_links(self):
