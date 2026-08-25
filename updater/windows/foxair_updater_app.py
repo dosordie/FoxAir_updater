@@ -25,7 +25,7 @@ import foxair_updater_gui as base
 import release_check
 
 
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 MODEM_DRIVER_URL = "https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip"
 REMOTE_CACHE_FIRMWARE = "/cache/phnixIot_device_OTA"
 REMOTE_CACHE_STAGE = "/cache/.phnixIot_device_OTA.manual-upload"
