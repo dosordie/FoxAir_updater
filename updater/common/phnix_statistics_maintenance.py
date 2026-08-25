@@ -44,6 +44,8 @@ REMOTE_RESCUE_DIR = "/tmp/phnix_statistics_maintenance"
 REMOTE_RESCUE_PID = f"{REMOTE_RESCUE_DIR}/rescue.pid"
 REMOTE_RESCUE_CANCEL = f"{REMOTE_RESCUE_DIR}/rescue.cancel"
 RESCUE_TIMEOUT_SECONDS = 90
+SERVICE_SNAPSHOT_ATTEMPTS = 3
+SERVICE_SNAPSHOT_DELAY_SECONDS = 0.25
 STATISTICS_SIZE = 128
 MAINBOARD_OTA_OFFSET = 0x24
 MAINBOARD_OTA_RAM_ADDRESS = STATISTICS_ADDRESS + MAINBOARD_OTA_OFFSET
@@ -122,6 +124,56 @@ def first_pid(adb: AdbClient) -> int | None:
     return pids[0] if pids else None
 
 
+def stable_single_service_snapshot(
+    adb: AdbClient,
+    *,
+    attempts: int = SERVICE_SNAPSHOT_ATTEMPTS,
+    delay: float = SERVICE_SNAPSHOT_DELAY_SECONDS,
+) -> dict:
+    """Return one stable phnixIot4G PID/path/tracer snapshot.
+
+    The modem supervisor can briefly overlap an old and a newly started
+    phnixIot4G process. Mirror the proven OTA preflight strategy by retrying
+    across that harmless race, but keep statistics writes stricter: a stable
+    *single* PID is required because that exact process is terminated before
+    replacing the persistent statistics file.
+    """
+    last_pids: list[int] = []
+    for attempt in range(attempts):
+        pids_before = service_pids(adb)
+        last_pids = pids_before
+        if len(pids_before) == 1:
+            pid = pids_before[0]
+            path = adb.shell(
+                f"readlink /proc/{pid}/exe || true", check=False
+            )
+            tracer = adb.shell(
+                f"awk '/^TracerPid:/ {{print $2}}' /proc/{pid}/status || true",
+                check=False,
+            )
+            pids_after = service_pids(adb)
+            last_pids = pids_after
+            if pids_before == pids_after == [pid] and path:
+                return {
+                    "stable": True,
+                    "pid": pid,
+                    "pids": pids_after,
+                    "path": path,
+                    "tracer": tracer,
+                    "attempts": attempt + 1,
+                }
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return {
+        "stable": False,
+        "pid": None,
+        "pids": last_pids,
+        "path": "",
+        "tracer": "",
+        "attempts": attempts,
+    }
+
+
 def watchdog_pids(adb: AdbClient) -> list[int]:
     return numeric_pids(
         adb.shell("ps | awk '$4 == \"{helloworld}\" {print $1}'", check=False)
@@ -147,21 +199,14 @@ def pull_exact(
 
 def preflight(adb: AdbClient, scratch: Path) -> dict:
     adb_state = adb.run("get-state").strip()
-    pids = service_pids(adb)
-    pid = pids[0] if len(pids) == 1 else None
-    service_path = adb.shell(
-        "p=$(pidof phnixIot4G | awk '{print $1}'); "
-        "test -n \"$p\" && readlink /proc/$p/exe || true",
-        check=False,
-    )
+    snapshot = stable_single_service_snapshot(adb)
+    pids = list(snapshot["pids"])
+    pid = snapshot["pid"]
+    service_path = str(snapshot["path"])
+    tracer = str(snapshot["tracer"])
     service_sha = adb.shell(
         f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'", check=False
     ).upper()
-    tracer = adb.shell(
-        "p=$(pidof phnixIot4G | awk '{print $1}'); "
-        "test -n \"$p\" && awk '/^TracerPid:/ {print $2}' /proc/$p/status || true",
-        check=False,
-    )
     wds = watchdog_pids(adb)
     debugger_pids = adb.shell("pidof gdbserver gdb || true", check=False)
     active_markers = [
@@ -182,7 +227,10 @@ def preflight(adb: AdbClient, scratch: Path) -> dict:
     current = counter_from_bytes(raw)
     checks = {
         "adb_device": adb_state == "device",
-        "service_singleton": len(pids) == 1,
+        "service_stable": bool(snapshot["stable"]),
+        # Keep the existing JSON key for GUI/log compatibility. It now means
+        # a stable singleton snapshot, not one lucky pidof sample.
+        "service_singleton": bool(snapshot["stable"]) and len(pids) == 1,
         "service_running": pid is not None,
         "service_path": service_path == REMOTE_SERVICE,
         "service_original": service_sha == EXPECTED_SERVICE_SHA256,
@@ -198,6 +246,7 @@ def preflight(adb: AdbClient, scratch: Path) -> dict:
         "adb_state": adb_state,
         "service_pid": pid,
         "service_pids": pids,
+        "service_snapshot_attempts": snapshot["attempts"],
         "service_path": service_path,
         "service_sha256": service_sha,
         "watchdog_pids": wds,
