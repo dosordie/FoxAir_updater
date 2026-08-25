@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import updater.common.phnix_statistics_maintenance as maintenance
 from updater.common.phnix_statistics_maintenance import (
     MAINBOARD_OTA_OFFSET,
     REMOTE_SERVICE,
@@ -9,6 +11,7 @@ from updater.common.phnix_statistics_maintenance import (
     counter_from_bytes,
     patch_counter,
     stable_single_service_snapshot,
+    stop_service_for_maintenance,
 )
 
 
@@ -23,6 +26,26 @@ class FakeSnapshotAdb:
             return REMOTE_SERVICE
         if "TracerPid" in command:
             return "0"
+        raise AssertionError(f"unexpected shell command: {command}")
+
+
+class FakeStopAdb:
+    def __init__(self, pid=5383):
+        self.pid = pid
+        self.alive = True
+        self.commands = []
+
+    def shell(self, command, check=False):
+        self.commands.append(command)
+        if command == "pidof phnixIot4G || true":
+            return str(self.pid) if self.alive else ""
+        if command == f"kill -TERM {self.pid}":
+            # Mirrors the live modem observation: TERM does not make the
+            # service disappear within the maintenance grace period.
+            return ""
+        if command == f"kill -KILL {self.pid}":
+            self.alive = False
+            return ""
         raise AssertionError(f"unexpected shell command: {command}")
 
 
@@ -74,6 +97,17 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         self.assertIsNone(snapshot["pid"])
         self.assertEqual(snapshot["pids"], [5385, 5383])
 
+    def test_service_stop_escalates_from_term_to_kill_like_ota_restore(self):
+        adb = FakeStopAdb()
+        with patch.object(maintenance, "SERVICE_TERM_GRACE_SECONDS", 0.01), patch.object(
+            maintenance, "SERVICE_KILL_TIMEOUT_SECONDS", 0.05
+        ):
+            method = stop_service_for_maintenance(adb, 5383)
+        self.assertEqual(method, "kill")
+        self.assertIn("kill -TERM 5383", adb.commands)
+        self.assertIn("kill -KILL 5383", adb.commands)
+        self.assertFalse(adb.alive)
+
     def test_maintenance_core_is_separate_from_ota_controller(self):
         source = Path(
             "updater/common/phnix_statistics_maintenance.py"
@@ -86,7 +120,11 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         self.assertIn("MAINBOARD_OTA_OFFSET = 0x24", source)
         self.assertIn("kill -STOP", source)
         self.assertIn("kill -TERM", source)
+        self.assertIn("kill -KILL", source)
         self.assertIn("kill -CONT", source)
+        self.assertIn("stop_service_for_maintenance", source)
+        self.assertIn("SERVICE_TERM_GRACE_SECONDS = 2.0", source)
+        self.assertIn("SERVICE_KILL_TIMEOUT_SECONDS = 4.0", source)
         self.assertIn("service_singleton", source)
         self.assertIn("service_stable", source)
         self.assertIn("stable_single_service_snapshot", source)
