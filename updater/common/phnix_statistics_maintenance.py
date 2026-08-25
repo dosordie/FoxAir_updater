@@ -116,6 +116,13 @@ def first_pid(adb: AdbClient) -> int | None:
     return pids[0] if pids else None
 
 
+def service_process_state(adb: AdbClient, pid: int) -> str:
+    return adb.shell(
+        f"awk '{{print $3}}' /proc/{pid}/stat 2>/dev/null || true",
+        check=False,
+    ).strip()
+
+
 def stable_single_service_snapshot(
     adb: AdbClient,
     *,
@@ -259,14 +266,17 @@ def resume_watchdogs(adb: AdbClient, pids: list[int]) -> None:
         adb.shell(f"kill -CONT {pid} 2>/dev/null || true", check=False)
 
 
-def wait_service_absent(adb: AdbClient, *, timeout: float, old_pid: int | None = None) -> bool:
+def wait_service_inactive(adb: AdbClient, *, timeout: float, old_pid: int | None = None) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pids = service_pids(adb)
         if not pids:
             return True
-        if old_pid is not None and old_pid not in pids:
-            raise MaintenanceError("another phnixIot4G instance appeared while watchdogs were paused")
+        if old_pid is not None:
+            if any(pid != old_pid for pid in pids):
+                raise MaintenanceError("another phnixIot4G instance appeared while watchdogs were paused")
+            if old_pid in pids and service_process_state(adb, old_pid) in {"Z", "X"}:
+                return True
         time.sleep(0.1)
     return False
 
@@ -275,7 +285,7 @@ def stop_service_for_maintenance(adb: AdbClient, old_pid: int) -> str:
     """TERM first, then the same deliberate KILL pattern used by OTA restore."""
     emit("service-term", old_pid=old_pid)
     adb.shell(f"kill -TERM {old_pid}")
-    if wait_service_absent(adb, timeout=SERVICE_TERM_GRACE_SECONDS, old_pid=old_pid):
+    if wait_service_inactive(adb, timeout=SERVICE_TERM_GRACE_SECONDS, old_pid=old_pid):
         return "term"
 
     current = service_pids(adb)
@@ -286,7 +296,7 @@ def stop_service_for_maintenance(adb: AdbClient, old_pid: int) -> str:
 
     emit("service-kill", old_pid=old_pid)
     adb.shell(f"kill -KILL {old_pid}")
-    if not wait_service_absent(adb, timeout=SERVICE_KILL_TIMEOUT_SECONDS, old_pid=old_pid):
+    if not wait_service_inactive(adb, timeout=SERVICE_KILL_TIMEOUT_SECONDS, old_pid=old_pid):
         raise MaintenanceError("phnixIot4G remained alive after controlled SIGKILL; no file was modified")
     return "kill"
 
