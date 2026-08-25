@@ -66,7 +66,7 @@ class PermissiveAdbBackendTests(unittest.TestCase):
             self.assertEqual(backend.root_path("/data/phnixIot4G"), rootfs / "data/phnixIot4G")
             self.assertEqual(backend.root_path("/cache/test.bin"), rootfs / "cache/test.bin")
 
-    def test_shell_namespace_creates_mount_targets_before_binding(self):
+    def test_shell_namespace_creates_mount_targets_and_writable_dev(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             backend = load_backend()
             argv = backend._sandbox_command("printf ok")
@@ -76,6 +76,9 @@ class PermissiveAdbBackendTests(unittest.TestCase):
         self.assertIn(data_source, argv)
         self.assertIn(cache_source, argv)
         self.assertIn(str(self.device_tmp), argv)
+        self.assertIn("--dev-bind", argv)
+        dev_bind = argv.index("--dev-bind")
+        self.assertEqual(argv[dev_bind + 1:dev_bind + 3], ["/dev", "/dev"])
 
         data_dir = argv.index("/data", argv.index("--dir"))
         cache_dir = argv.index("/cache", data_dir + 1)
@@ -85,14 +88,21 @@ class PermissiveAdbBackendTests(unittest.TestCase):
         self.assertLess(cache_dir, cache_bind)
         self.assertEqual(argv[-3:], ["/bin/sh", "-c", "printf ok"])
 
+    def test_original_http_probe_is_not_taken_from_unrelated_host_listener(self):
+        command = "netstat -lnt 2>/dev/null | awk '$4 ~ /:8081$/ {print}'"
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            backend = load_backend()
+            self.assertEqual(backend.shell(command), (0, b""))
+
     def test_source_documents_no_global_host_remapping(self):
         source = BACKEND_PATH.read_text(encoding="utf-8")
         self.assertIn("normal Debian /data, /cache and /tmp separate", source)
         self.assertIn('"--dir", "/data"', source)
         self.assertIn('"--dir", "/cache"', source)
+        self.assertIn('"--dev-bind", "/dev", "/dev"', source)
         self.assertIn('"--bind", str(tmp), "/tmp"', source)
 
-    def test_installer_removes_only_legacy_global_links(self):
+    def test_installer_removes_legacy_links_and_starts_original_runtime(self):
         source = Path("tools/testvm/fake_adb/install.sh").read_text(encoding="utf-8")
         self.assertIn("bubblewrap", source)
         self.assertIn("FOXAIR_FAKE_ADB_TMP=$DEVICE_TMP", source)
@@ -100,7 +110,8 @@ class PermissiveAdbBackendTests(unittest.TestCase):
         self.assertIn('remove_legacy_link /cache "$ROOTFS/cache"', source)
         self.assertNotIn("link_rootfs_dir data", source)
         self.assertNotIn("link_rootfs_dir cache", source)
-        self.assertIn("Debian-Pfade:  /data, /cache und /tmp werden nicht umgebogen", source)
+        self.assertIn('"$INSTALL_DIR/foxair-fake-adbctl" scenario success', source)
+        self.assertIn("Debian-Pfade:  /data, /cache und /tmp werden nicht global umgebogen", source)
 
 
 if __name__ == "__main__":
