@@ -107,22 +107,20 @@ def _sandbox_command(command: str) -> list[str]:
         if not path.is_dir():
             raise FileNotFoundError(f"ADB-Mountquelle fehlt: {path}")
 
-    args = [bwrap, "--bind", "/", "/"]
-
-    # bubblewrap can create destination directories only inside its private
-    # mount namespace. If the Debian host already has a real /data or /cache,
-    # leave it untouched and simply over-mount it inside ADB.
-    for virtual, source in (("/data", data), ("/cache", cache)):
-        if not Path(virtual).exists():
-            args.extend(["--dir", virtual])
-        args.extend(["--bind", str(source), virtual])
-
-    args.extend([
+    # Always create fresh mount targets inside the private namespace. This is
+    # deliberately independent of whether /data or /cache exist on the Debian
+    # host (or used to be symlinks from an older PR revision).
+    return [
+        bwrap,
+        "--bind", "/", "/",
+        "--dir", "/data",
+        "--dir", "/cache",
+        "--bind", str(data), "/data",
+        "--bind", str(cache), "/cache",
         "--bind", str(tmp), "/tmp",
         "--",
         "/bin/sh", "-c", command,
-    ])
-    return args
+    ]
 
 
 def _host_shell(command: str) -> tuple[int, bytes]:
