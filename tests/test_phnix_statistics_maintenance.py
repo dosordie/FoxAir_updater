@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from tools.phnix_maintenance.phnix_statistics_counter import (
+from updater.common.phnix_statistics_maintenance import (
     MAINBOARD_OTA_OFFSET,
     STATISTICS_SIZE,
     MaintenanceError,
@@ -15,7 +15,9 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         original = bytes(range(STATISTICS_SIZE))
         patched = patch_counter(original, 0x12345678)
         self.assertEqual(len(patched), STATISTICS_SIZE)
-        self.assertEqual(patched[:MAINBOARD_OTA_OFFSET], original[:MAINBOARD_OTA_OFFSET])
+        self.assertEqual(
+            patched[:MAINBOARD_OTA_OFFSET], original[:MAINBOARD_OTA_OFFSET]
+        )
         self.assertEqual(
             patched[MAINBOARD_OTA_OFFSET + 4 :],
             original[MAINBOARD_OTA_OFFSET + 4 :],
@@ -40,16 +42,21 @@ class StatisticsMaintenanceTests(unittest.TestCase):
             counter_from_bytes(bytes(STATISTICS_SIZE + 1))
 
     def test_maintenance_core_is_separate_from_ota_controller(self):
-        source = Path("tools/phnix_maintenance/phnix_statistics_counter.py").read_text(
-            encoding="utf-8"
-        )
+        source = Path(
+            "updater/common/phnix_statistics_maintenance.py"
+        ).read_text(encoding="utf-8")
         self.assertNotIn("import phnix_local_ota_controller", source)
         self.assertNotIn("from tools.phnix_ota", source)
-        self.assertIn('REMOTE_STATISTICS = "/data/phnixIot_device_statisic"', source)
+        self.assertIn(
+            'REMOTE_STATISTICS = "/data/phnixIot_device_statisic"', source
+        )
         self.assertIn("MAINBOARD_OTA_OFFSET = 0x24", source)
         self.assertIn("kill -STOP", source)
         self.assertIn("kill -TERM", source)
         self.assertIn("kill -CONT", source)
+        self.assertIn("service_singleton", source)
+        self.assertIn("RESCUE_TIMEOUT_SECONDS = 90", source)
+        self.assertIn("arm_watchdog_rescue", source)
         self.assertIn("cp -p {REMOTE_STATISTICS} {REMOTE_STAGE}", source)
         self.assertIn("mv {REMOTE_STAGE} {REMOTE_STATISTICS}", source)
         self.assertNotIn("/dev/ttyHSL2", source)
