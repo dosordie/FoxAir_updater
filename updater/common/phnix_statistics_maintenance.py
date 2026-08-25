@@ -301,7 +301,7 @@ def stop_service_for_maintenance(adb: AdbClient, old_pid: int) -> str:
     return "kill"
 
 
-def wait_service_restored(adb: AdbClient, old_pid: int, timeout: float = 25.0) -> int:
+def wait_service_restored(adb: AdbClient, old_pid: int, timeout: float = 40.0) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pids = service_pids(adb)
