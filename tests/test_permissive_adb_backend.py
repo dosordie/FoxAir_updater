@@ -33,11 +33,14 @@ class PermissiveAdbBackendTests(unittest.TestCase):
         qemu.chmod(0o755)
         self.state = self.root / "state"
         self.device_tmp = self.state / "device-tmp"
+        self.fake_bwrap = self.root / "bwrap"
+        self.fake_bwrap.write_text("#!/bin/sh\n", encoding="utf-8")
         self.env = {
             "FOXAIR_QEMU_LAB_ROOT": str(self.lab),
             "FOXAIR_QEMU_LAB_ROOTFS": str(self.rootfs),
             "FOXAIR_FAKE_ADB_STATE": str(self.state),
             "FOXAIR_FAKE_ADB_TMP": str(self.device_tmp),
+            "FOXAIR_FAKE_ADB_BWRAP": str(self.fake_bwrap),
             "FOXAIR_QEMU_FAKE_PID": "4100",
         }
 
@@ -56,22 +59,41 @@ class PermissiveAdbBackendTests(unittest.TestCase):
             self.assertEqual(backend.root_path("/tmp/foxair-test"), self.device_tmp / "foxair-test")
             self.assertNotEqual(backend.root_path("/tmp/foxair-test"), Path("/tmp/foxair-test"))
 
-    def test_data_still_maps_to_qemu_rootfs(self):
+    def test_data_and_cache_sync_paths_map_to_qemu_rootfs(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             backend = load_backend()
-            self.assertEqual(backend.root_path("/data/phnixIot4G"), self.rootfs.resolve() / "data/phnixIot4G")
+            rootfs = self.rootfs.resolve()
+            self.assertEqual(backend.root_path("/data/phnixIot4G"), rootfs / "data/phnixIot4G")
+            self.assertEqual(backend.root_path("/cache/test.bin"), rootfs / "cache/test.bin")
 
-    def test_source_uses_bubblewrap_mount_namespace(self):
+    def test_shell_namespace_binds_all_modem_state_paths(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            backend = load_backend()
+            argv = backend._sandbox_command("printf ok")
+        joined = "\n".join(argv)
+        self.assertIn(str(self.rootfs.resolve() / "data"), joined)
+        self.assertIn(str(self.rootfs.resolve() / "cache"), joined)
+        self.assertIn(str(self.device_tmp), joined)
+        self.assertIn("/data", argv)
+        self.assertIn("/cache", argv)
+        self.assertIn("/tmp", argv)
+        self.assertEqual(argv[-3:], ["/bin/sh", "-c", "printf ok"])
+
+    def test_source_documents_no_global_host_remapping(self):
         source = BACKEND_PATH.read_text(encoding="utf-8")
+        self.assertIn("normal Debian /data, /cache and /tmp separate", source)
+        self.assertIn('("/data", data), ("/cache", cache)', source)
         self.assertIn('"--bind", str(tmp), "/tmp"', source)
-        self.assertIn('"/bin/sh", "-c", command', source)
-        self.assertIn("ADB /tmp is intentionally *not* the Debian host /tmp", source)
 
-    def test_installer_installs_bubblewrap_and_configures_private_tmp(self):
+    def test_installer_removes_only_legacy_global_links(self):
         source = Path("tools/testvm/fake_adb/install.sh").read_text(encoding="utf-8")
         self.assertIn("bubblewrap", source)
         self.assertIn("FOXAIR_FAKE_ADB_TMP=$DEVICE_TMP", source)
-        self.assertIn('install -d -m 1777 "$DEVICE_TMP"', source)
+        self.assertIn('remove_legacy_link /data "$ROOTFS/data"', source)
+        self.assertIn('remove_legacy_link /cache "$ROOTFS/cache"', source)
+        self.assertNotIn("link_rootfs_dir data", source)
+        self.assertNotIn("link_rootfs_dir cache", source)
+        self.assertIn("Debian-Pfade:  /data, /cache und /tmp werden nicht umgebogen", source)
 
 
 if __name__ == "__main__":
