@@ -88,6 +88,8 @@ C36E5
 Commit / Loader / neue Firmware
 ```
 
+Für ein vollständiges Update eines Images in der Größenordnung von V3.3 sollte als **Planungswert derzeit etwa 10–15 Minuten Gesamtdauer** angesetzt werden. Die eigentliche C5A8-Übertragung macht davon den größten Anteil aus. Details und Herleitung stehen in Abschnitt 13.
+
 ---
 
 ## 3. Reihenfolge im Detail
@@ -404,7 +406,78 @@ Daher gilt:
 
 ---
 
-## 13. Statuscodes als Kurzreferenz
+## 13. Geschätzte Update-Dauer
+
+Für ein vollständiges Mainboard-Update mit einer Firmwaredatei in der Größenordnung der bekannten V3.3-Datei sollte derzeit konservativ mit ungefähr:
+
+```text
+ca. 10–15 Minuten Gesamtdauer
+```
+
+gerechnet werden.
+
+Diese Zahl ist **eine technische Schätzung und noch kein live gemessener Wert eines erfolgreich abgeschlossenen Versionswechsels**.
+
+### Rechenbasis für V3.3
+
+Bekannt sind:
+
+```text
+Firmwaregröße:      287598 Byte
+C5A8-Nutzdaten:     168 Byte pro Block
+C5A8-Blöcke:        1712
+OTA-Service-UART:   9600 Baud, 8N1
+```
+
+Bei 9600 Baud und 8N1 stehen theoretisch maximal ungefähr:
+
+```text
+960 Byte/s Netto-Zeichenrate auf der seriellen Leitung
+```
+
+zur Verfügung, weil jedes Byte mit Start- und Stopbit ungefähr 10 Bit auf der Leitung benötigt.
+
+Ein C5A8-Frame besteht nicht nur aus den 168 Firmwarebytes, sondern zusätzlich aus Protokollheader, Längen-/Adressfeldern und CRC. Dazu kommt nach jedem Block die C371-Quittung in Gegenrichtung.
+
+Allein der serielle C5A8-/C371-Datenverkehr für 1712 Blöcke ergibt deshalb bereits eine theoretische Mindestdauer in der Größenordnung von:
+
+```text
+ca. 5½–6 Minuten
+```
+
+selbst wenn jeder Block ohne zusätzliche Wartezeit direkt quittiert und der nächste Block sofort gesendet würde.
+
+In der Praxis kommen zusätzlich hinzu:
+
+- RS485-Richtungswechsel und Frame-Abstände,
+- Flash-Programmierung der 168 Byte jedes C5A8-Blocks in den Stagingbereich,
+- Verarbeitung und Quittierung jedes Blocks,
+- mögliche Wiederholungen einzelner Frames,
+- C350-/C357-Handshake,
+- lokaler HTTP-Lese- und MD5-Schritt im LTE-Modem,
+- Staging-MD5,
+- Löschen des Ziel-Flashbereichs,
+- Kopieren von Staging nach `0x08050000`,
+- zweiter MD5-Lauf,
+- EEPROM-/Commit-Schritte,
+- Loader/Handoff,
+- Host-Preflight, ADB-Uploads und abschließende Statusprüfung.
+
+Daher ist als praktischer Planungswert derzeit sinnvoll:
+
+```text
+C5A8-Transferphase: grob etwa 6–8 Minuten
+Gesamter Updateablauf: vorsichtshalber etwa 10–15 Minuten einplanen
+```
+
+> [!NOTE]
+> Die Dauer darf **nicht als Erfolgskriterium oder Timeout** interpretiert werden. Ein Update ist erst anhand der protokollierten Zustände und des erfolgreichen Promotion-/Commit-Pfads abgeschlossen, nicht weil eine bestimmte Zeit vergangen ist.
+
+Sobald ein echter Versionswechsel auf realer Hardware vollständig durchgeführt wurde, sollte dieser Abschnitt mit den real gemessenen Zeitpunkten für C350, C357, erstes/letztes C5A8, C36E3, C36E5 und den ersten bestätigten Start der neuen Firmware ergänzt werden.
+
+---
+
+## 14. Statuscodes als Kurzreferenz
 
 | C36E | Bedeutung im bekannten V3.3-Pfad |
 |---:|---|
@@ -418,7 +491,7 @@ Daher gilt:
 
 ---
 
-## 14. Sicherheitsgrenze der aktuellen Erkenntnisse
+## 15. Sicherheitsgrenze der aktuellen Erkenntnisse
 
 Statisch und durch bestehende Tests gut belegt sind insbesondere:
 
