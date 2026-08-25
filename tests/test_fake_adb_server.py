@@ -1,12 +1,19 @@
 import asyncio
 import importlib.util
+import os
+import shutil
+import socket
 import struct
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 
 SERVER_PATH = Path("tools/testvm/fake_adb/foxair_fake_adb_server.py")
+SIMULATOR_PATH = Path("tools/phnix_ota/phnix_ota_simulator.py")
 
 
 def load_server_module():
@@ -15,6 +22,20 @@ def load_server_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def find_real_adb() -> str | None:
+    direct = shutil.which("adb") or shutil.which("adb.exe")
+    if direct:
+        return direct
+    for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        value = os.environ.get(variable)
+        if not value:
+            continue
+        candidate = Path(value) / "platform-tools" / ("adb.exe" if os.name == "nt" else "adb")
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 class FakeSim:
@@ -187,6 +208,99 @@ class FakeAdbServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload, b"offline")
         writer.close()
         await writer.wait_closed()
+
+
+class RealAdbInteropTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.adb = find_real_adb()
+        if not cls.adb:
+            raise unittest.SkipTest("Google adb/platform-tools not installed on this runner")
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.tmp.name)
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            cls.port = sock.getsockname()[1]
+        cls.env = os.environ.copy()
+        cls.env["ADB_SERVER_SOCKET"] = f"tcp:127.0.0.1:{cls.port}"
+        cls.server_process = subprocess.Popen(
+            [
+                sys.executable,
+                str(SERVER_PATH),
+                "--bind", "127.0.0.1",
+                "--port", str(cls.port),
+                "--state-root", str(cls.root / "state"),
+                "--simulator", str(SIMULATOR_PATH),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if cls.server_process.poll() is not None:
+                stdout, stderr = cls.server_process.communicate()
+                raise RuntimeError(f"fake adb server exited early:\n{stdout}\n{stderr}")
+            try:
+                with socket.create_connection(("127.0.0.1", cls.port), timeout=0.2):
+                    break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            cls.server_process.terminate()
+            raise RuntimeError("fake adb server did not open its TCP port")
+
+    @classmethod
+    def tearDownClass(cls):
+        if getattr(cls, "server_process", None):
+            cls.server_process.terminate()
+            try:
+                cls.server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                cls.server_process.kill()
+                cls.server_process.wait(timeout=5)
+        if getattr(cls, "tmp", None):
+            cls.tmp.cleanup()
+
+    def adb_run(self, *args: str, binary: bool = False):
+        return subprocess.run(
+            [self.adb, *args],
+            env=self.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=not binary,
+            timeout=15,
+            check=False,
+        )
+
+    def test_real_adb_devices_shell_push_and_pull(self):
+        devices = self.adb_run("devices", "-l")
+        self.assertEqual(devices.returncode, 0, devices.stderr)
+        self.assertIn("foxair-vm", devices.stdout)
+        self.assertIn("device", devices.stdout)
+
+        state = self.adb_run("get-state")
+        self.assertEqual(state.returncode, 0, state.stderr)
+        self.assertEqual(state.stdout.strip(), "device")
+
+        shell = self.adb_run("shell", "pidof phnixIot4G || true")
+        self.assertEqual(shell.returncode, 0, shell.stderr)
+        self.assertEqual(shell.stdout.strip(), "4100")
+
+        payload = b"real-adb-sync-test\x00FoxAir\n"
+        local = self.root / "push.bin"
+        pulled = self.root / "pull.bin"
+        local.write_bytes(payload)
+        push = self.adb_run("push", str(local), "/data/real-adb-sync-test.bin")
+        self.assertEqual(push.returncode, 0, push.stderr)
+
+        cat = self.adb_run("shell", "cat /data/real-adb-sync-test.bin", binary=True)
+        self.assertEqual(cat.returncode, 0, cat.stderr.decode(errors="replace"))
+        self.assertEqual(cat.stdout, payload)
+
+        pull = self.adb_run("pull", "/data/real-adb-sync-test.bin", str(pulled))
+        self.assertEqual(pull.returncode, 0, pull.stderr)
+        self.assertEqual(pulled.read_bytes(), payload)
 
 
 class FakeAdbSourceContractTests(unittest.TestCase):
