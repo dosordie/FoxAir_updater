@@ -25,6 +25,24 @@ CONFIRM_TOKEN = "PHNIX-STATISTICS-WRITE"
 class MainWindow(operator.MainWindow):
     """Thin experimental frontend for the shared statistics maintenance core."""
 
+    def __init__(self):
+        super().__init__()
+        self._update_window_title()
+
+    def _update_window_title(self) -> None:
+        if self.adb_remote.isChecked():
+            host = self.remote_host.text().strip()
+            connection = f"Remote ADB {host}" if host else "Remote ADB"
+        else:
+            connection = "USB"
+        version = operator.lte.desktop.app.APP_VERSION
+        self.setWindowTitle(f"FoxAir Updater {version} – {connection}")
+
+    def _remote_changed(self, *args):
+        super()._remote_changed(*args)
+        if hasattr(self, "adb_remote") and hasattr(self, "remote_host"):
+            self._update_window_title()
+
     def _advanced(self):
         widget = super()._advanced()
         layout = widget.layout()
