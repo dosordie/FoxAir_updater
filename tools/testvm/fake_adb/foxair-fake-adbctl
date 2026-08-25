@@ -3,6 +3,8 @@ set -eu
 
 CONFIG=/etc/default/foxair-fake-adb
 INSTALL_DIR=${FOXAIR_FAKE_ADB_INSTALL_DIR:-/opt/foxair-fake-adb}
+# qemu_lab_adapter.py remains the rootfs/process base; this wrapper invokes the
+# Work-VM runtime layer that starts run_scenario_lab.sh and emulates ADB shell.
 ADAPTER="$INSTALL_DIR/qemu_work_lab_backend.py"
 SERVICE=foxair-fake-adb.service
 
@@ -36,7 +38,7 @@ Befehle:
   runner-stop                    laufenden run_scenario_lab.sh sauber stoppen
   online / offline               nur die ADB-Sicht umschalten
   simulator-start [NAME]         Alias für online + optional scenario NAME
-  simulator-stop                 Alias für offline; QEMU-Lab bleibt unangetastet
+  simulator-stop                 Alias für offline; beendet NICHT phnixIot4G/QEMU
   cancel-scenario NAME           vorhandene Cancel-ACK-Funktion des RS485-Fakers verwenden
   handshake-scenario NAME        vorhandene C350/C357-Fehlerbilder verwenden
   same-version-scenario NAME     vorhandene C350-Status0/Status1-Fehlerbilder verwenden
