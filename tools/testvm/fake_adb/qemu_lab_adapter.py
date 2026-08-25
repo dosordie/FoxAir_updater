@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Adapter between the fake ADB server and the existing PHNIX QEMU lab.
 
-The ADB protocol implementation lives in ``foxair_fake_adb_server.py``.  This
-module deliberately does *not* create a second modem simulation.  Device paths
+The ADB protocol implementation lives in ``foxair_fake_adb_server.py``. This
+module deliberately does *not* create a second modem simulation. Device paths
 such as /data and /cache are mapped directly into the existing QEMU rootfs,
 normally ``/opt/phnix-lab/rootfs``.
 
-The original ARM ``/data/phnixIot4G`` process is discovered from /proc.  Shell
+The original ARM ``/data/phnixIot4G`` process is discovered from /proc. Shell
 commands are either handled explicitly on the host side (process identity and a
 few Linux status probes) or, for commands required by the updater, executed by
 the ARM /bin/sh through qemu-arm-static inside the same rootfs.
 
 Scenario changes are forwarded to the QEMU/Mainboard emulator through an
-existing lab control hook/socket when one can be discovered.  A JSON control
-file is always written as the stable hand-off format.  We intentionally do not
+existing lab control hook/socket when one can be discovered. A JSON control
+file is always written as the stable hand-off format. We intentionally do not
 pretend that a scenario was applied when no emulator control endpoint exists.
 """
 
@@ -102,6 +102,8 @@ def root_path(remote: str) -> Path:
     if not remote.startswith("/"):
         raise ValueError("Nur absolute Remote-Pfade werden unterstützt")
     root = qemu_rootfs()
+    if remote == "/":
+        return root
     relative = Path(remote.lstrip("/"))
     candidate = root / relative
     # Resolve only the parent, so a not-yet-existing upload target stays valid.
@@ -335,7 +337,8 @@ def service_pids() -> list[int]:
 
 
 def _service_pid_text() -> bytes:
-    return ((" ".join(str(pid) for pid in service_pids()) + "\n") if service_pids() else "").encode()
+    pids = service_pids()
+    return ((" ".join(str(pid) for pid in pids) + "\n") if pids else "").encode()
 
 
 def _hash_remote(remote: str, algorithm: str) -> tuple[int, bytes]:
@@ -364,9 +367,9 @@ def _qemu_shell_binary() -> tuple[Path, str] | None:
 def _run_rootfs_shell(command: str) -> tuple[int, bytes]:
     """Run the same shell command inside the ARM QEMU rootfs.
 
-    This intentionally mirrors a root ADB shell and is only appropriate for the
-    isolated test VM.  systemd confines the service and the fake ADB port itself
-    remains explicitly documented as unauthenticated lab-only access.
+    This mirrors a root ADB shell and is only appropriate for the isolated test
+    VM. systemd confines the service and the fake ADB port itself remains
+    explicitly documented as unauthenticated lab-only access.
     """
     root = qemu_rootfs()
     qemu = _qemu_shell_binary()
@@ -377,8 +380,8 @@ def _run_rootfs_shell(command: str) -> tuple[int, bytes]:
     if guest_qemu.startswith("/") and (root / guest_qemu.lstrip("/")).is_file():
         argv.extend([guest_qemu, "-L", "/", "/bin/sh", "-c", command])
     else:
-        # Host qemu cannot be reached after chroot.  This branch is kept only for
-        # diagnostics; the Work lab normally carries /usr/bin/qemu-arm-static.
+        # Host qemu cannot be reached after chroot. This branch is diagnostic;
+        # the Work lab normally carries /usr/bin/qemu-arm-static.
         return 127, b"qemu-arm-static fehlt im QEMU-RootFS\n"
     completed = subprocess.run(
         argv,
@@ -417,7 +420,7 @@ def _signal_service(sig: int) -> bool:
 def shell(command: str) -> tuple[int, bytes]:
     command = command.strip()
 
-    if command == "pidof phnixIot4G || true" or command == "pidof phnixIot4G":
+    if command in {"pidof phnixIot4G || true", "pidof phnixIot4G"}:
         return 0, _service_pid_text()
 
     if command.startswith("p=$(pidof phnixIot4G") and "readlink /proc/$p/exe" in command:
@@ -437,26 +440,27 @@ def shell(command: str) -> tuple[int, bytes]:
         return _hash_remote(match.group("path"), "sha256" if match.group("algo") == "sha256sum" else "md5")
 
     if command.startswith("ps | awk") and "{helloworld}" in command:
-        # The QEMU lab does not need the production watchdog binaries.  Preserve
+        # The QEMU lab does not need the production watchdog binaries. Preserve
         # the production preflight contract while keeping the real ARM service.
         return 0, b"4001\n4002\n"
 
     if command.startswith("netstat -nt") and ":1883" in command:
-        # Network is intentionally isolated in the Work lab.  The controller only
-        # uses this as proof that the original service was restored, so expose the
-        # emulated original-runtime state without opening cloud connectivity.
+        # Network is intentionally isolated in the Work lab. The controller only
+        # uses this as proof that the original service was restored.
         return (0, b"tcp 0 0 10.0.0.2:45100 127.0.0.1:1883 ESTABLISHED\n") if service_pids() else (0, b"")
 
     if command == "pidof gdbserver gdb || true":
         pids: list[str] = []
-        for name in ("gdbserver", "gdb"):
-            for pid_dir in Path("/proc").glob("[0-9]*"):
-                try:
-                    comm = (pid_dir / "comm").read_text().strip()
-                except OSError:
-                    continue
-                if comm == name:
-                    pids.append(pid_dir.name)
+        proc = Path("/proc")
+        if proc.is_dir():
+            for name in ("gdbserver", "gdb"):
+                for pid_dir in proc.glob("[0-9]*"):
+                    try:
+                        comm = (pid_dir / "comm").read_text().strip()
+                    except OSError:
+                        continue
+                    if comm == name:
+                        pids.append(pid_dir.name)
         return 0, ((" ".join(pids) + "\n") if pids else "").encode()
 
     match = re.fullmatch(r"kill -(STOP|CONT|TERM|KILL)\s+([0-9]+)", command)
@@ -477,9 +481,9 @@ def shell(command: str) -> tuple[int, bytes]:
         sig = signal.SIGKILL if "-9" in command else signal.SIGTERM
         return (0, b"") if _signal_service(sig) else (1, b"")
 
-    # Everything else is intentionally executed inside the same ARM rootfs used
-    # by the original Work lab.  This includes file probes, df, busybox, chmod,
-    # runtime-hook start/stop commands and other normal updater shell operations.
+    # Everything else is executed inside the same ARM rootfs used by the Work
+    # lab. This includes file probes, df, busybox, chmod, runtime-hook commands
+    # and other normal updater shell operations.
     return _run_rootfs_shell(command)
 
 
@@ -488,7 +492,13 @@ def service_info() -> dict:
     service = root / "data/phnixIot4G"
     digest = None
     if service.is_file():
-        digest = hashlib.sha256(service.read_bytes()).hexdigest()
+        digest_obj = hashlib.sha256()
+        with service.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_obj.update(chunk)
+        digest = digest_obj.hexdigest()
+    hook = scenario_hook()
+    sock = scenario_socket()
     return {
         "backend": "qemu-rootfs",
         "lab_root": str(lab_root()),
@@ -502,8 +512,8 @@ def service_info() -> dict:
         "adb_online": (sim_home() / "started").exists(),
         "scenario": scenario_state(),
         "scenario_file": str(_lab_control_path()),
-        "scenario_hook": str(scenario_hook()) if scenario_hook() else None,
-        "scenario_socket": str(scenario_socket()) if scenario_socket() else None,
+        "scenario_hook": str(hook) if hook else None,
+        "scenario_socket": str(sock) if sock else None,
     }
 
 
