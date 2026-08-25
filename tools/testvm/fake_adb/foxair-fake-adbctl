@@ -3,7 +3,7 @@ set -eu
 
 CONFIG=/etc/default/foxair-fake-adb
 INSTALL_DIR=${FOXAIR_FAKE_ADB_INSTALL_DIR:-/opt/foxair-fake-adb}
-ADAPTER="$INSTALL_DIR/qemu_lab_adapter.py"
+ADAPTER="$INSTALL_DIR/qemu_work_lab_backend.py"
 SERVICE=foxair-fake-adb.service
 
 if [ -f "$CONFIG" ]; then
@@ -27,32 +27,38 @@ adapter() {
 
 usage() {
     cat <<'EOF'
-FoxAir Fake ADB / QEMU-Lab Control
+FoxAir Fake ADB / Work-QEMU-Lab Control
 
 Befehle:
-  status                         ADB-Service, QEMU-RootFS, ARM-Dienst und Scenario-Bridge anzeigen
-  scenario NAME                  OTA-Szenario im QEMU/Mainboard-Emulator setzen
-  reset [NAME]                   Scenario-Zustand zurücksetzen (Default: success)
-  online                         ADB-Gerät online melden (QEMU-Prozess bleibt unverändert)
-  offline                        ADB-Gerät offline melden (QEMU-Prozess bleibt unverändert)
-  simulator-start [NAME]         Alias: ADB online; optional danach Scenario NAME setzen
-  simulator-stop                 Alias: ADB offline; beendet NICHT phnixIot4G/QEMU
-  cancel-scenario NAME           Cancel-Szenario im Emulator setzen
-  handshake-scenario NAME        Pre-C5A8-Handshake-Szenario im Emulator setzen
-  same-version-scenario NAME     Same-Version-Szenario im Emulator setzen
-  restart                        Nur den Fake-ADB-Systemdienst neu starten
-  logs                           Live-Log des Fake-ADB-Servers anzeigen
-  info                           Windows-Verbindungsdaten + QEMU-Backend anzeigen
+  status                         ADB + echtes QEMU-RootFS + laufenden Lab-Runner anzeigen
+  scenario NAME                  run_scenario_lab.sh mit passender RS485-Störung neu starten
+  reset [NAME]                   Szenariozustand zurücksetzen und Lab-Runner neu starten
+  runner-stop                    laufenden run_scenario_lab.sh sauber stoppen
+  online / offline               nur die ADB-Sicht umschalten
+  simulator-start [NAME]         Alias für online + optional scenario NAME
+  simulator-stop                 Alias für offline; QEMU-Lab bleibt unangetastet
+  cancel-scenario NAME           vorhandene Cancel-ACK-Funktion des RS485-Fakers verwenden
+  handshake-scenario NAME        vorhandene C350/C357-Fehlerbilder verwenden
+  same-version-scenario NAME     vorhandene C350-Status0/Status1-Fehlerbilder verwenden
+  restart                        nur Fake-ADB-Systemdienst neu starten
+  logs                           Fake-ADB-Log verfolgen
+  lab-log                        Ausgabe des aktuell gestarteten Work-Lab-Runners verfolgen
+  info                           Windows-Verbindungsdaten + Backendstatus
 
-Scenario-Steuerung:
-  Der Adapter sucht zuerst FOXAIR_QEMU_SCENARIO_SOCKET, dann
-  FOXAIR_QEMU_SCENARIO_HOOK und danach bekannte *scenario*ctl-/labctl-Namen
-  unter /opt/phnix-lab/tools. Der Zustand wird zusätzlich in
-  /opt/phnix-lab/control/foxair-ota-scenario.json dokumentiert.
+Direkt auf dem vorhandenen Work-Lab abbildbar:
+  scenario success
+  scenario same-version          -> FAULT_SCENARIO=c350-status0
+  scenario stall-c350            -> FAULT_SCENARIO=no-c350-status
+  scenario stall-c5a8            -> FAULT_SCENARIO=no-block-ack
+  handshake-scenario success
+  handshake-scenario missing-status-2 -> no-c357-status
+  same-version-scenario success  -> c350-status0
+  same-version-scenario status-1 -> success
+  cancel-scenario success        -> CANCEL_ACK=1
+  cancel-scenario no-response    -> CANCEL_ACK=0
 
-  Wenn kein Emulator-Control-Endpunkt gefunden wird, wird der Zustand zwar
-  gespeichert, der Befehl endet aber absichtlich mit Exit 3. Damit wird niemals
-  fälschlich behauptet, das laufende Mainboard-Modell sei umgeschaltet worden.
+Nicht direkt durch rs485_fault_emulator.py unterstützte alte Python-Simulator-
+Szenarien werden absichtlich mit Exit 3 abgelehnt statt nur ungefähr emuliert.
 EOF
 }
 
@@ -71,6 +77,9 @@ case "$cmd" in
         ;;
     reset)
         adapter reset "${1:-success}"
+        ;;
+    runner-stop)
+        adapter runner-stop
         ;;
     online)
         adapter online
@@ -99,6 +108,10 @@ case "$cmd" in
     logs)
         need_root logs
         journalctl -u "$SERVICE" -f
+        ;;
+    lab-log)
+        need_root lab-log
+        tail -n 100 -f "${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}/qemu-adb/scenario-lab.out"
         ;;
     info)
         need_root info
