@@ -113,6 +113,10 @@ fetch tools/testvm/fake_adb/foxair_fake_adb_server.py "$INSTALL_DIR/foxair_fake_
 fetch tools/testvm/fake_adb/qemu_lab_adapter.py "$INSTALL_DIR/qemu_lab_adapter.py"
 fetch tools/testvm/fake_adb/qemu_work_lab_backend.py "$INSTALL_DIR/qemu_work_lab_backend.py"
 fetch tools/testvm/fake_adb/qemu_permissive_backend.py "$INSTALL_DIR/qemu_permissive_backend.py"
+# Re-use only the deterministic OTA hook state machine from the repository.
+# qemu_permissive_backend.py remaps all of its remote file access back into the
+# existing Work-QEMU/ADB namespace; this does NOT create a second modem rootfs.
+fetch tools/phnix_ota/phnix_ota_simulator.py "$INSTALL_DIR/phnix_ota_simulator.py"
 fetch tools/testvm/fake_adb/foxair-fake-adbctl "$INSTALL_DIR/foxair-fake-adbctl"
 fetch tools/testvm/fake_adb/foxair-fake-adb.service "$SERVICE_FILE"
 
@@ -121,13 +125,13 @@ chmod 0755 \
     "$INSTALL_DIR/qemu_lab_adapter.py" \
     "$INSTALL_DIR/qemu_work_lab_backend.py" \
     "$INSTALL_DIR/qemu_permissive_backend.py" \
+    "$INSTALL_DIR/phnix_ota_simulator.py" \
     "$INSTALL_DIR/foxair-fake-adbctl"
 ln -sf "$INSTALL_DIR/foxair-fake-adbctl" /usr/local/bin/foxair-fake-adbctl
 
 if [ -d "$STATE_DIR/simulator" ] && [ ! -e "$STATE_DIR/legacy-python-simulator" ]; then
     mv "$STATE_DIR/simulator" "$STATE_DIR/legacy-python-simulator"
 fi
-rm -f "$INSTALL_DIR/phnix_ota_simulator.py"
 
 cat > "$CONFIG_FILE" <<EOF
 FOXAIR_FAKE_ADB_BIND=$BIND
@@ -143,6 +147,7 @@ FOXAIR_QEMU_RUN_SECONDS=$RUN_SECONDS
 EOF
 
 install -d -m 0750 "$STATE_DIR/qemu-adb"
+install -d -m 0750 "$STATE_DIR/runtime-sim"
 touch "$STATE_DIR/qemu-adb/started"
 
 systemctl daemon-reload
@@ -155,9 +160,6 @@ if ! systemctl is-active --quiet foxair-fake-adb.service; then
     exit 1
 fi
 
-# A usable simulator should boot into the normal/original runtime automatically.
-# This starts the real ARM phnixIot4G via the existing Work scenario runner with
-# the non-faulting RS485 profile, so status/preflight works immediately.
 if ! "$INSTALL_DIR/foxair-fake-adbctl" scenario success; then
     echo "Standard-QEMU-Szenario konnte nicht gestartet werden." >&2
     "$INSTALL_DIR/foxair-fake-adbctl" status || true
@@ -179,6 +181,7 @@ ADB /data:     -> $ROOTFS/data
 ADB /cache:    -> $ROOTFS/cache
 ADB /tmp:      -> $DEVICE_TMP
 Debian-Pfade:  /data, /cache und /tmp werden nicht global umgebogen
+Runtime-Hook:  deterministische Test-Zustandsmaschine auf denselben ADB/QEMU-Dateien
 phnixIot4G:    $SERVICE_SIZE Byte
 SHA-256:       $SERVICE_SHA
 
