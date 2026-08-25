@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Permissive ADB backend for the isolated FoxAir TestVM.
 
-This intentionally exposes a root Debian shell through ADB.  The VM is a test
-fixture, so unknown commands are not rejected.  PHNIX-specific process/status
+This intentionally exposes a root Debian shell through ADB. The VM is a test
+fixture, so unknown commands are not rejected. PHNIX-specific process/status
 queries are still delegated to qemu_work_lab_backend.py, while every other
 command is executed with /bin/sh -c on the Debian host.
 
-/data and /cache are expected to be symlinks created by install.sh that point
-at the Work QEMU rootfs. /tmp intentionally uses the VM host /tmp so shell
-scripts such as phnix_ota_runtime_hook and ADB file operations see the same
-files.
+/data and /cache are symlinks created by install.sh that point at the Work QEMU
+rootfs. ADB /tmp is intentionally *not* the Debian host /tmp: shell commands and
+ADB SYNC see a dedicated directory under the fake-ADB state root. bubblewrap is
+used only as a mount namespace so arbitrary root shell commands still work but
+/tmp cannot collide with unrelated VM/QEMU temporary files.
 """
 
 from __future__ import annotations
@@ -47,14 +48,30 @@ apply_control = work.apply_control
 service_info = work.service_info
 
 
+def _state_root() -> Path:
+    return Path(os.environ.get("FOXAIR_FAKE_ADB_STATE", "/var/lib/foxair-fake-adb"))
+
+
+def device_tmp() -> Path:
+    path = Path(os.environ.get("FOXAIR_FAKE_ADB_TMP", str(_state_root() / "device-tmp")))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def root_path(remote: str) -> Path:
-    """Keep ADB SYNC consistent with the host shell namespace."""
+    """Keep ADB SYNC consistent with the shell mount namespace."""
     if not remote.startswith("/"):
         raise ValueError("Nur absolute Remote-Pfade werden unterstützt")
     if remote == "/tmp":
-        return Path("/tmp")
+        return device_tmp()
     if remote.startswith("/tmp/"):
-        return Path(remote)
+        relative = Path(remote).relative_to("/tmp")
+        candidate = device_tmp() / relative
+        parent = candidate.parent.resolve()
+        root = device_tmp().resolve()
+        if parent != root and root not in parent.parents:
+            raise ValueError("Remote-/tmp-Pfad verlässt den ADB-Tempbereich")
+        return candidate
     return work.root_path(remote)
 
 
@@ -73,23 +90,42 @@ def _phnix_special(command: str) -> bool:
     )
 
 
-def shell(command: str) -> tuple[int, bytes]:
-    command = command.strip()
+def _host_shell(command: str) -> tuple[int, bytes]:
+    tmp = device_tmp()
+    bwrap = os.environ.get("FOXAIR_FAKE_ADB_BWRAP", "/usr/bin/bwrap")
+    if not Path(bwrap).is_file():
+        return 127, f"bubblewrap fehlt: {bwrap}\n".encode()
 
-    # These queries need the virtual modem view rather than raw Debian process
-    # names/paths.  Everything else is deliberately unrestricted.
-    if _phnix_special(command):
-        return work.shell(command)
-
+    # Keep the whole dedicated TestVM visible/read-write, but replace /tmp only
+    # inside this command's mount namespace. This avoids collisions with the
+    # QEMU lab and unrelated Debian services while retaining unrestricted root
+    # shell behaviour for updater/runtime-helper commands.
     completed = subprocess.run(
-        ["/bin/sh", "-c", command],
+        [
+            bwrap,
+            "--bind", "/", "/",
+            "--bind", str(tmp), "/tmp",
+            "--",
+            "/bin/sh", "-c", command,
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
         timeout=120,
-        env=os.environ.copy(),
+        env={**os.environ, "TMPDIR": "/tmp"},
     )
     return completed.returncode, completed.stdout
+
+
+def shell(command: str) -> tuple[int, bytes]:
+    command = command.strip()
+
+    # These queries need the virtual modem view rather than raw Debian process
+    # names/paths. Everything else is deliberately unrestricted.
+    if _phnix_special(command):
+        return work.shell(command)
+
+    return _host_shell(command)
 
 
 def main() -> int:
