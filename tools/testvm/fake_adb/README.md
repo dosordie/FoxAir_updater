@@ -1,259 +1,154 @@
 # FoxAir Fake ADB für das vorhandene PHNIX-QEMU-Lab
 
-Dieser Baustein stellt auf der Debian-Test-VM einen ADB-Smart-Socket-Server bereit. Der **echte Google-`adb.exe`-Client unter Windows** verbindet sich über `ADB_SERVER_SOCKET=tcp:<VM-IP>:5038` damit.
+Der TestVM-Baustein stellt einen ADB-Smart-Socket-Server auf TCP 5038 bereit. Der echte Google-`adb.exe`-Client unter Windows verbindet sich über:
 
-Wichtig: Es wird **kein zweites virtuelles Modem** mehr aufgebaut. Die ADB-Schicht verwendet direkt das bereits von Work aufgebaute QEMU-Lab unter `/opt/phnix-lab` und dessen originales ARM-RootFS.
+```powershell
+$env:ADB_SERVER_SOCKET="tcp:<VM-IP>:5038"
+```
+
+Es wird kein zweites Modem simuliert. `/data` und `/cache` zeigen aus ADB-Sicht direkt auf das vorhandene Work-QEMU-Lab unter `/opt/phnix-lab/rootfs`; das originale ARM-`/data/phnixIot4G` läuft weiterhin über den vorhandenen Work-Szenario-Runner und dessen PTY/AT/RS485-Emulatoren.
+
+## Architektur
 
 ```text
-FoxAir_Updater.exe (Windows)
+Windows FoxAir Updater
         ↓
-echtes adb.exe
-        ↓
-ADB Smart Socket / TCP 5038
-        ↓
+echtes Google adb.exe
+        ↓ TCP 5038
 foxair_fake_adb_server.py
         ↓
-qemu_lab_adapter.py
+qemu_permissive_backend.py
         ↓
-/opt/phnix-lab/rootfs
+privater ADB-Mount-Namespace
+   /data  → /opt/phnix-lab/rootfs/data
+   /cache → /opt/phnix-lab/rootfs/cache
+   /tmp   → /var/lib/foxair-fake-adb/device-tmp
         ↓
-originales ARM /data/phnixIot4G
+qemu_work_lab_backend.py
         ↓
-PTY / AT-Modem / ttyHSL2 / Mainboard-Emulator des QEMU-Labs
+Work run_scenario_lab.sh
+        ↓
+originales ARM phnixIot4G + RS485/Mainboard-Emulator
 ```
 
-Damit trifft zum Beispiel
+Die normale Debian-VM wird dabei **nicht** global umgebogen. Insbesondere gibt es nach aktueller Installation keine globalen `/data`- oder `/cache`-Symlinks auf das QEMU-RootFS. Ältere PR-Versionen haben solche Links angelegt; der Installer entfernt sie automatisch, aber nur wenn sie tatsächlich auf das aktuelle Work-QEMU-RootFS zeigen.
+
+## Pfadtrennung
+
+ADB sieht:
 
 ```text
-adb pull /data/phnixIot4G
+/data/...   → /opt/phnix-lab/rootfs/data/...
+/cache/...  → /opt/phnix-lab/rootfs/cache/...
+/tmp/...    → /var/lib/foxair-fake-adb/device-tmp/...
 ```
 
-wirklich
+Die Debian-Host-Sicht bleibt davon getrennt:
 
 ```text
-/opt/phnix-lab/rootfs/data/phnixIot4G
+Debian /data   → unverändert / nicht vom Fake-ADB angelegt
+Debian /cache  → unverändert / nicht vom Fake-ADB angelegt
+Debian /tmp    → normales Host-/tmp
 ```
 
-und nicht mehr eine kleine Stub-Datei aus einem separaten Python-Simulator.
+`adb push`/`adb pull` benutzen dieselbe virtuelle Zuordnung direkt über das ADB-SYNC-Protokoll. Shell und SYNC sehen deshalb denselben Modemzustand, ohne das Host-Dateisystem global umzuschreiben.
 
-> **Nur Testnetz:** Der Server besitzt absichtlich keine ADB-Authentifizierung. Er bildet für den Test eine Root-ADB-Sicht auf das QEMU-Lab ab. Port 5038 niemals ins Internet oder in ein untrusted LAN freigeben.
+## Shell-Verhalten
 
-## Voraussetzungen
-
-Das von Work erstellte PHNIX-Lab muss bereits vorhanden sein. Standardmäßig wird erwartet:
+Die TestVM ist absichtlich permissiv. Normale `adb shell ...`-Kommandos werden als root über die Debian-Werkzeuge ausgeführt. Dafür installiert der Setup-Pfad unter anderem:
 
 ```text
-/opt/phnix-lab/
-├── rootfs/
-│   ├── data/
-│   │   └── phnixIot4G
-│   ├── cache/
-│   ├── tmp/
-│   └── usr/bin/qemu-arm-static
-├── tools/
-├── logs/
-└── control/                 # wird bei Bedarf vom ADB-Adapter ergänzt
+busybox
+curl
+gdb
+net-tools
+iproute2
+procps
+bubblewrap
 ```
 
-Der Installer akzeptiert alternativ `FOXAIR_QEMU_LAB_ROOTFS=<pfad>`.
+`bubblewrap` dient ausschließlich als privater Mount-Namespace für `/data`, `/cache` und `/tmp`. Es ist keine Security-Sandbox für diesen Testaufbau.
 
-## Installation nach Merge
+Einige PHNIX-spezifische Prozess-/Statusabfragen werden weiterhin adaptiert, weil der originale ARM-Prozess auf Debian als QEMU-/Wrapper-Prozess erscheint. Dazu gehören insbesondere `pidof phnixIot4G`, Prozessstatus/Tracer, Watchdog-Repräsentation und die isolierte MQTT-Sicht.
 
-```sh
-wget -qO- https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/testvm/fake_adb/install.sh | sudo sh
-```
+## ADB-Protokoll
 
-Zum Testen dieses PR-Branches vor dem Merge:
+Unterstützt werden unter anderem:
+
+- ADB Smart Socket auf TCP 5038
+- `host:version`, `host:devices(-l)`, `host:get-state`, Features
+- moderne `host:tport:*`-Transportauswahl mit Transport-ID
+- `shell_v2`
+- klassisches ADB-SYNC v1: `STAT`, `LIST`, `SEND`, `RECV`
+
+Normale Host-Abfragen werden nach ihrer Antwort mit einem geordneten Socket-Close abgeschlossen. Nur nach einer Transportauswahl bleibt die Verbindung für `shell:` oder `sync:` offen. Das entspricht dem Verhalten des aktuellen Google-ADB-Clients.
+
+## Installation dieses PR-Branches
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/dosordie/FoxAir_updater/testvm/fake-adb-server/tools/testvm/fake_adb/install.sh \
   | sudo env FOXAIR_FAKE_ADB_REF=testvm/fake-adb-server sh
 ```
 
-Das Setup:
-
-1. prüft die benötigten Debian-Basistools,
-2. prüft, dass das vorhandene QEMU-RootFS ein `/data/phnixIot4G` enthält,
-3. installiert nur ADB-Server, QEMU-Adapter und Admin-CLI nach `/opt/foxair-fake-adb`,
-4. schreibt `/etc/default/foxair-fake-adb` auf den QEMU-Adapter um,
-5. aktiviert `foxair-fake-adb.service` auf TCP **5038**,
-6. verändert oder rekonstruiert das QEMU-RootFS **nicht**.
-
-Bei einer bereits installierten älteren PR-#6-Version wird der bisherige Python-Simulator nicht weiter verwendet. Dessen State wird nur noch als `legacy-python-simulator` archiviert; `phnix_ota_simulator.py` wird aus `/opt/foxair-fake-adb` entfernt.
-
-## Windows verbinden
-
-In der FoxAir-Updater-GUI:
+Vorausgesetzt werden mindestens:
 
 ```text
-Remote ADB Server: EIN
-IP:   <IP der Debian-VM>
-Port: 5038
+/opt/phnix-lab/rootfs/data/phnixIot4G
+/opt/phnix-lab/rootfs/usr/bin/qemu-arm-static
+/opt/phnix-lab/tools/run_scenario_lab.sh
+/opt/phnix-lab/tools/rs485_fault_emulator.py
 ```
 
-Direkter Test:
+## Windows-Schnelltest
 
 ```powershell
 $env:ADB_SERVER_SOCKET="tcp:<VM-IP>:5038"
 
 adb.exe devices -l
 adb.exe get-state
-adb.exe shell "pidof phnixIot4G || true"
+adb.exe shell "id"
+adb.exe shell "ls -l /data/phnixIot4G"
+adb.exe shell "echo test >/tmp/adb-only && cat /tmp/adb-only"
 adb.exe pull /data/phnixIot4G phnixIot4G-from-qemu
 ```
 
-`phnixIot4G-from-qemu` muss danach Größe und SHA-256 des Originals unter `/opt/phnix-lab/rootfs/data/phnixIot4G` besitzen.
+`phnixIot4G-from-qemu` muss anschließend Größe und SHA-256 des Originals unter `/opt/phnix-lab/rootfs/data/phnixIot4G` besitzen.
 
-## Pfad-Mapping
+## Szenarien
 
-```text
-ADB-Pfad                              Debian-QEMU-Lab
-────────────────────────────────────────────────────────────────────────────
-/data/phnixIot4G                  -> /opt/phnix-lab/rootfs/data/phnixIot4G
-/data/phnixIot_device_OTA_INFO    -> /opt/phnix-lab/rootfs/data/phnixIot_device_OTA_INFO
-/data/phnixIot_device_statisic    -> /opt/phnix-lab/rootfs/data/phnixIot_device_statisic
-/cache/phnixIot_device_OTA        -> /opt/phnix-lab/rootfs/cache/phnixIot_device_OTA
-/tmp/...                          -> /opt/phnix-lab/rootfs/tmp/...
-```
-
-`adb push` und `adb pull` arbeiten über das echte ADB-SYNC-Protokoll direkt auf diesen Dateien.
-
-## QEMU-Prozesssicht
-
-Der Adapter sucht in `/proc` nach einem laufenden QEMU-Prozess, dessen Kommandozeile sowohl `qemu-arm(-static)` als auch `/data/phnixIot4G` enthält. Dadurch wird
-
-```sh
-adb shell "pidof phnixIot4G || true"
-```
-
-auf den realen Host-PID des emulierten ARM-Dienstes abgebildet.
-
-Normale updater-relevante Shell-Kommandos werden über den im RootFS vorhandenen `qemu-arm-static` und die ARM-`/bin/sh` im **gleichen RootFS** ausgeführt. Einige Produktionsmerkmale wie Cloud-TCP-Verbindung und Watchdog-PIDs werden im isolierten Lab bewusst als Originalbetriebszustand repräsentiert, ohne das QEMU-Lab ans Internet zu hängen.
-
-## Szenarien umschalten
-
-Die bekannten Testnamen bleiben erhalten:
+Der Fake-ADB-Controller startet den vorhandenen Work-Runner. Die direkt abgebildeten Hauptszenarien sind:
 
 ```sh
 sudo foxair-fake-adbctl scenario success
 sudo foxair-fake-adbctl scenario same-version
 sudo foxair-fake-adbctl scenario stall-c350
 sudo foxair-fake-adbctl scenario stall-c5a8
-
-sudo foxair-fake-adbctl cancel-scenario retry-success
-sudo foxair-fake-adbctl handshake-scenario c5a8-leak
-sudo foxair-fake-adbctl same-version-scenario c357-leak
 ```
 
-Der Adapter schreibt bei jeder Änderung einen stabilen Vertrag nach:
+Die Zuordnung erfolgt auf die tatsächlich vorhandenen `rs485_fault_emulator.py`-Schalter. Nicht direkt unterstützte historische Simulatornamen werden nicht stillschweigend angenähert.
 
-```text
-/opt/phnix-lab/control/foxair-ota-scenario.json
-```
-
-Beispiel:
-
-```json
-{
-  "schema": "foxair-qemu-ota-scenario-v1",
-  "scenario": "stall-c5a8",
-  "cancel_scenario": "success",
-  "handshake_scenario": "success",
-  "same_version_scenario": "success"
-}
-```
-
-### Anbindung an den laufenden Mainboard-Emulator
-
-Da die bisherigen Reverse-Engineering-Logs den Namen/API des zuletzt von Work verwendeten Scenario-Control-Skripts nicht vollständig festhalten, behauptet der Adapter hier **keine erfundene Schnittstelle**. Er verbindet sich in dieser Reihenfolge:
-
-1. `FOXAIR_QEMU_SCENARIO_SOCKET`, falls gesetzt,
-2. `FOXAIR_QEMU_SCENARIO_HOOK`, falls gesetzt,
-3. bekannte Namen unter `/opt/phnix-lab/tools`, unter anderem `mainboard-simctl`, `phnix-labctl`, `foxair-scenarioctl` und `*scenario*ctl*`,
-4. bekannte Unix-Sockets unter `/opt/phnix-lab/run`.
-
-Hook-Vertrag:
-
-```text
-<HOOK> scenario stall-c5a8
-<HOOK> cancel-scenario retry-success
-<HOOK> handshake-scenario c5a8-leak
-<HOOK> same-version-scenario c357-leak
-```
-
-Zusätzlich stehen dem Hook diese Variablen zur Verfügung:
-
-```text
-FOXAIR_QEMU_LAB_ROOT
-FOXAIR_QEMU_LAB_ROOTFS
-FOXAIR_QEMU_SCENARIO_FILE
-```
-
-Wenn kein Control-Endpunkt gefunden wird, wird die JSON-Datei geschrieben, aber `foxair-fake-adbctl scenario ...` endet mit **Exit 3** und meldet ausdrücklich, dass der laufende Emulator noch nicht bestätigt umgeschaltet wurde. Damit entsteht kein falscher grüner Testzustand.
-
-Mit
+Nützliche Diagnosebefehle:
 
 ```sh
 sudo foxair-fake-adbctl status
+sudo foxair-fake-adbctl lab-log
+sudo journalctl -u foxair-fake-adb -f
 ```
-
-werden erkannter RootFS-Pfad, `phnixIot4G`-Größe/SHA-256, QEMU-PIDs sowie erkannter Scenario-Hook/Socket angezeigt.
-
-## ADB online/offline simulieren
-
-```sh
-sudo foxair-fake-adbctl offline
-sudo foxair-fake-adbctl online
-```
-
-Die alten Aliase funktionieren weiter:
-
-```sh
-sudo foxair-fake-adbctl simulator-stop
-sudo foxair-fake-adbctl simulator-start
-```
-
-Diese Befehle ändern **nur die ADB-Sicht**. Sie beenden oder starten ausdrücklich **nicht** den echten QEMU-`phnixIot4G`-Prozess.
 
 ## Konfiguration
 
-`/etc/default/foxair-fake-adb`:
+`/etc/default/foxair-fake-adb` enthält typischerweise:
 
 ```sh
 FOXAIR_FAKE_ADB_BIND=0.0.0.0
 FOXAIR_FAKE_ADB_PORT=5038
 FOXAIR_FAKE_ADB_SERIAL=foxair-vm
 FOXAIR_FAKE_ADB_STATE=/var/lib/foxair-fake-adb
-FOXAIR_FAKE_ADB_SIMULATOR=/opt/foxair-fake-adb/qemu_lab_adapter.py
+FOXAIR_FAKE_ADB_TMP=/var/lib/foxair-fake-adb/device-tmp
+FOXAIR_FAKE_ADB_SIMULATOR=/opt/foxair-fake-adb/qemu_permissive_backend.py
 FOXAIR_QEMU_LAB_ROOT=/opt/phnix-lab
 FOXAIR_QEMU_LAB_ROOTFS=/opt/phnix-lab/rootfs
-FOXAIR_QEMU_SCENARIO_FILE=/opt/phnix-lab/control/foxair-ota-scenario.json
+FOXAIR_QEMU_RUN_SECONDS=1200
 ```
 
-Optional:
-
-```sh
-FOXAIR_QEMU_SCENARIO_HOOK=/opt/phnix-lab/tools/<vorhandenes-control-tool>
-# oder
-FOXAIR_QEMU_SCENARIO_SOCKET=/opt/phnix-lab/run/<vorhandener-control-socket>
-```
-
-Nach Änderungen:
-
-```sh
-sudo systemctl restart foxair-fake-adb
-```
-
-## Dateien im Repository
-
-```text
-tools/testvm/fake_adb/
-├── README.md
-├── install.sh
-├── foxair_fake_adb_server.py       # ADB Smart-Socket + SYNC
-├── qemu_lab_adapter.py             # vorhandenes Work-QEMU-Lab als Backend
-├── foxair-fake-adb.service
-└── foxair-fake-adbctl
-```
-
-Der OTA-Core, Runtime-Hook und das vorhandene Work-QEMU-Lab werden durch diese ADB-Schicht nicht ersetzt.
+Der OTA-Core, der Windows-Updater und das Work-QEMU-Lab werden durch diese ADB-Schicht nicht ersetzt.
