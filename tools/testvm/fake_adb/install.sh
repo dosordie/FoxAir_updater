@@ -82,9 +82,6 @@ install -d -m 0750 "$STATE_DIR"
 install -d -m 1777 "$DEVICE_TMP"
 install -d -m 0755 "$LAB_ROOT/control"
 
-# Older PR revisions exposed QEMU /data and /cache as global Debian symlinks.
-# Remove only those links if they still point at this Work rootfs. Real host
-# directories are never touched; ADB overlays the device paths privately.
 remove_legacy_link() {
     path=$1
     expected=$2
@@ -99,7 +96,6 @@ remove_legacy_link() {
         return
     fi
     echo "$path ist ein fremder Symlink ($resolved); wird nicht verändert." >&2
-    echo "Bitte manuell klären, bevor Fake-ADB gestartet wird." >&2
     exit 2
 }
 remove_legacy_link /data "$ROOTFS/data"
@@ -134,7 +130,6 @@ fi
 rm -f "$INSTALL_DIR/phnix_ota_simulator.py"
 
 cat > "$CONFIG_FILE" <<EOF
-# FoxAir Fake ADB – dedicated TestVM, intentionally unrestricted root shell.
 FOXAIR_FAKE_ADB_BIND=$BIND
 FOXAIR_FAKE_ADB_PORT=$PORT
 FOXAIR_FAKE_ADB_SERIAL=$SERIAL
@@ -160,37 +155,36 @@ if ! systemctl is-active --quiet foxair-fake-adb.service; then
     exit 1
 fi
 
+# A usable simulator should boot into the normal/original runtime automatically.
+# This starts the real ARM phnixIot4G via the existing Work scenario runner with
+# the non-faulting RS485 profile, so status/preflight works immediately.
+if ! "$INSTALL_DIR/foxair-fake-adbctl" scenario success; then
+    echo "Standard-QEMU-Szenario konnte nicht gestartet werden." >&2
+    "$INSTALL_DIR/foxair-fake-adbctl" status || true
+    exit 1
+fi
+
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 SERVICE_SIZE=$(wc -c < "$ROOTFS/data/phnixIot4G" | tr -d ' ')
 SERVICE_SHA=$(sha256sum "$ROOTFS/data/phnixIot4G" | awk '{print $1}')
 
 cat <<EOF
 
-FoxAir Fake ADB verwendet das vorhandene Work-QEMU-Lab mit einer
-absichtlich uneingeschränkten Debian-root-ADB-Shell.
+FoxAir Fake ADB ist installiert und das normale success/original-QEMU-Szenario läuft.
 
 ADB-Service:   foxair-fake-adb.service
 QEMU-Lab:      $LAB_ROOT
 QEMU-RootFS:   $ROOTFS
-ADB /data:     -> $ROOTFS/data (nur im ADB-Mount-Namespace)
-ADB /cache:    -> $ROOTFS/cache (nur im ADB-Mount-Namespace)
-ADB /tmp:      -> $DEVICE_TMP (nur im ADB-Mount-Namespace)
-Debian-Pfade:  /data, /cache und /tmp werden nicht umgebogen
+ADB /data:     -> $ROOTFS/data
+ADB /cache:    -> $ROOTFS/cache
+ADB /tmp:      -> $DEVICE_TMP
+Debian-Pfade:  /data, /cache und /tmp werden nicht global umgebogen
 phnixIot4G:    $SERVICE_SIZE Byte
 SHA-256:       $SERVICE_SHA
-
-Installierte Shell-Werkzeuge: busybox, curl, gdb, netstat, ss, ps, bubblewrap
-
-Vor einem Status-/Preflight-Test ein QEMU-Szenario starten, z. B.:
-  sudo foxair-fake-adbctl scenario same-version
 
 Windows:
   \$env:ADB_SERVER_SOCKET="tcp:${IP:-<VM-IP>}:$PORT"
   adb.exe devices -l
-  adb.exe shell "id"
-  adb.exe shell "ls -l /data/phnixIot4G"
-  adb.exe shell "echo test >/tmp/adb-only && cat /tmp/adb-only"
-
-Hinweis: Jeder ADB-shell-Befehl wird als root ausgeführt, aber die drei
-modemkritischen Pfade /data, /cache und /tmp sind vom Debian-Host getrennt.
+  adb.exe shell "pidof phnixIot4G || true"
+  adb.exe shell "df -k /data 2>/dev/null"
 EOF
