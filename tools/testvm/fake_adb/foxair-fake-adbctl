@@ -1,10 +1,17 @@
 #!/bin/sh
 set -eu
 
+CONFIG=/etc/default/foxair-fake-adb
 INSTALL_DIR=${FOXAIR_FAKE_ADB_INSTALL_DIR:-/opt/foxair-fake-adb}
-STATE_DIR=${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}
-SIM="$INSTALL_DIR/phnix_ota_simulator.py"
+ADAPTER="$INSTALL_DIR/qemu_lab_adapter.py"
 SERVICE=foxair-fake-adb.service
+
+if [ -f "$CONFIG" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$CONFIG"
+    set +a
+fi
 
 need_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -13,27 +20,39 @@ need_root() {
     fi
 }
 
-sim() {
+adapter() {
     need_root "$@"
-    runuser -u foxair-adb -- env PHNIX_OTA_SIM_HOME="$STATE_DIR/simulator" python3 "$SIM" "$@"
+    python3 "$ADAPTER" "$@"
 }
 
 usage() {
     cat <<'EOF'
-FoxAir Fake ADB Control
+FoxAir Fake ADB / QEMU-Lab Control
 
 Befehle:
-  status                         Service + Simulatorstatus anzeigen
-  scenario NAME                  OTA-Szenario setzen (z.B. success, same-version, stall-c5a8)
-  reset [NAME]                   Simulator zurücksetzen (Default: success)
-  simulator-start [NAME]         Simuliertes Gerät online schalten
-  simulator-stop                 Simuliertes Gerät offline schalten
-  cancel-scenario NAME           Cancel-Szenario setzen
-  handshake-scenario NAME        Pre-C5A8-Handshake-Szenario setzen
-  same-version-scenario NAME     Same-Version-Szenario setzen
-  restart                        Fake-ADB-Systemdienst neu starten
+  status                         ADB-Service, QEMU-RootFS, ARM-Dienst und Scenario-Bridge anzeigen
+  scenario NAME                  OTA-Szenario im QEMU/Mainboard-Emulator setzen
+  reset [NAME]                   Scenario-Zustand zurücksetzen (Default: success)
+  online                         ADB-Gerät online melden (QEMU-Prozess bleibt unverändert)
+  offline                        ADB-Gerät offline melden (QEMU-Prozess bleibt unverändert)
+  simulator-start [NAME]         Alias: ADB online; optional danach Scenario NAME setzen
+  simulator-stop                 Alias: ADB offline; beendet NICHT phnixIot4G/QEMU
+  cancel-scenario NAME           Cancel-Szenario im Emulator setzen
+  handshake-scenario NAME        Pre-C5A8-Handshake-Szenario im Emulator setzen
+  same-version-scenario NAME     Same-Version-Szenario im Emulator setzen
+  restart                        Nur den Fake-ADB-Systemdienst neu starten
   logs                           Live-Log des Fake-ADB-Servers anzeigen
-  info                           Windows-Verbindungsdaten ausgeben
+  info                           Windows-Verbindungsdaten + QEMU-Backend anzeigen
+
+Scenario-Steuerung:
+  Der Adapter sucht zuerst FOXAIR_QEMU_SCENARIO_SOCKET, dann
+  FOXAIR_QEMU_SCENARIO_HOOK und danach bekannte *scenario*ctl-/labctl-Namen
+  unter /opt/phnix-lab/tools. Der Zustand wird zusätzlich in
+  /opt/phnix-lab/control/foxair-ota-scenario.json dokumentiert.
+
+  Wenn kein Emulator-Control-Endpunkt gefunden wird, wird der Zustand zwar
+  gespeichert, der Befehl endet aber absichtlich mit Exit 3. Damit wird niemals
+  fälschlich behauptet, das laufende Mainboard-Modell sei umgeschaltet worden.
 EOF
 }
 
@@ -44,32 +63,33 @@ case "$cmd" in
         need_root status
         systemctl --no-pager --full status "$SERVICE" || true
         echo
-        sim status || true
+        adapter status
         ;;
-    scenario)
+    scenario|cancel-scenario|handshake-scenario|same-version-scenario)
         [ "$#" -eq 1 ] || { usage; exit 2; }
-        sim scenario "$1"
+        adapter "$cmd" "$1"
         ;;
     reset)
-        sim reset --scenario "${1:-success}"
+        adapter reset "${1:-success}"
+        ;;
+    online)
+        adapter online
+        ;;
+    offline)
+        adapter offline
         ;;
     simulator-start)
-        sim start --scenario "${1:-success}"
+        adapter online
+        if [ "$#" -eq 1 ]; then
+            adapter scenario "$1"
+        elif [ "$#" -gt 1 ]; then
+            usage
+            exit 2
+        fi
         ;;
     simulator-stop)
-        sim stop
-        ;;
-    cancel-scenario)
-        [ "$#" -eq 1 ] || { usage; exit 2; }
-        sim cancel-scenario "$1"
-        ;;
-    handshake-scenario)
-        [ "$#" -eq 1 ] || { usage; exit 2; }
-        sim handshake-scenario "$1"
-        ;;
-    same-version-scenario)
-        [ "$#" -eq 1 ] || { usage; exit 2; }
-        sim same-version-scenario "$1"
+        [ "$#" -eq 0 ] || { usage; exit 2; }
+        adapter offline
         ;;
     restart)
         need_root restart
@@ -81,13 +101,15 @@ case "$cmd" in
         journalctl -u "$SERVICE" -f
         ;;
     info)
-        port=$(awk -F= '$1=="FOXAIR_FAKE_ADB_PORT" {print $2}' /etc/default/foxair-fake-adb 2>/dev/null || true)
-        [ -n "$port" ] || port=5038
+        need_root info
+        port=${FOXAIR_FAKE_ADB_PORT:-5038}
         ip=$(hostname -I 2>/dev/null | awk '{print $1}')
         echo "VM-IP: ${ip:-<VM-IP>}"
         echo "ADB-Port: $port"
         echo "Windows GUI: Remote ADB Server aktivieren, IP=${ip:-<VM-IP>}, Port=$port"
         echo "PowerShell: \$env:ADB_SERVER_SOCKET=\"tcp:${ip:-<VM-IP>}:$port\""
+        echo
+        adapter status
         ;;
     -h|--help|help)
         usage
