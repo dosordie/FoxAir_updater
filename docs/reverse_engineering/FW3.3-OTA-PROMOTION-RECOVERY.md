@@ -1,6 +1,6 @@
 # Mainboard-Firmware V3.3 – OTA Promotion, Abbruch und Recovery
 
-Stand: 23. August 2026
+Stand: 25. August 2026
 
 Diese Datei dokumentiert den aktuell belegbaren Promotions-, Abbruch- und Recoverypfad der Mainboard-Firmware `82400644 / V3.3` auf Basis der korrigierten Imagebasis `0x08050000`.
 
@@ -181,6 +181,74 @@ MD5 NOK -> C36E Status 4
 ```
 
 **Status 3 ist bestätigt ein Erfolgspfad.**
+
+## C37B Status 3 ist kein Promotion-Gate
+
+Die bisher offene Frage, ob das Mainboard nach `C36E Status 3` zwingend auf `C37B Status 3` wartet, bevor Target-Erase/Copy beginnen darf, ist statisch geklärt:
+
+> **Bestätigt: `C37B/3` ist nur ACK/Retry für die Statusmeldung. Es ist kein Freigabegate für die Promotion.**
+
+Nach erfolgreichem MD5 #1 wird bereits im C5A8-Abschlusspfad der interne OTA-Status auf `3` weitergeschaltet und der C36E-Sendetrigger gesetzt. Der C36E-Sender setzt für Status 3 das ACK-/Retry-Flag:
+
+```text
+0x20010AB4 = 1
+```
+
+Der status-3-spezifische C37B-RX-Pfad macht anschließend nur:
+
+```text
+0x20010AB4 = 0
+```
+
+Dort folgt weder ein Aufruf des Promotionworkers `0x080770EC` noch das Setzen eines Promotion-, Erase- oder Copy-States.
+
+Eine statische Referenzsuche auf `0x20010AB4` zeigt im bekannten V3.3-Image nur drei Funktionszusammenhänge:
+
+1. C36E-Statussender -> Flag setzen,
+2. C37B-Empfänger -> Flag löschen,
+3. Status-Retrymechanismus -> Flag prüfen.
+
+Der Promotionworker `0x080770EC` referenziert dieses ACK-/Retry-Flag nicht. Er wird im normalen Scheduler-Slot 3 zyklisch aufgerufen; vor dem Aufruf existiert keine C37B-/ACK-Bedingung:
+
+```text
+0x08075D12  BL 0x08076848
+0x08075D16  BL 0x08076A7C
+0x08075D1A  BL 0x080770EC   ; Promotion-/Copyworker
+0x08075D1E  BL 0x08078058
+```
+
+Der Status-Retrypfad prüft das ACK-Flag getrennt. Für Status 3–6 gilt weiterhin:
+
+```text
+Retry-Schwelle: 30000 interne Aufrufe
+Retryanzahl:    bis 15
+```
+
+Damit ist der statische Ablauf:
+
+```text
+letztes C5A8
+    -> MD5 #1 OK
+    -> interner OTA-Status = 3
+    -> C36E/3 senden
+       -> ACK-/Retry-Flag 0x20010AB4 = 1
+       -> C37B/3 löscht nur dieses Retry-Flag
+
+unabhängig davon:
+    -> Promotion-State läuft weiter
+    -> Target-Erase
+    -> Staging -> Target Copy
+    -> MD5 #2
+    -> Commit
+    -> C36E Status 5
+```
+
+Folgen:
+
+- fehlendes `C37B/3` verhindert Target-Erase/Copy **nicht**,
+- Status 3 ist **kein sicherer Haltepunkt**,
+- absichtliches Unterdrücken des LTE-ACKs stoppt die Promotion nicht,
+- der Retrymechanismus für Status 3–6 betrifft die Statuszustellung, nicht die Freigabe der Flash-Promotion.
 
 ---
 
@@ -601,6 +669,10 @@ Ein separater Phase-A-/IAP-Download ist dafür nicht erforderlich und wird nicht
 - C5A8 schreibt das komplette Image nach `0x080A1000`.
 - MD5 #1 prüft das Stagingimage.
 - Status 3 = MD5 #1 erfolgreich.
+- `C37B/3` löscht nur das ACK-/Retry-Flag `0x20010AB4`.
+- `0x20010AB4` wird vom Promotionworker nicht referenziert.
+- Der Promotionworker wird unabhängig vom C37B-ACK zyklisch aus dem Scheduler aufgerufen.
+- Fehlendes `C37B/3` blockiert Target-Erase/Copy nicht; Status 3 ist kein sicherer Haltepunkt.
 - Descriptor wird von `0x080A0000` nach `0x0804F800` kopiert.
 - Targetbereich `0x08050000..0x0809BFFF` wird gelöscht.
 - Image wird direkt von `0x080A1000` nach `0x08050000` kopiert.
@@ -668,7 +740,13 @@ Darum gilt weiterhin:
 
 > Ein echter vollständiger OTA-Test bis einschließlich Promotion/Boot ist ohne Loader-Dump oder gleichwertig sicheren Hardware-Recoveryweg nicht als ausfallsicher bewiesen.
 
-Ein Vorhandshake bis C350/C357 ist davon getrennt zu bewerten und benötigt diesen Loader-Nachweis nicht.
+Für einen abbrechbaren Vortest gilt zusätzlich ausdrücklich:
+
+> **`C36E Status 3` ist kein sicherer Stopppunkt.** Sobald Status 3 erscheint, ist MD5 #1 erfolgreich und der interne OTA-Zustand bereits weitergeschaltet. Das Zurückhalten von `C37B/3` hält die Promotion nicht an.
+
+Die sichere Vorhandshake-Grenze bleibt deshalb **vor C5A8**. Ein Vorhandshake bis C350/C357 ist davon getrennt zu bewerten und benötigt diesen Loader-Nachweis nicht.
+
+Auch ein Ausfall der normalen RS485-Kommunikation ist kein belastbarer Notstopp: Die separat analysierten ~420-s-Kommunikationswatchdogs des LTE-Dienstes setzen Error-Bits und Healthcheck-Zustände, lösen aber keinen ~7-Minuten-Reboot aus. Siehe [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdogs_reset_counters.md).
 
 ## Verwandte Dokumente
 
@@ -676,4 +754,5 @@ Ein Vorhandshake bis C350/C357 ist davon getrennt zu bewerten und benötigt dies
 - [`FW3.3-OTA-VORTEST-SICHERHEIT.md`](FW3.3-OTA-VORTEST-SICHERHEIT.md)
 - [`FW3.3-IAP-COPY-SPRUNGPFAD-KORREKTUR.md`](FW3.3-IAP-COPY-SPRUNGPFAD-KORREKTUR.md)
 - [`PHNIX_OTA_DYNAMISCHE_VALIDIERUNG.md`](PHNIX_OTA_DYNAMISCHE_VALIDIERUNG.md)
+- [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdogs_reset_counters.md)
 - [`PHNIX_OTA_WORKCHAT_UEBERGABE.md`](PHNIX_OTA_WORKCHAT_UEBERGABE.md)
