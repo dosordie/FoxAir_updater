@@ -3,11 +3,27 @@ from pathlib import Path
 
 from updater.common.phnix_statistics_maintenance import (
     MAINBOARD_OTA_OFFSET,
+    REMOTE_SERVICE,
     STATISTICS_SIZE,
     MaintenanceError,
     counter_from_bytes,
     patch_counter,
+    stable_single_service_snapshot,
 )
+
+
+class FakeSnapshotAdb:
+    def __init__(self, pidof_answers):
+        self.pidof_answers = iter(pidof_answers)
+
+    def shell(self, command, check=False):
+        if command == "pidof phnixIot4G || true":
+            return next(self.pidof_answers)
+        if command.startswith("readlink /proc/"):
+            return REMOTE_SERVICE
+        if "TracerPid" in command:
+            return "0"
+        raise AssertionError(f"unexpected shell command: {command}")
 
 
 class StatisticsMaintenanceTests(unittest.TestCase):
@@ -41,6 +57,23 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         with self.assertRaises(MaintenanceError):
             counter_from_bytes(bytes(STATISTICS_SIZE + 1))
 
+    def test_service_snapshot_retries_transient_double_pid(self):
+        adb = FakeSnapshotAdb(["5385 5383", "5383", "5383"])
+        snapshot = stable_single_service_snapshot(adb, attempts=3, delay=0)
+        self.assertTrue(snapshot["stable"])
+        self.assertEqual(snapshot["pid"], 5383)
+        self.assertEqual(snapshot["pids"], [5383])
+        self.assertEqual(snapshot["path"], REMOTE_SERVICE)
+        self.assertEqual(snapshot["tracer"], "0")
+        self.assertEqual(snapshot["attempts"], 2)
+
+    def test_service_snapshot_rejects_persistent_double_pid(self):
+        adb = FakeSnapshotAdb(["5385 5383", "5385 5383", "5385 5383"])
+        snapshot = stable_single_service_snapshot(adb, attempts=3, delay=0)
+        self.assertFalse(snapshot["stable"])
+        self.assertIsNone(snapshot["pid"])
+        self.assertEqual(snapshot["pids"], [5385, 5383])
+
     def test_maintenance_core_is_separate_from_ota_controller(self):
         source = Path(
             "updater/common/phnix_statistics_maintenance.py"
@@ -55,6 +88,9 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         self.assertIn("kill -TERM", source)
         self.assertIn("kill -CONT", source)
         self.assertIn("service_singleton", source)
+        self.assertIn("service_stable", source)
+        self.assertIn("stable_single_service_snapshot", source)
+        self.assertIn("SERVICE_SNAPSHOT_ATTEMPTS = 3", source)
         self.assertIn("RESCUE_TIMEOUT_SECONDS = 90", source)
         self.assertIn("arm_watchdog_rescue", source)
         self.assertIn("cp -p {REMOTE_STATISTICS} {REMOTE_STAGE}", source)
