@@ -7,12 +7,14 @@ class WindowsModemInfoUiTests(unittest.TestCase):
     def setUpClass(cls):
         cls.desktop = Path("updater/windows/foxair_updater_desktop.py").read_text(encoding="utf-8")
         cls.lte_ui = Path("updater/windows/foxair_updater_lte_diagnostics.py").read_text(encoding="utf-8")
+        cls.operator_ui = Path("updater/windows/foxair_updater_operator_display.py").read_text(encoding="utf-8")
+        cls.operators = Path("updater/common/network_operators.py").read_text(encoding="utf-8")
         cls.modem = Path("updater/common/phnix_modem_info.py").read_text(encoding="utf-8")
         cls.transport = Path("updater/common/adb_transport.py").read_text(encoding="utf-8")
         cls.build = Path("updater/windows/build_windows_portable.bat").read_text(encoding="utf-8")
 
-    def test_windows_build_uses_rich_lte_diagnostics_entrypoint(self):
-        self.assertIn("updater\\windows\\foxair_updater_lte_diagnostics.py", self.build)
+    def test_windows_build_uses_operator_display_entrypoint(self):
+        self.assertIn("updater\\windows\\foxair_updater_operator_display.py", self.build)
 
     def test_modem_info_is_read_only_process_memory_diagnostics(self):
         self.assertIn('"Modem Info / LTE Diagnose"', self.desktop)
@@ -66,6 +68,19 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("••••••••••••••••", self.lte_ui)
         self.assertIn("Mobilfunk-IP / PDP-IP", self.lte_ui)
         self.assertIn("MQTT / Cloud", self.lte_ui)
+
+    def test_operator_ui_shows_current_and_home_network(self):
+        self.assertIn("Aktueller Netzbetreiber", self.operator_ui)
+        self.assertIn("Heimatnetz (aus IMSI)", self.operator_ui)
+        self.assertIn("Netzbeschreibung (Modem)", self.operator_ui)
+        self.assertIn('(262, 1): "Telekom Deutschland GmbH"', self.operators)
+        self.assertIn('(208, 1): "Orange France"', self.operators)
+
+    def test_mainboard_ota_counter_is_presented_as_operations_with_tooltip(self):
+        self.assertIn("Mainboard OTA-Vorgänge", self.operator_ui)
+        self.assertIn("Vom LTE-Modul gezählte OTA-Aufträge", self.operator_ui)
+        self.assertIn('href="ota-counter"', self.operator_ui)
+        self.assertIn("linkHovered", self.operator_ui)
 
     def test_unverified_ascii_candidate_is_not_presented_as_confirmed_id(self):
         self.assertIn("unverified_device_id_candidate", self.modem)
