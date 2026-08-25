@@ -6,11 +6,15 @@ fixture, so unknown commands are not rejected. PHNIX-specific process/status
 queries are still delegated to qemu_work_lab_backend.py, while every other
 command is executed with /bin/sh -c on the Debian host.
 
-/data and /cache are symlinks created by install.sh that point at the Work QEMU
-rootfs. ADB /tmp is intentionally *not* the Debian host /tmp: shell commands and
-ADB SYNC see a dedicated directory under the fake-ADB state root. bubblewrap is
-used only as a mount namespace so arbitrary root shell commands still work but
-/tmp cannot collide with unrelated VM/QEMU temporary files.
+The Debian host filesystem is not globally rewritten to look like the modem.
+Each ADB shell command gets its own bubblewrap mount namespace:
+
+* /data  -> Work QEMU rootfs/data
+* /cache -> Work QEMU rootfs/cache
+* /tmp   -> dedicated fake-ADB device tmp
+
+ADB SYNC uses the same virtual mapping directly through root_path(). This keeps
+normal Debian /data, /cache and /tmp separate from the emulated LTE device.
 """
 
 from __future__ import annotations
@@ -59,7 +63,7 @@ def device_tmp() -> Path:
 
 
 def root_path(remote: str) -> Path:
-    """Keep ADB SYNC consistent with the shell mount namespace."""
+    """Map ADB file/SYNC paths into the virtual LTE device namespace."""
     if not remote.startswith("/"):
         raise ValueError("Nur absolute Remote-Pfade werden unterstützt")
     if remote == "/tmp":
@@ -90,24 +94,45 @@ def _phnix_special(command: str) -> bool:
     )
 
 
-def _host_shell(command: str) -> tuple[int, bytes]:
-    tmp = device_tmp()
+def _sandbox_command(command: str) -> list[str]:
+    """Build one isolated ADB-shell namespace without mutating host mount paths."""
     bwrap = os.environ.get("FOXAIR_FAKE_ADB_BWRAP", "/usr/bin/bwrap")
     if not Path(bwrap).is_file():
-        return 127, f"bubblewrap fehlt: {bwrap}\n".encode()
+        raise FileNotFoundError(f"bubblewrap fehlt: {bwrap}")
 
-    # Keep the whole dedicated TestVM visible/read-write, but replace /tmp only
-    # inside this command's mount namespace. This avoids collisions with the
-    # QEMU lab and unrelated Debian services while retaining unrestricted root
-    # shell behaviour for updater/runtime-helper commands.
+    data = qemu_rootfs() / "data"
+    cache = qemu_rootfs() / "cache"
+    tmp = device_tmp()
+    for path in (data, cache, tmp):
+        if not path.is_dir():
+            raise FileNotFoundError(f"ADB-Mountquelle fehlt: {path}")
+
+    args = [bwrap, "--bind", "/", "/"]
+
+    # bubblewrap can create destination directories only inside its private
+    # mount namespace. If the Debian host already has a real /data or /cache,
+    # leave it untouched and simply over-mount it inside ADB.
+    for virtual, source in (("/data", data), ("/cache", cache)):
+        if not Path(virtual).exists():
+            args.extend(["--dir", virtual])
+        args.extend(["--bind", str(source), virtual])
+
+    args.extend([
+        "--bind", str(tmp), "/tmp",
+        "--",
+        "/bin/sh", "-c", command,
+    ])
+    return args
+
+
+def _host_shell(command: str) -> tuple[int, bytes]:
+    try:
+        argv = _sandbox_command(command)
+    except (FileNotFoundError, OSError) as exc:
+        return 127, (str(exc) + "\n").encode()
+
     completed = subprocess.run(
-        [
-            bwrap,
-            "--bind", "/", "/",
-            "--bind", str(tmp), "/tmp",
-            "--",
-            "/bin/sh", "-c", command,
-        ],
+        argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
@@ -129,7 +154,6 @@ def shell(command: str) -> tuple[int, bytes]:
 
 
 def main() -> int:
-    # Keep the existing scenario/status CLI implementation.
     return work.main()
 
 
