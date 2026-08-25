@@ -32,6 +32,15 @@ class AdbClient:
             self.base += ["-s", serial]
         self.env = dict(env) if env is not None else None
 
+    @staticmethod
+    def _creationflags() -> int:
+        # A windowed PyInstaller application otherwise causes adb.exe (and on
+        # some systems its shell helper) to flash a console window for every
+        # short diagnostic command.
+        if os.name == "nt":
+            return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return 0
+
     def run(self, *args: str, binary: bool = False, check: bool = True):
         completed = subprocess.run(
             [*self.base, *args],
@@ -39,6 +48,7 @@ class AdbClient:
             text=not binary,
             check=False,
             env=self.env,
+            creationflags=self._creationflags(),
         )
         if check and completed.returncode != 0:
             stderr = completed.stderr
@@ -60,4 +70,8 @@ class AdbClient:
 
     def popen_shell(self, command: str) -> subprocess.Popen:
         env = self.env if self.env is not None else os.environ.copy()
-        return subprocess.Popen([*self.base, "shell", command], env=env)
+        return subprocess.Popen(
+            [*self.base, "shell", command],
+            env=env,
+            creationflags=self._creationflags(),
+        )
