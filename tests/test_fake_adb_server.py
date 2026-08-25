@@ -120,8 +120,9 @@ class FakeAdbServerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_shell_v2_reports_output_and_exit_code(self):
         reader, writer = await self.connect()
-        await send_request(writer, "host:transport-any")
+        await send_request(writer, "host:tport:any")
         self.assertEqual(await reader.readexactly(4), b"OKAY")
+        self.assertEqual(struct.unpack("<Q", await reader.readexactly(8))[0], 1)
         await send_request(writer, "shell,v2,raw:pidof phnixIot4G || true")
         self.assertEqual(await reader.readexactly(4), b"OKAY")
 
@@ -287,7 +288,10 @@ class RealAdbInteropTests(unittest.TestCase):
         self.assertEqual(shell.returncode, 0, shell.stderr)
         self.assertEqual(shell.stdout.strip(), "4100")
 
-        payload = b"real-adb-sync-test\x00FoxAir\n"
+        # Keep the shell/cat payload newline-free: adb.exe on Windows renders
+        # shell text output through the Windows console path and can CRLF-normalize
+        # LF. Byte-exact file transport is asserted separately via SYNC/pull.
+        payload = b"real-adb-sync-test\x00FoxAir"
         local = self.root / "push.bin"
         pulled = self.root / "pull.bin"
         local.write_bytes(payload)
