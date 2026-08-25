@@ -20,16 +20,17 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
-if ! need_cmd wget || ! need_cmd python3 || ! need_cmd systemctl; then
-    if need_cmd apt-get; then
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update
-        apt-get install -y --no-install-recommends wget ca-certificates python3
-    else
-        echo "Benötigt: wget, python3 und systemctl." >&2
-        exit 2
-    fi
+if ! need_cmd apt-get; then
+    echo "Dieses Setup erwartet Debian/Ubuntu mit apt-get." >&2
+    exit 2
 fi
+
+# This VM is deliberately permissive. Install the command set expected by the
+# real LTE updater/runtime helper instead of maintaining an ADB-shell allowlist.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends \
+    wget ca-certificates python3 busybox curl gdb net-tools iproute2 procps
 
 config_value() {
     key=$1
@@ -76,9 +77,30 @@ for path in \
     fi
 done
 
+install -d -m 0755 "$ROOTFS/data" "$ROOTFS/cache" "$ROOTFS/tmp"
 install -d -m 0755 "$INSTALL_DIR"
 install -d -m 0750 "$STATE_DIR"
 install -d -m 0755 "$LAB_ROOT/control"
+
+# Make the Debian root shell look like the LTE modem for arbitrary adb shell
+# commands.  This is intentionally global because the machine is a dedicated
+# TestVM. /tmp remains the normal host /tmp and the permissive backend maps ADB
+# SYNC /tmp there as well.
+link_rootfs_dir() {
+    name=$1
+    target=$2
+    path="/$name"
+    if [ -L "$path" ]; then
+        ln -sfn "$target" "$path"
+    elif [ -e "$path" ]; then
+        echo "$path existiert bereits und ist kein Symlink; TestVM-Setup bricht ab." >&2
+        exit 2
+    else
+        ln -s "$target" "$path"
+    fi
+}
+link_rootfs_dir data "$ROOTFS/data"
+link_rootfs_dir cache "$ROOTFS/cache"
 
 fetch() {
     src=$1
@@ -91,6 +113,7 @@ fetch() {
 fetch tools/testvm/fake_adb/foxair_fake_adb_server.py "$INSTALL_DIR/foxair_fake_adb_server.py"
 fetch tools/testvm/fake_adb/qemu_lab_adapter.py "$INSTALL_DIR/qemu_lab_adapter.py"
 fetch tools/testvm/fake_adb/qemu_work_lab_backend.py "$INSTALL_DIR/qemu_work_lab_backend.py"
+fetch tools/testvm/fake_adb/qemu_permissive_backend.py "$INSTALL_DIR/qemu_permissive_backend.py"
 fetch tools/testvm/fake_adb/foxair-fake-adbctl "$INSTALL_DIR/foxair-fake-adbctl"
 fetch tools/testvm/fake_adb/foxair-fake-adb.service "$SERVICE_FILE"
 
@@ -98,6 +121,7 @@ chmod 0755 \
     "$INSTALL_DIR/foxair_fake_adb_server.py" \
     "$INSTALL_DIR/qemu_lab_adapter.py" \
     "$INSTALL_DIR/qemu_work_lab_backend.py" \
+    "$INSTALL_DIR/qemu_permissive_backend.py" \
     "$INSTALL_DIR/foxair-fake-adbctl"
 ln -sf "$INSTALL_DIR/foxair-fake-adbctl" /usr/local/bin/foxair-fake-adbctl
 
@@ -106,17 +130,13 @@ if [ -d "$STATE_DIR/simulator" ] && [ ! -e "$STATE_DIR/legacy-python-simulator" 
 fi
 rm -f "$INSTALL_DIR/phnix_ota_simulator.py"
 
-# Migration note for the first QEMU-backed PR#6 revision:
-# FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/qemu_lab_adapter.py
-# The base adapter is still installed, but qemu_work_lab_backend.py now wraps it
-# with the shell/runner behavior observed on the actual Work VM.
 cat > "$CONFIG_FILE" <<EOF
-# FoxAir Fake ADB – Lab/Testnetz only. Keine ADB-Authentifizierung.
+# FoxAir Fake ADB – dedicated TestVM, intentionally unrestricted root shell.
 FOXAIR_FAKE_ADB_BIND=$BIND
 FOXAIR_FAKE_ADB_PORT=$PORT
 FOXAIR_FAKE_ADB_SERIAL=$SERIAL
 FOXAIR_FAKE_ADB_STATE=$STATE_DIR
-FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/qemu_work_lab_backend.py
+FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/qemu_permissive_backend.py
 FOXAIR_QEMU_LAB_ROOT=$LAB_ROOT
 FOXAIR_QEMU_LAB_ROOTFS=$ROOTFS
 FOXAIR_QEMU_SCENARIO_FILE=$SCENARIO_FILE
@@ -142,28 +162,28 @@ SERVICE_SHA=$(sha256sum "$ROOTFS/data/phnixIot4G" | awk '{print $1}')
 
 cat <<EOF
 
-FoxAir Fake ADB verwendet jetzt direkt das vorhandene Work-QEMU-Lab.
+FoxAir Fake ADB verwendet jetzt das vorhandene Work-QEMU-Lab mit einer
+absichtlich uneingeschränkten Debian-root-ADB-Shell.
 
 ADB-Service:   foxair-fake-adb.service
 QEMU-Lab:      $LAB_ROOT
 QEMU-RootFS:   $ROOTFS
+/data:         -> $ROOTFS/data
+/cache:        -> $ROOTFS/cache
+/tmp:          Host-/tmp
 phnixIot4G:    $SERVICE_SIZE Byte
 SHA-256:       $SERVICE_SHA
-Lab-Runner:    $LAB_ROOT/tools/run_scenario_lab.sh
-RS485-Faker:   $LAB_ROOT/tools/rs485_fault_emulator.py
 
-Vor einem Status-/Preflight-Test bitte ein QEMU-Szenario starten, z. B.:
+Installierte Shell-Werkzeuge: busybox, curl, gdb, netstat, ss, ps
+
+Vor einem Status-/Preflight-Test ein QEMU-Szenario starten, z. B.:
   sudo foxair-fake-adbctl scenario same-version
-
-Danach prüfen:
-  sudo foxair-fake-adbctl status
 
 Windows:
   \$env:ADB_SERVER_SOCKET="tcp:${IP:-<VM-IP>}:$PORT"
-  adb.exe devices -l
-  adb.exe shell "pidof phnixIot4G || true"
-  adb.exe pull /data/phnixIot4G phnixIot4G-from-qemu
+  adb.exe shell "id"
+  adb.exe shell "busybox --list | head"
+  adb.exe shell "ls -l /data /cache"
 
-WICHTIG: Port 5038 besitzt absichtlich keine ADB-Authentifizierung.
-Nur in einem isolierten/privaten Testnetz verwenden.
+Hinweis: Jeder ADB-shell-Befehl wird als root auf dieser TestVM ausgeführt.
 EOF
