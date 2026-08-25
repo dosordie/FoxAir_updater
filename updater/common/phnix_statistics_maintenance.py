@@ -46,6 +46,8 @@ REMOTE_RESCUE_CANCEL = f"{REMOTE_RESCUE_DIR}/rescue.cancel"
 RESCUE_TIMEOUT_SECONDS = 90
 SERVICE_SNAPSHOT_ATTEMPTS = 3
 SERVICE_SNAPSHOT_DELAY_SECONDS = 0.25
+SERVICE_TERM_GRACE_SECONDS = 2.0
+SERVICE_KILL_TIMEOUT_SECONDS = 4.0
 STATISTICS_SIZE = 128
 MAINBOARD_OTA_OFFSET = 0x24
 MAINBOARD_OTA_RAM_ADDRESS = STATISTICS_ADDRESS + MAINBOARD_OTA_OFFSET
@@ -69,7 +71,9 @@ def emit(event: str, **fields) -> None:
         "dry-run": f"Trockenlauf: {fields.get('current_value')} -> {fields.get('target_value')}",
         "rescue-armed": f"Watchdog-Rescue für {fields.get('timeout_seconds')} Sekunden aktiviert",
         "watchdogs-paused": "Originale Watchdogs vorübergehend angehalten",
-        "service-stopped": "phnixIot4G sauber beendet",
+        "service-term": "phnixIot4G wird zunächst mit SIGTERM beendet",
+        "service-kill": "phnixIot4G reagiert nicht auf SIGTERM; kontrollierter SIGKILL-Fallback",
+        "service-stopped": "phnixIot4G vollständig beendet",
         "state-backed-up": "Finalen 128-Byte-Statistikzustand gesichert",
         "statistics-written": "Statistikdatei atomar ersetzt und geprüft",
         "service-restored": "Originaldienst und Watchdogs wiederhergestellt",
@@ -85,34 +89,22 @@ def sha256_bytes(data: bytes) -> str:
 
 def counter_from_bytes(raw: bytes) -> int:
     if len(raw) != STATISTICS_SIZE:
-        raise MaintenanceError(
-            f"statistics file has {len(raw)} bytes; expected {STATISTICS_SIZE}"
-        )
-    return int.from_bytes(
-        raw[MAINBOARD_OTA_OFFSET : MAINBOARD_OTA_OFFSET + 4], "little"
-    )
+        raise MaintenanceError(f"statistics file has {len(raw)} bytes; expected {STATISTICS_SIZE}")
+    return int.from_bytes(raw[MAINBOARD_OTA_OFFSET:MAINBOARD_OTA_OFFSET + 4], "little")
 
 
 def patch_counter(raw: bytes, value: int) -> bytes:
     if len(raw) != STATISTICS_SIZE:
-        raise MaintenanceError(
-            f"statistics file has {len(raw)} bytes; expected {STATISTICS_SIZE}"
-        )
+        raise MaintenanceError(f"statistics file has {len(raw)} bytes; expected {STATISTICS_SIZE}")
     if not 0 <= value <= 0xFFFFFFFF:
         raise MaintenanceError("counter value must be uint32 (0..4294967295)")
     patched = bytearray(raw)
-    patched[MAINBOARD_OTA_OFFSET : MAINBOARD_OTA_OFFSET + 4] = value.to_bytes(
-        4, "little"
-    )
+    patched[MAINBOARD_OTA_OFFSET:MAINBOARD_OTA_OFFSET + 4] = value.to_bytes(4, "little")
     return bytes(patched)
 
 
 def numeric_pids(text: str) -> list[int]:
-    return [
-        int(token)
-        for token in text.replace("\r", " ").replace("\n", " ").split()
-        if token.isdigit()
-    ]
+    return [int(token) for token in text.replace("\r", " ").replace("\n", " ").split() if token.isdigit()]
 
 
 def service_pids(adb: AdbClient) -> list[int]:
@@ -130,23 +122,13 @@ def stable_single_service_snapshot(
     attempts: int = SERVICE_SNAPSHOT_ATTEMPTS,
     delay: float = SERVICE_SNAPSHOT_DELAY_SECONDS,
 ) -> dict:
-    """Return one stable phnixIot4G PID/path/tracer snapshot.
-
-    The modem supervisor can briefly overlap an old and a newly started
-    phnixIot4G process. Mirror the proven OTA preflight strategy by retrying
-    across that harmless race, but keep statistics writes stricter: a stable
-    *single* PID is required because that exact process is terminated before
-    replacing the persistent statistics file.
-    """
     last_pids: list[int] = []
     for attempt in range(attempts):
         pids_before = service_pids(adb)
         last_pids = pids_before
         if len(pids_before) == 1:
             pid = pids_before[0]
-            path = adb.shell(
-                f"readlink /proc/{pid}/exe || true", check=False
-            )
+            path = adb.shell(f"readlink /proc/{pid}/exe || true", check=False)
             tracer = adb.shell(
                 f"awk '/^TracerPid:/ {{print $2}}' /proc/{pid}/status || true",
                 check=False,
@@ -175,9 +157,7 @@ def stable_single_service_snapshot(
 
 
 def watchdog_pids(adb: AdbClient) -> list[int]:
-    return numeric_pids(
-        adb.shell("ps | awk '$4 == \"{helloworld}\" {print $1}'", check=False)
-    )
+    return numeric_pids(adb.shell("ps | awk '$4 == \"{helloworld}\" {print $1}'", check=False))
 
 
 def remote_exists(adb: AdbClient, path: str) -> bool:
@@ -185,15 +165,11 @@ def remote_exists(adb: AdbClient, path: str) -> bool:
     return bool(lines) and lines[-1].strip() == "0"
 
 
-def pull_exact(
-    adb: AdbClient, remote: str, local: Path, expected_size: int
-) -> bytes:
+def pull_exact(adb: AdbClient, remote: str, local: Path, expected_size: int) -> bytes:
     adb.run("pull", remote, str(local))
     raw = local.read_bytes()
     if len(raw) != expected_size:
-        raise MaintenanceError(
-            f"{remote} has {len(raw)} bytes; expected {expected_size}"
-        )
+        raise MaintenanceError(f"{remote} has {len(raw)} bytes; expected {expected_size}")
     return raw
 
 
@@ -204,32 +180,18 @@ def preflight(adb: AdbClient, scratch: Path) -> dict:
     pid = snapshot["pid"]
     service_path = str(snapshot["path"])
     tracer = str(snapshot["tracer"])
-    service_sha = adb.shell(
-        f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'", check=False
-    ).upper()
+    service_sha = adb.shell(f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'", check=False).upper()
     wds = watchdog_pids(adb)
     debugger_pids = adb.shell("pidof gdbserver gdb || true", check=False)
     active_markers = [
-        path
-        for path in (
-            REMOTE_RUN_ACTIVE,
-            REMOTE_TRANSFER_STARTED,
-            REMOTE_INJECTION_STARTED,
-        )
+        path for path in (REMOTE_RUN_ACTIVE, REMOTE_TRANSFER_STARTED, REMOTE_INJECTION_STARTED)
         if remote_exists(adb, path)
     ]
-    raw = pull_exact(
-        adb,
-        REMOTE_STATISTICS,
-        scratch / "preflight-statistics.bin",
-        STATISTICS_SIZE,
-    )
+    raw = pull_exact(adb, REMOTE_STATISTICS, scratch / "preflight-statistics.bin", STATISTICS_SIZE)
     current = counter_from_bytes(raw)
     checks = {
         "adb_device": adb_state == "device",
         "service_stable": bool(snapshot["stable"]),
-        # Keep the existing JSON key for GUI/log compatibility. It now means
-        # a stable singleton snapshot, not one lucky pidof sample.
         "service_singleton": bool(snapshot["stable"]) and len(pids) == 1,
         "service_running": pid is not None,
         "service_path": service_path == REMOTE_SERVICE,
@@ -278,14 +240,14 @@ def arm_watchdog_rescue(adb: AdbClient, pids: list[int]) -> None:
 def disarm_watchdog_rescue(adb: AdbClient) -> None:
     adb.shell(
         f"touch {REMOTE_RESCUE_CANCEL}; "
-        f"if test -f {REMOTE_RESCUE_PID}; then "
-        f"kill \"$(cat {REMOTE_RESCUE_PID})\" 2>/dev/null || true; fi; "
+        f"if test -f {REMOTE_RESCUE_PID}; then kill \"$(cat {REMOTE_RESCUE_PID})\" 2>/dev/null || true; fi; "
         f"rm -rf {REMOTE_RESCUE_DIR}",
         check=False,
     )
 
 
 def pause_watchdogs(adb: AdbClient, pids: list[int]) -> None:
+    """Freeze supervisors; do not kill them, matching the OTA runtime hook."""
     if not pids:
         raise MaintenanceError("no watchdog PIDs available")
     for pid in pids:
@@ -297,55 +259,57 @@ def resume_watchdogs(adb: AdbClient, pids: list[int]) -> None:
         adb.shell(f"kill -CONT {pid} 2>/dev/null || true", check=False)
 
 
-def wait_service_gone(
-    adb: AdbClient, old_pid: int, timeout: float = 8.0
-) -> None:
+def wait_service_absent(adb: AdbClient, *, timeout: float, old_pid: int | None = None) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pids = service_pids(adb)
         if not pids:
-            return
-        if old_pid not in pids:
-            raise MaintenanceError(
-                "another phnixIot4G instance appeared while watchdogs were paused"
-            )
-        time.sleep(0.25)
-    raise MaintenanceError(
-        "phnixIot4G did not terminate after SIGTERM; no file was modified"
-    )
+            return True
+        if old_pid is not None and old_pid not in pids:
+            raise MaintenanceError("another phnixIot4G instance appeared while watchdogs were paused")
+        time.sleep(0.1)
+    return False
 
 
-def wait_service_restored(
-    adb: AdbClient, old_pid: int, timeout: float = 25.0
-) -> int:
+def stop_service_for_maintenance(adb: AdbClient, old_pid: int) -> str:
+    """TERM first, then the same deliberate KILL pattern used by OTA restore."""
+    emit("service-term", old_pid=old_pid)
+    adb.shell(f"kill -TERM {old_pid}")
+    if wait_service_absent(adb, timeout=SERVICE_TERM_GRACE_SECONDS, old_pid=old_pid):
+        return "term"
+
+    current = service_pids(adb)
+    if current != [old_pid]:
+        raise MaintenanceError(
+            f"service PID changed during stop sequence: expected [{old_pid}], got {current}"
+        )
+
+    emit("service-kill", old_pid=old_pid)
+    adb.shell(f"kill -KILL {old_pid}")
+    if not wait_service_absent(adb, timeout=SERVICE_KILL_TIMEOUT_SECONDS, old_pid=old_pid):
+        raise MaintenanceError("phnixIot4G remained alive after controlled SIGKILL; no file was modified")
+    return "kill"
+
+
+def wait_service_restored(adb: AdbClient, old_pid: int, timeout: float = 25.0) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pids = service_pids(adb)
         if len(pids) == 1 and pids[0] != old_pid:
             pid = pids[0]
             path = adb.shell(f"readlink /proc/{pid}/exe || true", check=False)
-            sha = adb.shell(
-                f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'", check=False
-            ).upper()
+            sha = adb.shell(f"sha256sum {REMOTE_SERVICE} | awk '{{print $1}}'", check=False).upper()
             tracer = adb.shell(
                 f"awk '/^TracerPid:/ {{print $2}}' /proc/{pid}/status || true",
                 check=False,
             )
-            if (
-                path == REMOTE_SERVICE
-                and sha == EXPECTED_SERVICE_SHA256
-                and tracer.strip() == "0"
-            ):
+            if path == REMOTE_SERVICE and sha == EXPECTED_SERVICE_SHA256 and tracer.strip() == "0":
                 return pid
         time.sleep(0.5)
     raise MaintenanceError("original phnixIot4G service did not restart cleanly")
 
 
-def install_patched_file(
-    adb: AdbClient, patched_local: Path, expected_sha: str
-) -> None:
-    # Preserve file ownership/mode: clone the original metadata, copy the local
-    # payload into that staged inode, then atomically rename it.
+def install_patched_file(adb: AdbClient, patched_local: Path, expected_sha: str) -> None:
     adb.shell(
         f"rm -f {REMOTE_BACKUP} {REMOTE_STAGE} {REMOTE_PAYLOAD}; "
         f"cp -p {REMOTE_STATISTICS} {REMOTE_BACKUP} && "
@@ -353,24 +317,15 @@ def install_patched_file(
     )
     adb.push(patched_local, REMOTE_PAYLOAD)
     size = adb.shell(f"wc -c < {REMOTE_PAYLOAD}")
-    payload_sha = adb.shell(
-        f"sha256sum {REMOTE_PAYLOAD} | awk '{{print $1}}'"
-    ).upper()
+    payload_sha = adb.shell(f"sha256sum {REMOTE_PAYLOAD} | awk '{{print $1}}'").upper()
     if size.strip() != str(STATISTICS_SIZE) or payload_sha != expected_sha:
         raise MaintenanceError("staged payload verification failed")
     adb.shell(f"cat {REMOTE_PAYLOAD} > {REMOTE_STAGE} && sync")
-    stage_sha = adb.shell(
-        f"sha256sum {REMOTE_STAGE} | awk '{{print $1}}'"
-    ).upper()
+    stage_sha = adb.shell(f"sha256sum {REMOTE_STAGE} | awk '{{print $1}}'").upper()
     if stage_sha != expected_sha:
         raise MaintenanceError("metadata-preserving stage verification failed")
-    adb.shell(
-        f"mv {REMOTE_STAGE} {REMOTE_STATISTICS} && "
-        f"rm -f {REMOTE_PAYLOAD} && sync"
-    )
-    final_sha = adb.shell(
-        f"sha256sum {REMOTE_STATISTICS} | awk '{{print $1}}'"
-    ).upper()
+    adb.shell(f"mv {REMOTE_STAGE} {REMOTE_STATISTICS} && rm -f {REMOTE_PAYLOAD} && sync")
+    final_sha = adb.shell(f"sha256sum {REMOTE_STATISTICS} | awk '{{print $1}}'").upper()
     if final_sha != expected_sha:
         raise MaintenanceError("post-replace statistics SHA256 mismatch")
 
@@ -386,9 +341,7 @@ def restore_remote_backup(adb: AdbClient) -> None:
 
 
 def cleanup_remote(adb: AdbClient) -> None:
-    adb.shell(
-        f"rm -f {REMOTE_BACKUP} {REMOTE_STAGE} {REMOTE_PAYLOAD}", check=False
-    )
+    adb.shell(f"rm -f {REMOTE_BACKUP} {REMOTE_STAGE} {REMOTE_PAYLOAD}", check=False)
 
 
 def inspect_command(adb: AdbClient) -> int:
@@ -411,16 +364,10 @@ def set_command(
         before = preflight(adb, temp)
         emit("preflight", **before)
         if not before["ok"]:
-            failed = ", ".join(
-                name for name, ok in before["checks"].items() if not ok
-            )
+            failed = ", ".join(name for name, ok in before["checks"].items() if not ok)
             raise MaintenanceError("preflight failed: " + failed)
         if not execute:
-            emit(
-                "dry-run",
-                current_value=before["current_value"],
-                target_value=value,
-            )
+            emit("dry-run", current_value=before["current_value"], target_value=value)
             return 0
         if confirm != CONFIRM_TOKEN:
             raise MaintenanceError(f"write requires --confirm {CONFIRM_TOKEN}")
@@ -433,28 +380,20 @@ def set_command(
         try:
             arm_watchdog_rescue(adb, wds)
             rescue_armed = True
-            emit(
-                "rescue-armed",
-                timeout_seconds=RESCUE_TIMEOUT_SECONDS,
-                watchdog_pids=wds,
-            )
+            emit("rescue-armed", timeout_seconds=RESCUE_TIMEOUT_SECONDS, watchdog_pids=wds)
 
             pause_watchdogs(adb, wds)
             paused = True
             emit("watchdogs-paused", watchdog_pids=wds)
 
-            adb.shell(f"kill -TERM {old_pid}")
-            wait_service_gone(adb, old_pid)
-            emit("service-stopped", old_pid=old_pid)
-            time.sleep(0.25)
+            stop_method = stop_service_for_maintenance(adb, old_pid)
+            emit("service-stopped", old_pid=old_pid, method=stop_method, watchdog_pids=wds)
+            time.sleep(0.15)
 
-            # Re-read only after the service is gone so a final
-            # static_write_data() cannot race with the host copy used for
-            # patching and rollback.
+            # Re-read only after no service exists so an orderly TERM flush, if
+            # it occurred, is included in the authoritative file we patch.
             final_path = temp / "final-statistics.bin"
-            final_raw = pull_exact(
-                adb, REMOTE_STATISTICS, final_path, STATISTICS_SIZE
-            )
+            final_raw = pull_exact(adb, REMOTE_STATISTICS, final_path, STATISTICS_SIZE)
             current_after_stop = counter_from_bytes(final_raw)
             backup_dir.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -472,74 +411,47 @@ def set_command(
 
             patched = patch_counter(final_raw, value)
             if (
-                final_raw[:MAINBOARD_OTA_OFFSET]
-                != patched[:MAINBOARD_OTA_OFFSET]
-                or final_raw[MAINBOARD_OTA_OFFSET + 4 :]
-                != patched[MAINBOARD_OTA_OFFSET + 4 :]
+                final_raw[:MAINBOARD_OTA_OFFSET] != patched[:MAINBOARD_OTA_OFFSET]
+                or final_raw[MAINBOARD_OTA_OFFSET + 4:] != patched[MAINBOARD_OTA_OFFSET + 4:]
             ):
-                raise MaintenanceError(
-                    "internal patch guard failed: bytes outside offset 0x24 changed"
-                )
+                raise MaintenanceError("internal patch guard failed: bytes outside offset 0x24 changed")
             patched_path = temp / "patched-statistics.bin"
             patched_path.write_bytes(patched)
             patched_sha = sha256_bytes(patched)
             install_patched_file(adb, patched_path, patched_sha)
             replaced = True
-            emit(
-                "statistics-written",
-                old_value=current_after_stop,
-                new_value=value,
-                sha256=patched_sha,
-            )
+            emit("statistics-written", old_value=current_after_stop, new_value=value, sha256=patched_sha)
 
+            # Same restoration model as the original OTA runtime hook: the
+            # watchdogs remain alive, are resumed, and start a fresh service.
             resume_watchdogs(adb, wds)
             paused = False
             new_pid = wait_service_restored(adb, old_pid)
 
-            verify_file = pull_exact(
-                adb,
-                REMOTE_STATISTICS,
-                temp / "verify-statistics.bin",
-                STATISTICS_SIZE,
-            )
+            verify_file = pull_exact(adb, REMOTE_STATISTICS, temp / "verify-statistics.bin", STATISTICS_SIZE)
             file_value = counter_from_bytes(verify_file)
             try:
-                ram_raw = read_process_memory(
-                    adb,
-                    new_pid,
-                    MAINBOARD_OTA_RAM_ADDRESS,
-                    4,
-                    attempts=3,
-                )
+                ram_raw = read_process_memory(adb, new_pid, MAINBOARD_OTA_RAM_ADDRESS, 4, attempts=3)
                 ram_value = int.from_bytes(ram_raw, "little")
             except Exception as exc:
-                raise MaintenanceError(
-                    f"RAM verification failed after restart: {exc}"
-                ) from exc
+                raise MaintenanceError(f"RAM verification failed after restart: {exc}") from exc
             if file_value != value or ram_value != value:
                 raise MaintenanceError(
-                    "verification mismatch: "
-                    f"file={file_value}, RAM={ram_value}, expected={value}"
+                    f"verification mismatch: file={file_value}, RAM={ram_value}, expected={value}"
                 )
 
             cleanup_remote(adb)
-            emit(
-                "service-restored",
-                service_pid=new_pid,
-                watchdog_pids=watchdog_pids(adb),
-            )
+            emit("service-restored", service_pid=new_pid, watchdog_pids=watchdog_pids(adb))
             emit(
                 "complete",
                 value=value,
                 file_value=file_value,
                 ram_value=ram_value,
+                stop_method=stop_method,
                 backup=str(backup_path),
             )
             return 0
         except BaseException:
-            # Roll back only while no replacement process has loaded the new
-            # block. Restoring a file underneath a live process would recreate
-            # the RAM/file race this command is designed to avoid.
             if replaced and first_pid(adb) is None:
                 restore_remote_backup(adb)
             raise
@@ -552,36 +464,20 @@ def set_command(
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description=(
-            "Read or experimentally change PHNIX persistent statistics via ADB"
-        )
-    )
+    p = argparse.ArgumentParser(description="Read or experimentally change PHNIX persistent statistics via ADB")
     p.add_argument("--adb", default="adb", help="adb/adb.exe path")
     p.add_argument("--serial", default=None)
     p.add_argument("--output", choices=("human", "json"), default="human")
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser(
-        "show",
-        help="read-only preflight and current Mainboard OTA operation counter",
-    )
-    set_p = sub.add_parser(
-        "set-mainboard-ota-count",
-        help="set uint32 counter at statistics offset 0x24",
-    )
+    sub.add_parser("show", help="read-only preflight and current Mainboard OTA operation counter")
+    set_p = sub.add_parser("set-mainboard-ota-count", help="set uint32 counter at statistics offset 0x24")
     set_p.add_argument("value", type=int)
-    set_p.add_argument(
-        "--execute",
-        action="store_true",
-        help="actually perform the maintenance write",
-    )
+    set_p.add_argument("--execute", action="store_true", help="actually perform the maintenance write")
     set_p.add_argument("--confirm", default=None)
     set_p.add_argument(
         "--backup-dir",
         type=Path,
-        default=Path.home()
-        / "FoxAir_LTE_Backup"
-        / "statistics-maintenance",
+        default=Path.home() / "FoxAir_LTE_Backup" / "statistics-maintenance",
     )
     return p
 
