@@ -1,6 +1,6 @@
 # Mainboard-Firmware V3.3 – Sicherheit eines abbrechbaren OTA-Vortests
 
-Stand: 23. August 2026
+Stand: 25. August 2026
 
 Diese Datei untersucht ausschließlich einen OTA-Vorhandshake, der **vor dem ersten C5A8-Firmwaredatenblock** abgebrochen wird. Es wurde keine Verbindung zu ser2net oder realer Hardware geöffnet und nichts gesendet.
 
@@ -13,6 +13,8 @@ C5A8 darf beim Vortest niemals gesendet werden.
 ```
 
 Solange kein C5A8 verarbeitet wurde, bleibt `OTA+0x1C == 0`. Dieses Flag bewacht den destruktiven Flash-Erase-Zweig des C36A-Abbruchpfads.
+
+**Neu statisch bestätigt:** `C36E Status 3` ist **kein** sicherer Stopppunkt. Wenn Status 3 erscheint, wurde der vollständige C5A8-Transfer bereits mit MD5 #1 erfolgreich geprüft und der interne OTA-Zustand weitergeschaltet. Ein fehlendes `C37B/3` hält die anschließende Promotion nicht an.
 
 ## Relevante Funktionen
 
@@ -236,7 +238,41 @@ Retry-Schwelle: 30000 interne Aufrufe
 Retryanzahl:    bis 15
 ```
 
-Das ist für einen reinen C350/C357-Vortest nicht relevant.
+## Statisch geklärt: `C37B/3` blockiert die Promotion nicht
+
+Die zuvor offene Frage, ob das Mainboard nach `C36E Status 3` auf das zugehörige `C37B Status 3` warten muss, bevor Target-Erase/Copy beginnen, ist jetzt statisch beantwortet:
+
+> **Nein. `C37B/3` ist nur ACK/Retry für die Statusmeldung und kein Promotion-Gate.**
+
+Nach MD5 #1 erfolgreich setzt der C5A8-Abschlusspfad bereits den internen OTA-Status auf `3` und fordert C36E Status 3 an. Der Statussender setzt dabei:
+
+```text
+0x20010AB4 = 1
+```
+
+als ACK-/Retry-Flag.
+
+Der status-3-spezifische C37B-Empfangspfad löscht nur:
+
+```text
+0x20010AB4 = 0
+```
+
+Er startet weder den Promotionworker noch setzt er einen Erase-/Copy-State.
+
+Die Adresse `0x20010AB4` wird im bekannten V3.3-Image nur im C36E-Sender, C37B-Empfänger und Status-Retrypfad verwendet. Der Promotionworker `0x080770EC` referenziert dieses Flag nicht und wird unabhängig davon zyklisch aus dem normalen Scheduler aufgerufen.
+
+Damit gilt:
+
+```text
+C36E Status 3 gesehen
+!= sicherer Wartezustand
+
+C37B/3 fehlt
+!= Promotion gestoppt
+```
+
+Das ist für einen reinen C350/C357-Vortest zwar nicht direkt erreichbar, bestätigt aber die bisher konservativ gewählte Grenze **vor C5A8**.
 
 # Neustartverhalten
 
@@ -267,6 +303,14 @@ C350/C357/C36A sind Schedulerpfade innerhalb der normalen Anwendung. Für diese 
 - einen MCU-Systemreset auslösen.
 
 Die normale Main-App und Kommunikation laufen bis zur späteren Flash-/Promotionphase weiter.
+
+## Kommunikationsausfall ist kein Notstopp
+
+Die separat analysierten ~420-s-Watchdogs im LTE-Dienst `phnixIot4G` ändern diese Bewertung nicht. Bei ausbleibender normaler Mainboard-/RS485-Kommunikation werden Error-Bits gesetzt und teilweise aktive Healthchecks ausgelöst; ein automatischer Reboot nach ungefähr sieben Minuten ist dafür nicht belegt.
+
+Damit darf ein geplanter OTA-Abbruch **nicht** darauf bauen, dass das LTE-Modem oder der Mainboard-Pfad nach Ausfall der normalen Kommunikation selbständig rebootet und dadurch eine Promotion stoppt.
+
+Siehe [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdogs_reset_counters.md).
 
 # Erreichbare destruktive Funktionen und Guards
 
@@ -339,6 +383,8 @@ Sofort nichts weiter senden, falls:
 - ein unbekanntes OTA-Kommando eine weitere Phase startet,
 - die 12-Byte-Kennung nicht exakt dem zuvor passiv bestimmten Ziel entspricht.
 
+**Wichtig zu Status 3:** Falls entgegen der Testplanung `C36E Status 3` erscheint, nichts mehr senden und insbesondere **nicht** davon ausgehen, dass das Weglassen von `C37B/3` den Flashpfad anhält. Status 3 bedeutet, dass die sichere Vortestgrenze bereits überschritten wurde.
+
 Für einen maximal konservativen ersten Test bleibt:
 
 ```text
@@ -349,6 +395,6 @@ die bevorzugte Grenze.
 
 ## Weiterführende Promotion-/Recoveryanalyse
 
-Der vollständige Pfad nach C5A8 einschließlich Target-Erase, zweiter MD5-Prüfung, EEPROM-Role-/Transition-State, Loader-Handoff und Power-Loss-Matrix ist separat dokumentiert:
+Der vollständige Pfad nach C5A8 einschließlich Status-3-ACK/Retry, Target-Erase, zweiter MD5-Prüfung, EEPROM-Role-/Transition-State, Loader-Handoff und Power-Loss-Matrix ist separat dokumentiert:
 
 [`FW3.3-OTA-PROMOTION-RECOVERY.md`](FW3.3-OTA-PROMOTION-RECOVERY.md)
