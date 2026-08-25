@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import logging
 import os
+import re
 import shlex
 import struct
 import sys
@@ -395,7 +396,15 @@ class FakeAdbServer:
                 if not transport_selected:
                     handled, selected = await self.host_service(request, writer)
                     if handled:
-                        transport_selected = selected
+                        # ADB host queries such as host:version, host:devices-l
+                        # and host:features are one request per connection. The
+                        # real adb client calls ReadOrderlyShutdown() after the
+                        # protocol-string response and waits for EOF. Only a
+                        # transport-selection request keeps the smart socket
+                        # open for a following shell:/sync: service request.
+                        if not selected:
+                            return
+                        transport_selected = True
                         continue
                 if request.startswith("shell:") or request.startswith("shell,v2"):
                     await self.shell_service(request, writer)
