@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import json
 import os
 import shutil
 import socket
@@ -10,18 +11,27 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SERVER_PATH = Path("tools/testvm/fake_adb/foxair_fake_adb_server.py")
-SIMULATOR_PATH = Path("tools/phnix_ota/phnix_ota_simulator.py")
+ADAPTER_PATH = Path("tools/testvm/fake_adb/qemu_lab_adapter.py")
 
 
-def load_server_module():
-    spec = importlib.util.spec_from_file_location("foxair_fake_adb_server_tested", SERVER_PATH)
+def load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def load_server_module():
+    return load_module(SERVER_PATH, "foxair_fake_adb_server_tested")
+
+
+def load_adapter_module():
+    return load_module(ADAPTER_PATH, "foxair_qemu_lab_adapter_tested")
 
 
 def find_real_adb() -> str | None:
@@ -38,13 +48,23 @@ def find_real_adb() -> str | None:
     return None
 
 
+def create_qemu_rootfs(root: Path, service: bytes = b"real-qemu-arm-service") -> Path:
+    rootfs = root / "rootfs"
+    for name in ("data", "cache", "tmp", "usr/bin", "bin"):
+        (rootfs / name).mkdir(parents=True, exist_ok=True)
+    (rootfs / "data/phnixIot4G").write_bytes(service)
+    return rootfs
+
+
 class FakeSim:
+    """Protocol-only backend; QEMU mapping itself is tested separately below."""
+
     def __init__(self, root: Path):
         self.home = root / "simulator"
         self.root = self.home / "root"
         for name in ("data", "cache", "tmp", "usr/bin"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
-        (self.home / "started").parent.mkdir(parents=True, exist_ok=True)
+        self.home.mkdir(parents=True, exist_ok=True)
         (self.home / "started").touch()
         (self.root / "data/phnixIot4G").write_bytes(b"fake-service")
 
@@ -52,7 +72,7 @@ class FakeSim:
         return self.home
 
     def root_path(self, remote: str):
-        return self.root / remote.lstrip("/")
+        return self.root if remote == "/" else self.root / remote.lstrip("/")
 
     def shell(self, command: str):
         if command == "pidof phnixIot4G || true":
@@ -200,15 +220,67 @@ class FakeAdbServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(output.strip()), 64)
 
-    async def test_simulator_stop_makes_device_offline(self):
-        (self.fake.sim.sim_home() / "started").unlink()
-        reader, writer = await self.connect()
-        await send_request(writer, "host:get-state")
-        status, payload = await read_query(reader)
-        self.assertEqual(status, b"OKAY")
-        self.assertEqual(payload, b"offline")
-        writer.close()
-        await writer.wait_closed()
+
+class QemuLabAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.lab = self.root / "phnix-lab"
+        self.rootfs = create_qemu_rootfs(self.lab, b"ORIGINAL-ARM-PHNIX")
+        self.state = self.root / "state"
+        self.env = {
+            "FOXAIR_QEMU_LAB_ROOT": str(self.lab),
+            "FOXAIR_QEMU_LAB_ROOTFS": str(self.rootfs),
+            "FOXAIR_FAKE_ADB_STATE": str(self.state),
+            "FOXAIR_QEMU_FAKE_PID": "4100",
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_adb_paths_are_the_existing_qemu_rootfs(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            adapter = load_adapter_module()
+            self.assertEqual(adapter.root_path("/"), self.rootfs.resolve())
+            self.assertEqual(adapter.root_path("/data/phnixIot4G"), self.rootfs / "data/phnixIot4G")
+            self.assertEqual(adapter.shell("pidof phnixIot4G || true"), (0, b"4100\n"))
+            self.assertEqual(adapter.shell("cat /data/phnixIot4G"), (0, b"ORIGINAL-ARM-PHNIX"))
+
+    def test_reset_never_rebuilds_or_replaces_qemu_rootfs(self):
+        service = self.rootfs / "data/phnixIot4G"
+        before = service.read_bytes()
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            adapter = load_adapter_module()
+            adapter.reset_state("success", "success")
+            self.assertEqual(service.read_bytes(), before)
+            self.assertTrue((self.state / "qemu-adb/started").is_file())
+            control = json.loads((self.lab / "control/foxair-ota-scenario.json").read_text())
+            self.assertEqual(control["scenario"], "success")
+            self.assertEqual(Path(control["rootfs"]), self.rootfs.resolve())
+
+    def test_scenario_without_control_endpoint_fails_honestly_but_writes_contract(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            adapter = load_adapter_module()
+            ok, message = adapter.apply_control("scenario", "stall-c5a8")
+            self.assertFalse(ok)
+            self.assertIn("kein QEMU/Mainboard-Control-Hook", message)
+            control = json.loads((self.lab / "control/foxair-ota-scenario.json").read_text())
+            self.assertEqual(control["scenario"], "stall-c5a8")
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable hook contract")
+    def test_existing_qemu_scenario_hook_is_invoked(self):
+        hook = self.lab / "tools/foxair-scenarioctl"
+        hook.parent.mkdir(parents=True)
+        hook.write_text(
+            "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" > \"$FOXAIR_QEMU_LAB_ROOT/hook-called\"\n",
+            encoding="utf-8",
+        )
+        hook.chmod(0o755)
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            adapter = load_adapter_module()
+            ok, _message = adapter.apply_control("same-version-scenario", "c357-leak")
+            self.assertTrue(ok)
+            self.assertEqual((self.lab / "hook-called").read_text().strip(), "same-version-scenario c357-leak")
 
 
 class RealAdbInteropTests(unittest.TestCase):
@@ -219,23 +291,35 @@ class RealAdbInteropTests(unittest.TestCase):
             raise unittest.SkipTest("Google adb/platform-tools not installed on this runner")
         cls.tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.tmp.name)
+        cls.lab = cls.root / "phnix-lab"
+        cls.rootfs = create_qemu_rootfs(cls.lab, b"REAL-QEMU-ROOTFS-SERVICE")
+        cls.state_root = cls.root / "state"
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             cls.port = sock.getsockname()[1]
         cls.env = os.environ.copy()
-        cls.env["ADB_SERVER_SOCKET"] = f"tcp:127.0.0.1:{cls.port}"
+        cls.env.update(
+            {
+                "ADB_SERVER_SOCKET": f"tcp:127.0.0.1:{cls.port}",
+                "FOXAIR_QEMU_LAB_ROOT": str(cls.lab),
+                "FOXAIR_QEMU_LAB_ROOTFS": str(cls.rootfs),
+                "FOXAIR_FAKE_ADB_STATE": str(cls.state_root),
+                "FOXAIR_QEMU_FAKE_PID": "4100",
+            }
+        )
         cls.server_process = subprocess.Popen(
             [
                 sys.executable,
                 str(SERVER_PATH),
                 "--bind", "127.0.0.1",
                 "--port", str(cls.port),
-                "--state-root", str(cls.root / "state"),
-                "--simulator", str(SIMULATOR_PATH),
+                "--state-root", str(cls.state_root),
+                "--simulator", str(ADAPTER_PATH),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=cls.env,
         )
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -274,7 +358,7 @@ class RealAdbInteropTests(unittest.TestCase):
             check=False,
         )
 
-    def test_real_adb_devices_shell_push_and_pull(self):
+    def test_real_adb_devices_shell_push_and_pull_hit_qemu_rootfs(self):
         devices = self.adb_run("devices", "-l")
         self.assertEqual(devices.returncode, 0, devices.stderr)
         self.assertIn("foxair-vm", devices.stdout)
@@ -288,19 +372,17 @@ class RealAdbInteropTests(unittest.TestCase):
         self.assertEqual(shell.returncode, 0, shell.stderr)
         self.assertEqual(shell.stdout.strip(), "4100")
 
-        # Keep the shell/cat payload newline-free: adb.exe on Windows renders
-        # shell text output through the Windows console path and can CRLF-normalize
-        # LF. Byte-exact file transport is asserted separately via SYNC/pull.
+        service = self.adb_run("shell", "cat /data/phnixIot4G", binary=True)
+        self.assertEqual(service.returncode, 0, service.stderr.decode(errors="replace"))
+        self.assertEqual(service.stdout, b"REAL-QEMU-ROOTFS-SERVICE")
+
         payload = b"real-adb-sync-test\x00FoxAir"
         local = self.root / "push.bin"
         pulled = self.root / "pull.bin"
         local.write_bytes(payload)
         push = self.adb_run("push", str(local), "/data/real-adb-sync-test.bin")
         self.assertEqual(push.returncode, 0, push.stderr)
-
-        cat = self.adb_run("shell", "cat /data/real-adb-sync-test.bin", binary=True)
-        self.assertEqual(cat.returncode, 0, cat.stderr.decode(errors="replace"))
-        self.assertEqual(cat.stdout, payload)
+        self.assertEqual((self.rootfs / "data/real-adb-sync-test.bin").read_bytes(), payload)
 
         pull = self.adb_run("pull", "/data/real-adb-sync-test.bin", str(pulled))
         self.assertEqual(pull.returncode, 0, pull.stderr)
@@ -308,17 +390,26 @@ class RealAdbInteropTests(unittest.TestCase):
 
 
 class FakeAdbSourceContractTests(unittest.TestCase):
-    def test_installer_is_one_command_and_uses_existing_simulator(self):
+    def test_installer_requires_existing_qemu_lab_and_removes_python_backend(self):
         installer = Path("tools/testvm/fake_adb/install.sh").read_text(encoding="utf-8")
-        self.assertIn("tools/phnix_ota/phnix_ota_simulator.py", installer)
+        self.assertIn("$ROOTFS/data/phnixIot4G", installer)
+        self.assertIn("tools/testvm/fake_adb/qemu_lab_adapter.py", installer)
+        self.assertIn("FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/qemu_lab_adapter.py", installer)
+        self.assertNotIn("tools/phnix_ota/phnix_ota_simulator.py", installer)
+        self.assertIn("legacy-python-simulator", installer)
         self.assertIn("systemctl enable --now foxair-fake-adb.service", installer)
-        self.assertIn("FOXAIR_FAKE_ADB_PORT=5038", installer)
 
-    def test_service_runs_unprivileged(self):
+    def test_service_can_access_existing_qemu_rootfs(self):
         unit = Path("tools/testvm/fake_adb/foxair-fake-adb.service").read_text(encoding="utf-8")
-        self.assertIn("User=foxair-adb", unit)
+        self.assertIn("User=root", unit)
         self.assertIn("NoNewPrivileges=true", unit)
-        self.assertIn("ReadWritePaths=/var/lib/foxair-fake-adb", unit)
+        self.assertIn("/opt/phnix-lab", unit)
+
+    def test_ctl_routes_scenarios_to_qemu_adapter(self):
+        source = Path("tools/testvm/fake_adb/foxair-fake-adbctl").read_text(encoding="utf-8")
+        self.assertIn("qemu_lab_adapter.py", source)
+        self.assertIn("adapter \"$cmd\" \"$1\"", source)
+        self.assertIn("beendet NICHT phnixIot4G/QEMU", source)
 
 
 if __name__ == "__main__":
