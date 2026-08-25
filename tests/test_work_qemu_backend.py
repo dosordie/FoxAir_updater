@@ -25,8 +25,12 @@ class WorkQemuBackendTests(unittest.TestCase):
         self.rootfs = self.lab / "rootfs"
         for directory in ("data", "cache", "tmp", "usr/bin"):
             (self.rootfs / directory).mkdir(parents=True, exist_ok=True)
-        (self.rootfs / "data/phnixIot4G").write_bytes(b"ORIGINAL")
-        (self.rootfs / "usr/bin/qemu-arm-static").write_bytes(b"qemu")
+        service = self.rootfs / "data/phnixIot4G"
+        service.write_bytes(b"ORIGINAL")
+        service.chmod(0o755)
+        qemu = self.rootfs / "usr/bin/qemu-arm-static"
+        qemu.write_bytes(b"qemu")
+        qemu.chmod(0o755)
         self.state = self.root / "state"
         self.env = {
             "FOXAIR_QEMU_LAB_ROOT": str(self.lab),
@@ -52,6 +56,14 @@ class WorkQemuBackendTests(unittest.TestCase):
             code, output = backend.shell("netstat -lnt 2>/dev/null | awk '$4 ~ /:8081$/ {print}'")
         self.assertEqual(code, 0)
         self.assertIsInstance(output, bytes)
+
+    def test_preflight_test_predicates_use_mapped_rootfs(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            backend = load_backend()
+            self.assertEqual(backend.shell("test -x /usr/bin/gdb; echo $?"), (0, b"1\n"))
+            self.assertEqual(backend.shell("test -x /data/phnixIot4G; echo $?"), (0, b"0\n"))
+            self.assertEqual(backend.shell("test -f /data/phnixIot4G; echo $?"), (0, b"0\n"))
+            self.assertEqual(backend.shell("test -e /data/does-not-exist; echo $?"), (0, b"1\n"))
 
     def test_real_rs485_fault_mapping_is_exact(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
