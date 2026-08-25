@@ -1,0 +1,100 @@
+#!/bin/sh
+set -eu
+
+INSTALL_DIR=${FOXAIR_FAKE_ADB_INSTALL_DIR:-/opt/foxair-fake-adb}
+STATE_DIR=${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}
+SIM="$INSTALL_DIR/phnix_ota_simulator.py"
+SERVICE=foxair-fake-adb.service
+
+need_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Bitte mit sudo ausführen: sudo foxair-fake-adbctl $*" >&2
+        exit 2
+    fi
+}
+
+sim() {
+    need_root "$@"
+    runuser -u foxair-adb -- env PHNIX_OTA_SIM_HOME="$STATE_DIR/simulator" python3 "$SIM" "$@"
+}
+
+usage() {
+    cat <<'EOF'
+FoxAir Fake ADB Control
+
+Befehle:
+  status                         Service + Simulatorstatus anzeigen
+  scenario NAME                  OTA-Szenario setzen (z.B. success, same-version, stall-c5a8)
+  reset [NAME]                   Simulator zurücksetzen (Default: success)
+  simulator-start [NAME]         Simuliertes Gerät online schalten
+  simulator-stop                 Simuliertes Gerät offline schalten
+  cancel-scenario NAME           Cancel-Szenario setzen
+  handshake-scenario NAME        Pre-C5A8-Handshake-Szenario setzen
+  same-version-scenario NAME     Same-Version-Szenario setzen
+  restart                        Fake-ADB-Systemdienst neu starten
+  logs                           Live-Log des Fake-ADB-Servers anzeigen
+  info                           Windows-Verbindungsdaten ausgeben
+EOF
+}
+
+cmd=${1:-status}
+shift || true
+case "$cmd" in
+    status)
+        need_root status
+        systemctl --no-pager --full status "$SERVICE" || true
+        echo
+        sim status || true
+        ;;
+    scenario)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        sim scenario "$1"
+        ;;
+    reset)
+        sim reset --scenario "${1:-success}"
+        ;;
+    simulator-start)
+        sim start --scenario "${1:-success}"
+        ;;
+    simulator-stop)
+        sim stop
+        ;;
+    cancel-scenario)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        sim cancel-scenario "$1"
+        ;;
+    handshake-scenario)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        sim handshake-scenario "$1"
+        ;;
+    same-version-scenario)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        sim same-version-scenario "$1"
+        ;;
+    restart)
+        need_root restart
+        systemctl restart "$SERVICE"
+        systemctl --no-pager --full status "$SERVICE"
+        ;;
+    logs)
+        need_root logs
+        journalctl -u "$SERVICE" -f
+        ;;
+    info)
+        port=$(awk -F= '$1=="FOXAIR_FAKE_ADB_PORT" {print $2}' /etc/default/foxair-fake-adb 2>/dev/null || true)
+        [ -n "$port" ] || port=5038
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        echo "VM-IP: ${ip:-<VM-IP>}"
+        echo "ADB-Port: $port"
+        echo "Windows GUI: Remote ADB Server aktivieren, IP=${ip:-<VM-IP>}, Port=$port"
+        echo "PowerShell: \$env:ADB_SERVER_SOCKET=\"tcp:${ip:-<VM-IP>}:$port\""
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        echo "Unbekannter Befehl: $cmd" >&2
+        usage >&2
+        exit 2
+        ;;
+esac
