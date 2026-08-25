@@ -51,7 +51,7 @@ class WindowsReleaseCheckTests(unittest.TestCase):
     def test_windows_app_keeps_driver_before_platform_tools_and_persists_requested_values(self):
         source = Path("updater/windows/foxair_updater_app.py").read_text(encoding="utf-8")
         base = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
-        self.assertIn('APP_VERSION = "0.1.8"', source)
+        self.assertIn('APP_VERSION = "0.1.9"', source)
         self.assertIn("SIMCOM_Windows_USB_Drivers_V1.0.2.zip", source)
         self.assertIn('layout.insertLayout(1, driver_row)', source)
         self.assertIn('self.settings.setValue("adb"', source)
