@@ -106,6 +106,10 @@ if [ -d "$STATE_DIR/simulator" ] && [ ! -e "$STATE_DIR/legacy-python-simulator" 
 fi
 rm -f "$INSTALL_DIR/phnix_ota_simulator.py"
 
+# Migration note for the first QEMU-backed PR#6 revision:
+# FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/qemu_lab_adapter.py
+# The base adapter is still installed, but qemu_work_lab_backend.py now wraps it
+# with the shell/runner behavior observed on the actual Work VM.
 cat > "$CONFIG_FILE" <<EOF
 # FoxAir Fake ADB – Lab/Testnetz only. Keine ADB-Authentifizierung.
 FOXAIR_FAKE_ADB_BIND=$BIND
