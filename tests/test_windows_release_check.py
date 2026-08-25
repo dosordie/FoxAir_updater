@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -51,7 +52,12 @@ class WindowsReleaseCheckTests(unittest.TestCase):
     def test_windows_app_keeps_driver_before_platform_tools_and_persists_requested_values(self):
         source = Path("updater/windows/foxair_updater_app.py").read_text(encoding="utf-8")
         base = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
-        self.assertIn('APP_VERSION = "0.2.4"', source)
+        app_version = re.search(r'(?m)^APP_VERSION\s*=\s*"([^"]+)"$', source)
+        base_version = re.search(r'(?m)^APP_VERSION\s*=\s*"([^"]+)"$', base)
+        self.assertIsNotNone(app_version)
+        self.assertIsNotNone(base_version)
+        self.assertRegex(app_version.group(1), r"^\d+\.\d+\.\d+$")
+        self.assertEqual(app_version.group(1), base_version.group(1))
         self.assertIn("SIMCOM_Windows_USB_Drivers_V1.0.2.zip", source)
         self.assertIn('layout.insertLayout(1, driver_row)', source)
         self.assertIn('self.settings.setValue("adb"', source)
@@ -61,6 +67,14 @@ class WindowsReleaseCheckTests(unittest.TestCase):
         self.assertIn('self._remember_parent("manifest_dir"', source)
         self.assertIn('self._remember_parent("firmware_dir"', source)
         self.assertIn('QSettings("FoxAir", "FoxAir Updater")', base)
+
+    def test_window_title_tracks_selected_connection(self):
+        source = Path("updater/windows/foxair_updater_maintenance.py").read_text(encoding="utf-8")
+        self.assertIn('connection = f"Remote ADB {host}" if host else "Remote ADB"', source)
+        self.assertIn('connection = "USB"', source)
+        self.assertIn('self.setWindowTitle(f"FoxAir Updater {version} – {connection}")', source)
+        self.assertIn("def _remote_changed(self, *args):", source)
+        self.assertIn("self._update_window_title()", source)
 
     def test_remote_settings_are_loaded_before_writeback_signals_are_reenabled(self):
         source = Path("updater/windows/foxair_updater_app.py").read_text(encoding="utf-8")
