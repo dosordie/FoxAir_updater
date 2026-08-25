@@ -53,7 +53,7 @@ def create_qemu_rootfs(root: Path, service: bytes = b"real-qemu-arm-service") ->
     for name in ("data", "cache", "tmp", "usr/bin", "bin"):
         (rootfs / name).mkdir(parents=True, exist_ok=True)
     (rootfs / "data/phnixIot4G").write_bytes(service)
-    return rootfs
+    return rootfs.resolve()
 
 
 class FakeSim:
@@ -241,7 +241,7 @@ class QemuLabAdapterTests(unittest.TestCase):
     def test_adb_paths_are_the_existing_qemu_rootfs(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             adapter = load_adapter_module()
-            self.assertEqual(adapter.root_path("/"), self.rootfs.resolve())
+            self.assertEqual(adapter.root_path("/"), self.rootfs)
             self.assertEqual(adapter.root_path("/data/phnixIot4G"), self.rootfs / "data/phnixIot4G")
             self.assertEqual(adapter.shell("pidof phnixIot4G || true"), (0, b"4100\n"))
             self.assertEqual(adapter.shell("cat /data/phnixIot4G"), (0, b"ORIGINAL-ARM-PHNIX"))
@@ -256,7 +256,7 @@ class QemuLabAdapterTests(unittest.TestCase):
             self.assertTrue((self.state / "qemu-adb/started").is_file())
             control = json.loads((self.lab / "control/foxair-ota-scenario.json").read_text())
             self.assertEqual(control["scenario"], "success")
-            self.assertEqual(Path(control["rootfs"]), self.rootfs.resolve())
+            self.assertEqual(Path(control["rootfs"]), self.rootfs)
 
     def test_scenario_without_control_endpoint_fails_honestly_but_writes_contract(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
