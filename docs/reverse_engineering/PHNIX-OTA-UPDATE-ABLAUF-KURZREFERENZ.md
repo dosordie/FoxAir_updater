@@ -432,10 +432,10 @@ OTA-Service-UART:   9600 Baud, 8N1
 Bei 9600 Baud und 8N1 stehen theoretisch maximal ungefähr:
 
 ```text
-960 Byte/s Netto-Zeichenrate auf der seriellen Leitung
+960 Byte/s Zeichenrate auf der seriellen Leitung
 ```
 
-zur Verfügung, weil jedes Byte mit Start- und Stopbit ungefähr 10 Bit auf der Leitung benötigt.
+zur Verfügung, weil jedes Nutzbyte mit Start- und Stopbit ungefähr 10 Bit auf der Leitung benötigt.
 
 Ein C5A8-Frame besteht nicht nur aus den 168 Firmwarebytes, sondern zusätzlich aus Protokollheader, Längen-/Adressfeldern und CRC. Dazu kommt nach jedem Block die C371-Quittung in Gegenrichtung.
 
