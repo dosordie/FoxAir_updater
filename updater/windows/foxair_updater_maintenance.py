@@ -1,0 +1,309 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+)
+
+import foxair_updater_operator_display as operator
+from updater.common.phnix_modem_info import PhnixModemInfo
+
+
+CONFIRM_TOKEN = "PHNIX-STATISTICS-WRITE"
+
+
+class MainWindow(operator.MainWindow):
+    """Thin experimental frontend for the shared statistics maintenance core."""
+
+    def _advanced(self):
+        widget = super()._advanced()
+        layout = widget.layout()
+        insert_at = max(0, layout.count() - 1)
+
+        heading = QLabel(
+            "<hr><b>Experimentelle Wartung – Mainboard OTA-Vorgänge</b>"
+        )
+        layout.insertWidget(insert_at, heading)
+        insert_at += 1
+
+        note = QLabel(
+            "Diese Funktion verwendet einen <b>eigenständigen gemeinsamen "
+            "Windows/Linux-Core</b>. Der bestehende OTA-Controller wird nicht "
+            "verändert oder aufgerufen. Der Core prüft den Originalzustand, "
+            "hält die Watchdogs kurz an, beendet <code>phnixIot4G</code> sauber, "
+            "sichert die vollständige 128-Byte-Statistikdatei, ändert ausschließlich "
+            "den uint32-Wert bei Offset <code>0x24</code>, startet den Originaldienst "
+            "wieder und verifiziert Datei und RAM. Es werden keine RS485-/Modbus-"
+            "Telegramme gesendet."
+        )
+        note.setWordWrap(True)
+        layout.insertWidget(insert_at, note)
+        insert_at += 1
+
+        self.statistics_current = QLabel(
+            "Aktueller Wert: noch nicht mit dem Maintenance-Core geprüft."
+        )
+        self.statistics_current.setWordWrap(True)
+        layout.insertWidget(insert_at, self.statistics_current)
+        insert_at += 1
+
+        row = QHBoxLayout()
+        self.statistics_target = QLineEdit("0")
+        self.statistics_target.setPlaceholderText("0 … 4294967295")
+        self.statistics_target.textChanged.connect(self._buttons)
+        row.addWidget(QLabel("Neuer Wert:"))
+        row.addWidget(self.statistics_target, 1)
+        self.statistics_show_btn = QPushButton("Aktuellen Wert prüfen")
+        self.statistics_show_btn.clicked.connect(self._statistics_show)
+        row.addWidget(self.statistics_show_btn)
+        layout.insertLayout(insert_at, row)
+        insert_at += 1
+
+        self.allow_statistics_write = QCheckBox(
+            "Experimentelles Ändern des persistenten Statistikzustands erlauben"
+        )
+        self.allow_statistics_write.toggled.connect(self._buttons)
+        layout.insertWidget(insert_at, self.allow_statistics_write)
+        insert_at += 1
+
+        self.statistics_set_btn = QPushButton("Mainboard OTA-Vorgänge setzen")
+        self.statistics_set_btn.clicked.connect(self._statistics_set)
+        layout.insertWidget(insert_at, self.statistics_set_btn)
+        return widget
+
+    @staticmethod
+    def _statistics_core_path() -> Path:
+        return (
+            operator.lte.desktop.app.base.backend_dir()
+            / "updater"
+            / "common"
+            / "phnix_statistics_maintenance.py"
+        )
+
+    def _statistics_backup_dir(self) -> Path:
+        text = self.backup_path.text().strip()
+        base = Path(text) if text else Path.home() / "FoxAir_LTE_Backup"
+        return base / "statistics-maintenance"
+
+    def _statistics_value(self) -> int | None:
+        text = self.statistics_target.text().strip()
+        try:
+            value = int(text, 10)
+        except ValueError:
+            return None
+        return value if 0 <= value <= 0xFFFFFFFF else None
+
+    def _statistics_command(self, adb: Path, *args: str) -> list[str]:
+        return [
+            str(operator.lte.desktop.app.base.backend_python()),
+            str(self._statistics_core_path()),
+            "--adb",
+            str(adb),
+            "--output",
+            "json",
+            *args,
+        ]
+
+    def _statistics_show(self):
+        adb = self._require_adb()
+        if not adb:
+            return
+        core = self._statistics_core_path()
+        if not core.is_file():
+            QMessageBox.critical(
+                self,
+                "Maintenance-Core fehlt",
+                f"Der gemeinsame Maintenance-Core wurde nicht gefunden:\n{core}",
+            )
+            return
+        self._run(
+            "statistics-show",
+            self._statistics_command(adb, "show"),
+            str(operator.lte.desktop.app.base.backend_dir()),
+        )
+
+    def _statistics_set(self):
+        if self.busy or not self.allow_statistics_write.isChecked():
+            return
+        value = self._statistics_value()
+        if value is None:
+            QMessageBox.warning(
+                self,
+                "Ungültiger Wert",
+                "Bitte einen ganzzahligen uint32-Wert zwischen 0 und 4294967295 eingeben.",
+            )
+            return
+        adb = self._require_adb()
+        if not adb:
+            return
+        core = self._statistics_core_path()
+        if not core.is_file():
+            QMessageBox.critical(
+                self,
+                "Maintenance-Core fehlt",
+                f"Der gemeinsame Maintenance-Core wurde nicht gefunden:\n{core}",
+            )
+            return
+
+        current = self.statistics_current.text().replace("Aktueller Wert:", "").strip()
+        if (
+            QMessageBox.warning(
+                self,
+                "Mainboard OTA-Vorgänge experimentell ändern?",
+                "Der bestehende OTA-Controller bleibt unberührt. Der separate "
+                "Maintenance-Core wird den Originaldienst für wenige Sekunden "
+                "kontrolliert stoppen und anschließend wieder starten.\n\n"
+                f"Aktuell angezeigt: {current}\n"
+                f"Neuer Wert: {value}\n\n"
+                "Vor dem Schreiben wird die komplette 128-Byte-Statistikdatei "
+                "lokal gesichert. Nur Offset 0x24..0x27 darf sich ändern. "
+                "Datei und RAM werden nach dem Neustart erneut verifiziert.\n\n"
+                "Fortfahren?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            != QMessageBox.Yes
+        ):
+            return
+
+        command = self._statistics_command(
+            adb,
+            "set-mainboard-ota-count",
+            str(value),
+            "--execute",
+            "--confirm",
+            CONFIRM_TOKEN,
+            "--backup-dir",
+            str(self._statistics_backup_dir()),
+        )
+        self._run(
+            "statistics-set",
+            command,
+            str(operator.lte.desktop.app.base.backend_dir()),
+        )
+
+    @staticmethod
+    def _last_event(output: str, wanted: str) -> dict | None:
+        for line in reversed(output.splitlines()):
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(record, dict) and record.get("event") == wanted:
+                return record
+        return None
+
+    def _done(self, op, code, output):
+        if op not in {"statistics-show", "statistics-set"}:
+            super()._done(op, code, output)
+            return
+
+        # Reuse the normal process cleanup/button/log behavior, but do not let
+        # the generic updater path interpret this independent maintenance run.
+        super()._done("handled-result", code, output)
+
+        if op == "statistics-show":
+            result = self._last_event(output, "inspect")
+            if result and isinstance(result.get("current_value"), int):
+                value = int(result["current_value"])
+                self.statistics_current.setText(f"Aktueller Wert: {value}")
+                if result.get("ok") is True and code == 0:
+                    self.statistics_current.setStyleSheet(
+                        f"QLabel{{color:{operator.lte.desktop.app.GREEN};}}"
+                    )
+                else:
+                    self.statistics_current.setStyleSheet(
+                        f"QLabel{{color:{operator.lte.desktop.app.YELLOW};}}"
+                    )
+                return
+            self.statistics_current.setStyleSheet(
+                f"QLabel{{color:{operator.lte.desktop.app.RED};}}"
+            )
+            self.statistics_current.setText(
+                "Aktueller Wert konnte nicht sicher geprüft werden – Details im Protokoll."
+            )
+            return
+
+        complete = self._last_event(output, "complete")
+        if code == 0 and complete:
+            value = complete.get("value")
+            backup = complete.get("backup")
+            self.statistics_current.setStyleSheet(
+                f"QLabel{{color:{operator.lte.desktop.app.GREEN};font-weight:bold;}}"
+            )
+            self.statistics_current.setText(f"Aktueller Wert: {value}")
+            self.allow_statistics_write.setChecked(False)
+            QMessageBox.information(
+                self,
+                "Mainboard OTA-Vorgänge geändert",
+                "Der separate Maintenance-Core hat den Wert erfolgreich geändert.\n\n"
+                f"Neuer Wert: {value}\n"
+                "Persistente Datei: verifiziert\n"
+                "RAM nach Neustart: verifiziert\n"
+                f"Backup: {backup or 'siehe Protokoll'}",
+            )
+            if not self._modem_info_running:
+                self._refresh_modem_info()
+            return
+
+        error = self._last_event(output, "error")
+        message = (
+            str(error.get("message"))
+            if isinstance(error, dict) and error.get("message")
+            else "Der Maintenance-Core hat den Vorgang nicht erfolgreich abgeschlossen."
+        )
+        QMessageBox.critical(
+            self,
+            "Experimentelle Wartung fehlgeschlagen",
+            message + "\n\nDetails stehen im Protokoll.",
+        )
+
+    def _modem_info_result(self, value: object):
+        super()._modem_info_result(value)
+        if isinstance(value, PhnixModemInfo):
+            count = value.statistics.mainboard_ota_count
+            if count is not None and hasattr(self, "statistics_current"):
+                self.statistics_current.setText(
+                    f"Aktueller Wert: {count} (read-only Modem Info)"
+                )
+                self.statistics_current.setStyleSheet("")
+
+    def _buttons(self):
+        super()._buttons()
+        if hasattr(self, "statistics_show_btn"):
+            self.statistics_show_btn.setEnabled(
+                not self.busy and self._adb_ready()
+            )
+        if hasattr(self, "statistics_set_btn"):
+            self.statistics_set_btn.setEnabled(
+                not self.busy
+                and self._adb_ready()
+                and self.allow_statistics_write.isChecked()
+                and self._statistics_value() is not None
+            )
+
+
+def main():
+    qt_app = QApplication(sys.argv)
+    qt_app.setApplicationName("FoxAir Updater")
+    qt_app.setOrganizationName("FoxAir")
+    icon = operator.lte.desktop.app.base.root_dir() / "app_icon.ico"
+    if icon.is_file():
+        qt_app.setWindowIcon(QIcon(str(icon)))
+    window = MainWindow()
+    window.show()
+    return qt_app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
