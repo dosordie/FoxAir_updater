@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-APP_VERSION = "0.2.4"
+APP_VERSION = "0.2.5"
 ADB_URL = "https://developer.android.com/tools/releases/platform-tools?hl=de#downloads"
 HOWTO_URL = "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md"
 
