@@ -1,6 +1,6 @@
 # PHNIX `phnixIot4G` – Device-ID-/Provisioningblock `0x07D1`
 
-Stand: 2026-08-22
+Stand: 2026-08-26
 
 Diese Datei ergänzt die statische Analyse der frühen RS485-/Provisioningphase.
 
@@ -44,7 +44,67 @@ und verwendet damit **nur die ersten 12 Bytes der 180-Byte-Nutzlast** als Device
 
 Danach verlässt dieser Pfad die Funktion erfolgreich. Für die verbleibenden **168 Bytes** existiert in diesem Antwortzweig keine weitere Auswertung.
 
-## 3. Konsequenz
+## 3. Liveinhalt der zwölf Device-ID-Bytes
+
+Im realen 90-Register-Block ab `2001 / 0x07D1` wurden in den ersten sechs
+Registern folgende Werte gelesen:
+
+| Register | Dezimal | Hex | Big-Endian-ASCII |
+|---:|---:|---:|---|
+| 2001 | 22342 | `0x5746` | `WF` |
+| 2002 | 12850 | `0x3232` | `22` |
+| 2003 | 12592 | `0x3130` | `10` |
+| 2004 | 12853 | `0x3235` | `25` |
+| 2005 | 12340 | `0x3034` | `04` |
+| 2006 | 14133 | `0x3735` | `75` |
+
+Zusammengesetzt ergibt das exakt:
+
+```text
+WF2210250475
+```
+
+FoxAir Control bezeichnet diese Kennung seit der späteren Mappingkorrektur als
+**WiFi Barcode / Kommunikationsmodul-ID** und ausdrücklich nicht als
+Geräte-Serial-No. des Wärmepumpen-Typenschilds. Die derzeit plausibelste, aber
+nicht herstellerseitig bestätigte Formatauslegung ist:
+
+```text
+WF + YYMMDD + laufende Nummer
+WF + 221025 + 0475
+     2022-10-25
+```
+
+Die gleiche Kennung steht als Paketkopf in mehreren 90-Register-Blöcken. Für
+die LTE-DTU ist speziell die Kopie ab `0x07D1` relevant, weil genau deren erste
+zwölf Bytes in den internen `deviceID`-Puffer kopiert werden.
+
+### Liegt `WF2210250475` fest im V3.3-OTA-Image?
+
+Im untersuchten 287598-Byte-Mainboardimage mit SHA-256
+`6C635D8E9A1E7246EA492B81ACFF5B748E85CC86C0FE0DEF35C2F0A597E4389A`
+wurde die Kennung nicht gefunden:
+
+- nicht als zusammenhängender ASCII-String `WF2210250475`;
+- nicht als Folge der sechs Big-Endian-Registerworte;
+- nicht als Folge derselben sechs Little-Endian-16-Bit-Worte;
+- selbst das erste Wort `0x5746` kommt im Image in keiner Byteordnung als
+  16-Bit-Literal vor.
+
+Damit ist die Kennung **nicht als direkter Datenstring oder Worttabelle im
+V3.3-Anwendungsimage enthalten**. Am wahrscheinlichsten stammt sie aus einem
+separat provisionierten nichtflüchtigen Produktionsbereich, beispielsweise
+I²C-EEPROM, residentem Loader-/Datenflash oder einem anderen bei OTA nicht
+mitgelieferten Konfigurationsbereich, und wird beim Start in den Modbusspiegel
+übernommen.
+
+Vollständig ausgeschlossen ist allein durch die Stringsuche noch nicht, dass
+der Programmcode den Wert aus einzelnen Teilwerten zusammensetzt. Wegen des
+datums-/laufnummerartigen Formats und des fehlenden Literals ist eine
+geräteindividuelle Produktionsprovisionierung jedoch deutlich plausibler als
+eine für alle V3.3-Geräte fest einkompilierte Konstante.
+
+## 4. Konsequenz
 
 Der Block `0x07D1..0x082A` ist wesentlich größer als die tatsächlich von `phnixIot4G` benötigte Device-ID.
 
@@ -67,7 +127,7 @@ Gerade deshalb ist der Restblock ein interessanter Kandidat für:
 
 Diese Bedeutungen sind statisch aus `phnixIot4G` nicht belegbar, weil die Bytes nach Offset 12 nicht gelesen werden.
 
-## 4. Zweiter Device-ID-Pfad über FC `0x10`
+## 5. Zweiter Device-ID-Pfad über FC `0x10`
 
 Neben der Standard-Read-Antwort erkennt `uart485_get_productKey()` zusätzlich ein eingehendes Write-Multiple-Registers-artiges Frame:
 
@@ -88,7 +148,7 @@ Damit kann dieselbe 12-Byte-Device-ID offenbar sowohl:
 
 Das zeigt, dass `0x07D1` im PHNIX-Protokoll ein echter Geräteidentitätsbereich ist und nicht nur ein zufälliger Startup-Read.
 
-## 5. ProductKey-Pfad `0x00C8`
+## 6. ProductKey-Pfad `0x00C8`
 
 In derselben Funktion existiert ein weiterer FC10-Sonderfall:
 
@@ -107,7 +167,7 @@ Damit gilt:
 
 Der ProductKey ist also nicht Bestandteil des ausgewerteten ersten 12-Byte-Bereichs von `0x07D1`, sondern besitzt einen separaten Mainboard-Pfad.
 
-## 6. Weitere fest eingebaute Read-Requests
+## 7. Weitere fest eingebaute Read-Requests
 
 Direkt neben dem `0x07D1`-Request liegen im Binary:
 
@@ -125,7 +185,7 @@ Damit sind drei feste Reads bestätigt:
 | `0x0004` | 1 | `uart485_get_device_info()` / nach erfolgreicher MQTT-Initialisierung; live als Trigger für acht Geräteinfoblöcke und späteres C544 bestätigt |
 | `0x07D1` | 90 | Geräteidentitätsblock; erste 12 Datenbytes = Device-ID |
 
-## 7. Interessanter Punkt für Mainboard-RE
+## 8. Interessanter Punkt für Mainboard-RE
 
 Für die parallele Mainboard-Firmwareanalyse ist besonders der Bereich
 
@@ -141,18 +201,25 @@ Die beste weitere Quelle dafür ist daher nicht `phnixIot4G`, sondern:
 - reale passive RS485-Aufzeichnung der Antwort auf `63 03 07 D1 00 5A 9C FE`,
 - Vergleich mehrerer Boards/Geräte, um konstante und variable Felder zu unterscheiden.
 
-## 8. Beweisgrad
+## 9. Beweisgrad
 
 ### Bewiesen
 
 - Read-Request `63 03 07 D1 00 5A 9C FE` ist statisch eingebaut;
 - erwartete Antwort hat `0xB4 = 180` Datenbytes;
 - nur `frame[3..14]` werden als 12-Byte-Device-ID kopiert;
+- die zwölf Livebytes der untersuchten Anlage dekodieren zu `WF2210250475`;
+- die Kennung ist im V3.3-OTA-Image weder als ASCII-String noch als direkte
+  Folge der sechs 16-Bit-Worte enthalten;
 - die übrigen 168 Datenbytes werden in diesem Pfad nicht ausgewertet;
 - alternativer FC10-Pfad `63 10 07 D1` kopiert ebenfalls 12 Byte Device-ID;
 - FC10 `63 10 00 C8` liefert 32 Byte ProductKey.
 
 ### Offen
 
+- exakter nichtflüchtiger Speicherort und Provisionierungsweg von
+  `WF2210250475` auf dem Mainboard;
+- Bestätigung des vermuteten Formats `WF + YYMMDD + laufende Nummer` durch
+  Vergleich mehrerer Geräte;
 - Bedeutung der restlichen 84 Register des `0x07D1`-Blocks;
 - Bedeutung des einzelnen Registerwerts `0x0004` und genaue Semantik des festen Reads `0x0006` auf Mainboardseite. Die Ablaufwirkung von `0x0004` ist dagegen [dynamisch bestätigt](PHNIX_OTA_DYNAMISCHE_VALIDIERUNG.md): acht 90-Register-Blöcke und rund 49 Sekunden später C544.
