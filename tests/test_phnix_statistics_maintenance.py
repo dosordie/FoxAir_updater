@@ -32,19 +32,24 @@ class FakeSnapshotAdb:
 class FakeStopAdb:
     def __init__(self, pid=5383):
         self.pid = pid
-        self.alive = True
+        self.pidof_visible = True
+        self.state = "S"
         self.commands = []
 
     def shell(self, command, check=False):
         self.commands.append(command)
         if command == "pidof phnixIot4G || true":
-            return str(self.pid) if self.alive else ""
+            return str(self.pid) if self.pidof_visible else ""
+        if command == f"awk '{{print $3}}' /proc/{self.pid}/stat 2>/dev/null || true":
+            return self.state
         if command == f"kill -TERM {self.pid}":
             # Mirrors the live modem observation: TERM does not make the
             # service disappear within the maintenance grace period.
             return ""
         if command == f"kill -KILL {self.pid}":
-            self.alive = False
+            # With the {helloworld} supervisors stopped, the killed service can
+            # remain visible to pidof as a zombie until its parent is resumed.
+            self.state = "Z"
             return ""
         raise AssertionError(f"unexpected shell command: {command}")
 
@@ -97,7 +102,7 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         self.assertIsNone(snapshot["pid"])
         self.assertEqual(snapshot["pids"], [5385, 5383])
 
-    def test_service_stop_escalates_from_term_to_kill_like_ota_restore(self):
+    def test_service_stop_accepts_killed_zombie_like_original_restore(self):
         adb = FakeStopAdb()
         with patch.object(maintenance, "SERVICE_TERM_GRACE_SECONDS", 0.01), patch.object(
             maintenance, "SERVICE_KILL_TIMEOUT_SECONDS", 0.05
@@ -106,7 +111,8 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         self.assertEqual(method, "kill")
         self.assertIn("kill -TERM 5383", adb.commands)
         self.assertIn("kill -KILL 5383", adb.commands)
-        self.assertFalse(adb.alive)
+        self.assertTrue(adb.pidof_visible)
+        self.assertEqual(adb.state, "Z")
 
     def test_maintenance_core_is_separate_from_ota_controller(self):
         source = Path(
@@ -123,6 +129,8 @@ class StatisticsMaintenanceTests(unittest.TestCase):
         self.assertIn("kill -KILL", source)
         self.assertIn("kill -CONT", source)
         self.assertIn("stop_service_for_maintenance", source)
+        self.assertIn("wait_service_inactive", source)
+        self.assertIn('in {"Z", "X"}', source)
         self.assertIn("SERVICE_TERM_GRACE_SECONDS = 2.0", source)
         self.assertIn("SERVICE_KILL_TIMEOUT_SECONDS = 4.0", source)
         self.assertIn("service_singleton", source)
