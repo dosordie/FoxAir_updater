@@ -32,44 +32,46 @@ class PermissiveAdbBackendTests(unittest.TestCase):
         qemu.write_bytes(b"qemu")
         qemu.chmod(0o755)
         self.state = self.root / "state"
+        self.device_tmp = self.state / "device-tmp"
         self.env = {
             "FOXAIR_QEMU_LAB_ROOT": str(self.lab),
             "FOXAIR_QEMU_LAB_ROOTFS": str(self.rootfs),
             "FOXAIR_FAKE_ADB_STATE": str(self.state),
+            "FOXAIR_FAKE_ADB_TMP": str(self.device_tmp),
             "FOXAIR_QEMU_FAKE_PID": "4100",
         }
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_unknown_shell_command_runs_through_host_shell(self):
-        with mock.patch.dict(os.environ, self.env, clear=False):
-            backend = load_backend()
-            code, output = backend.shell("printf 'arbitrary-adb-shell-ok'")
-        self.assertEqual(code, 0)
-        self.assertEqual(output, b"arbitrary-adb-shell-ok")
-
-    def test_shell_pipeline_is_not_allowlisted(self):
-        with mock.patch.dict(os.environ, self.env, clear=False):
-            backend = load_backend()
-            code, output = backend.shell("printf 'a\\nb\\n' | awk 'NR == 2 {print}'")
-        self.assertEqual(code, 0)
-        self.assertEqual(output, b"b\n")
-
     def test_phnix_pid_still_uses_virtual_process_view(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             backend = load_backend()
             self.assertEqual(backend.shell("pidof phnixIot4G || true"), (0, b"4100\n"))
 
-    def test_tmp_sync_path_matches_host_shell_namespace(self):
+    def test_tmp_sync_path_is_dedicated_not_host_tmp(self):
         with mock.patch.dict(os.environ, self.env, clear=False):
             backend = load_backend()
-            self.assertEqual(backend.root_path("/tmp/foxair-test"), Path("/tmp/foxair-test"))
+            self.assertEqual(backend.root_path("/tmp"), self.device_tmp)
+            self.assertEqual(backend.root_path("/tmp/foxair-test"), self.device_tmp / "foxair-test")
+            self.assertNotEqual(backend.root_path("/tmp/foxair-test"), Path("/tmp/foxair-test"))
 
-    def test_source_explicitly_uses_root_host_shell(self):
+    def test_data_still_maps_to_qemu_rootfs(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            backend = load_backend()
+            self.assertEqual(backend.root_path("/data/phnixIot4G"), self.rootfs.resolve() / "data/phnixIot4G")
+
+    def test_source_uses_bubblewrap_mount_namespace(self):
         source = BACKEND_PATH.read_text(encoding="utf-8")
-        self.assertIn('["/bin/sh", "-c", command]', source)
-        self.assertIn("intentionally exposes a root Debian shell", source)
+        self.assertIn('"--bind", str(tmp), "/tmp"', source)
+        self.assertIn('"/bin/sh", "-c", command', source)
+        self.assertIn("ADB /tmp is intentionally *not* the Debian host /tmp", source)
+
+    def test_installer_installs_bubblewrap_and_configures_private_tmp(self):
+        source = Path("tools/testvm/fake_adb/install.sh").read_text(encoding="utf-8")
+        self.assertIn("bubblewrap", source)
+        self.assertIn("FOXAIR_FAKE_ADB_TMP=$DEVICE_TMP", source)
+        self.assertIn('install -d -m 1777 "$DEVICE_TMP"', source)
 
 
 if __name__ == "__main__":
