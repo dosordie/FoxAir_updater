@@ -8,6 +8,7 @@ INSTALL_DIR=${FOXAIR_FAKE_ADB_INSTALL_DIR:-/opt/foxair-fake-adb}
 STATE_DIR=${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}
 CONFIG_FILE=/etc/default/foxair-fake-adb
 SERVICE_FILE=/etc/systemd/system/foxair-fake-adb.service
+DEFAULT_LAB_ROOT=${FOXAIR_QEMU_LAB_ROOT:-/opt/phnix-lab}
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Dieses Setup muss als root laufen. Beispiel:" >&2
@@ -19,23 +20,59 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
-if ! need_cmd wget || ! need_cmd python3 || ! need_cmd systemctl || ! need_cmd runuser; then
+if ! need_cmd wget || ! need_cmd python3 || ! need_cmd systemctl; then
     if need_cmd apt-get; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
-        apt-get install -y --no-install-recommends wget ca-certificates python3 util-linux
+        apt-get install -y --no-install-recommends wget ca-certificates python3
     else
-        echo "Benötigt: wget, python3, systemctl, runuser." >&2
+        echo "Benötigt: wget, python3 und systemctl." >&2
         exit 2
     fi
 fi
 
-if ! id foxair-adb >/dev/null 2>&1; then
-    useradd --system --home-dir "$STATE_DIR" --no-create-home --shell /usr/sbin/nologin foxair-adb
+config_value() {
+    key=$1
+    fallback=$2
+    if [ -f "$CONFIG_FILE" ]; then
+        value=$(sed -n "s/^${key}=//p" "$CONFIG_FILE" | tail -1)
+        if [ -n "$value" ]; then
+            printf '%s\n' "$value"
+            return
+        fi
+    fi
+    printf '%s\n' "$fallback"
+}
+
+BIND=$(config_value FOXAIR_FAKE_ADB_BIND 0.0.0.0)
+PORT=$(config_value FOXAIR_FAKE_ADB_PORT 5038)
+SERIAL=$(config_value FOXAIR_FAKE_ADB_SERIAL foxair-vm)
+LAB_ROOT=$(config_value FOXAIR_QEMU_LAB_ROOT "$DEFAULT_LAB_ROOT")
+ROOTFS=$(config_value FOXAIR_QEMU_LAB_ROOTFS "$LAB_ROOT/rootfs")
+SCENARIO_HOOK=$(config_value FOXAIR_QEMU_SCENARIO_HOOK "")
+SCENARIO_SOCKET=$(config_value FOXAIR_QEMU_SCENARIO_SOCKET "")
+SCENARIO_FILE=$(config_value FOXAIR_QEMU_SCENARIO_FILE "$LAB_ROOT/control/foxair-ota-scenario.json")
+
+# The Work/QEMU lab is a prerequisite.  We deliberately do not install a
+# second synthetic modem simulator as a fallback.
+if [ ! -f "$ROOTFS/data/phnixIot4G" ]; then
+    for candidate in "$LAB_ROOT/rootfs" "$LAB_ROOT/root" "$LAB_ROOT/chroot"; do
+        if [ -f "$candidate/data/phnixIot4G" ]; then
+            ROOTFS=$candidate
+            break
+        fi
+    done
+fi
+if [ ! -f "$ROOTFS/data/phnixIot4G" ]; then
+    echo "PHNIX-QEMU-RootFS nicht gefunden." >&2
+    echo "Erwartet: $LAB_ROOT/rootfs/data/phnixIot4G" >&2
+    echo "Alternativ FOXAIR_QEMU_LAB_ROOTFS auf das vorhandene Work-RootFS setzen." >&2
+    exit 2
 fi
 
 install -d -m 0755 "$INSTALL_DIR"
-install -d -o foxair-adb -g foxair-adb -m 0750 "$STATE_DIR"
+install -d -m 0750 "$STATE_DIR"
+install -d -m 0755 "$LAB_ROOT/control"
 
 fetch() {
     src=$1
@@ -46,37 +83,47 @@ fetch() {
 }
 
 fetch tools/testvm/fake_adb/foxair_fake_adb_server.py "$INSTALL_DIR/foxair_fake_adb_server.py"
-fetch tools/phnix_ota/phnix_ota_simulator.py "$INSTALL_DIR/phnix_ota_simulator.py"
+fetch tools/testvm/fake_adb/qemu_lab_adapter.py "$INSTALL_DIR/qemu_lab_adapter.py"
 fetch tools/testvm/fake_adb/foxair-fake-adbctl "$INSTALL_DIR/foxair-fake-adbctl"
 fetch tools/testvm/fake_adb/foxair-fake-adb.service "$SERVICE_FILE"
 
-chmod 0755 "$INSTALL_DIR/foxair_fake_adb_server.py" "$INSTALL_DIR/phnix_ota_simulator.py" "$INSTALL_DIR/foxair-fake-adbctl"
+chmod 0755 "$INSTALL_DIR/foxair_fake_adb_server.py" "$INSTALL_DIR/qemu_lab_adapter.py" "$INSTALL_DIR/foxair-fake-adbctl"
 ln -sf "$INSTALL_DIR/foxair-fake-adbctl" /usr/local/bin/foxair-fake-adbctl
 
-if [ ! -f "$CONFIG_FILE" ]; then
-    cat > "$CONFIG_FILE" <<EOF
+# Migrate an already installed PR#6 version.  Preserve the obsolete Python
+# simulator state for inspection, but make it impossible to confuse it with the
+# active QEMU backend.
+if [ -d "$STATE_DIR/simulator" ] && [ ! -e "$STATE_DIR/legacy-python-simulator" ]; then
+    mv "$STATE_DIR/simulator" "$STATE_DIR/legacy-python-simulator"
+fi
+rm -f "$INSTALL_DIR/phnix_ota_simulator.py"
+
+# Rewrite the config also on upgrades: older PR#6 installations point
+# FOXAIR_FAKE_ADB_SIMULATOR at the lightweight Python simulator.  Preserve the
+# user's bind/port/serial and any explicit QEMU control endpoint.
+cat > "$CONFIG_FILE" <<EOF
 # FoxAir Fake ADB – Lab/Testnetz only. Keine ADB-Authentifizierung.
-FOXAIR_FAKE_ADB_BIND=0.0.0.0
-FOXAIR_FAKE_ADB_PORT=5038
-FOXAIR_FAKE_ADB_SERIAL=foxair-vm
+FOXAIR_FAKE_ADB_BIND=$BIND
+FOXAIR_FAKE_ADB_PORT=$PORT
+FOXAIR_FAKE_ADB_SERIAL=$SERIAL
 FOXAIR_FAKE_ADB_STATE=$STATE_DIR
-FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/phnix_ota_simulator.py
+FOXAIR_FAKE_ADB_SIMULATOR=$INSTALL_DIR/qemu_lab_adapter.py
+FOXAIR_QEMU_LAB_ROOT=$LAB_ROOT
+FOXAIR_QEMU_LAB_ROOTFS=$ROOTFS
+FOXAIR_QEMU_SCENARIO_FILE=$SCENARIO_FILE
 EOF
-fi
+[ -n "$SCENARIO_HOOK" ] && echo "FOXAIR_QEMU_SCENARIO_HOOK=$SCENARIO_HOOK" >> "$CONFIG_FILE"
+[ -n "$SCENARIO_SOCKET" ] && echo "FOXAIR_QEMU_SCENARIO_SOCKET=$SCENARIO_SOCKET" >> "$CONFIG_FILE"
 
-chown -R foxair-adb:foxair-adb "$STATE_DIR"
-
-# Initial simulator state. Do not destroy an existing test state on reinstall.
-if [ ! -e "$STATE_DIR/simulator/started" ]; then
-    install -d -o foxair-adb -g foxair-adb -m 0750 "$STATE_DIR/simulator"
-    runuser -u foxair-adb -- env PHNIX_OTA_SIM_HOME="$STATE_DIR/simulator" \
-        python3 "$INSTALL_DIR/phnix_ota_simulator.py" start --scenario success >/dev/null
-fi
+# ADB-online/offline is only a transport marker.  It never starts or kills the
+# original ARM process in the QEMU lab.
+install -d -m 0750 "$STATE_DIR/qemu-adb"
+touch "$STATE_DIR/qemu-adb/started"
 
 systemctl daemon-reload
 systemctl enable --now foxair-fake-adb.service
+systemctl restart foxair-fake-adb.service
 
-# Fail installation if the service did not come up.
 sleep 1
 if ! systemctl is-active --quiet foxair-fake-adb.service; then
     systemctl --no-pager --full status foxair-fake-adb.service || true
@@ -84,17 +131,22 @@ if ! systemctl is-active --quiet foxair-fake-adb.service; then
 fi
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-PORT=$(awk -F= '$1=="FOXAIR_FAKE_ADB_PORT" {print $2}' "$CONFIG_FILE" | tail -1)
-[ -n "$PORT" ] || PORT=5038
+SERVICE_SIZE=$(wc -c < "$ROOTFS/data/phnixIot4G" | tr -d ' ')
+SERVICE_SHA=$(sha256sum "$ROOTFS/data/phnixIot4G" | awk '{print $1}')
 
 cat <<EOF
 
-FoxAir Fake ADB wurde installiert.
+FoxAir Fake ADB wurde auf das vorhandene QEMU-Lab umgestellt.
 
-Service:   foxair-fake-adb.service
-Status:    sudo foxair-fake-adbctl status
-Szenario:  sudo foxair-fake-adbctl scenario same-version
-Logs:      sudo foxair-fake-adbctl logs
+ADB-Service:  foxair-fake-adb.service
+QEMU-Lab:     $LAB_ROOT
+QEMU-RootFS:  $ROOTFS
+phnixIot4G:   $SERVICE_SIZE Byte
+SHA-256:      $SERVICE_SHA
+
+Status:       sudo foxair-fake-adbctl status
+Szenario:     sudo foxair-fake-adbctl scenario same-version
+Logs:         sudo foxair-fake-adbctl logs
 
 Windows FoxAir Updater:
   Remote ADB Server: EIN
@@ -106,7 +158,8 @@ PowerShell-Test:
   adb.exe devices -l
   adb.exe get-state
   adb.exe shell "pidof phnixIot4G || true"
+  adb.exe pull /data/phnixIot4G phnixIot4G-from-qemu
 
-WICHTIG: Der Fake-ADB-Server hat absichtlich keine ADB-Authentifizierung.
-Nur in einem isolierten/privaten Testnetz betreiben.
+WICHTIG: Der Fake-ADB-Server hat absichtlich keine ADB-Authentifizierung und
+bildet eine Root-ADB-Shell auf das QEMU-Lab ab. Nur im isolierten Testnetz verwenden.
 EOF
