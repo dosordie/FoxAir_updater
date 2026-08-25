@@ -6,30 +6,70 @@ class WindowsModemInfoUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.desktop = Path("updater/windows/foxair_updater_desktop.py").read_text(encoding="utf-8")
+        cls.lte_ui = Path("updater/windows/foxair_updater_lte_diagnostics.py").read_text(encoding="utf-8")
         cls.modem = Path("updater/common/phnix_modem_info.py").read_text(encoding="utf-8")
+        cls.transport = Path("updater/common/adb_transport.py").read_text(encoding="utf-8")
         cls.build = Path("updater/windows/build_windows_portable.bat").read_text(encoding="utf-8")
 
-    def test_windows_build_uses_extended_desktop_entrypoint(self):
-        self.assertIn("updater\\windows\\foxair_updater_desktop.py", self.build)
+    def test_windows_build_uses_rich_lte_diagnostics_entrypoint(self):
+        self.assertIn("updater\\windows\\foxair_updater_lte_diagnostics.py", self.build)
 
     def test_modem_info_is_read_only_process_memory_diagnostics(self):
         self.assertIn('"Modem Info / LTE Diagnose"', self.desktop)
-        self.assertIn("read_phnix_modem_info", self.desktop)
+        self.assertIn("read_phnix_modem_info", self.lte_ui)
         self.assertIn("dd if=/proc/{pid}/mem", self.modem)
+        self.assertIn("| od -An -v -tx1", self.modem)
         self.assertNotIn("/dev/ttyHSL2", self.modem)
         self.assertNotIn("FC03", self.modem)
         self.assertNotIn("of=/proc/", self.modem)
 
-    def test_live_confirmed_addresses_are_encoded(self):
-        self.assertIn("ERROR_STATUS_ADDRESS = 0x93124", self.modem)
-        self.assertIn("STATISTICS_ADDRESS = 0x91B60", self.modem)
-        self.assertIn("BOARD_INFO_ADDRESS = 0x935E1", self.modem)
-        self.assertIn("BOARD_INFO_SIZE = 28", self.modem)
+    def test_windows_adb_processes_do_not_flash_console_windows(self):
+        self.assertIn("CREATE_NO_WINDOW", self.transport)
+        self.assertIn("creationflags=self._creationflags()", self.transport)
+
+    def test_live_confirmed_lte_addresses_are_encoded(self):
+        expected = [
+            "ERROR_STATUS_ADDRESS = 0x93124",
+            "STATISTICS_ADDRESS = 0x91B60",
+            "BOARD_SOFTWARE_CODE_ADDRESS = 0x935E1",
+            "ICCID_ADDRESS = 0x9365C",
+            "IMSI_ADDRESS = 0x93674",
+            "IMEI_ADDRESS = 0x93688",
+            "PCLIENT_POINTER_ADDRESS = 0x94EB4",
+            "ROAMING_VALID_ADDRESS = 0x97FE8",
+            "CURRENT_PLMN_VALID_ADDRESS = 0x98020",
+            "LAC_ADDRESS = 0x98168",
+            "CELL_ID_ADDRESS = 0x9816C",
+            "SERVING_SYSTEM_ADDRESS = 0x981B4",
+            "MODE_TYPE_ADDRESS = 0x98912",
+            "DEVICE_SECRET_ADDRESS = 0x9896C",
+            "PRODUCT_SECRET_ADDRESS = 0x989B0",
+            "DEVICE_NAME_ADDRESS = 0x98A58",
+            "PRODUCT_KEY_ADDRESS = 0x98A98",
+            "SIM_STATUS_ADDRESS = 0x98AB0",
+        ]
+        for text in expected:
+            self.assertIn(text, self.modem)
+
+    def test_ui_has_requested_sections_and_secret_masking(self):
+        for heading in (
+            "<h3>Mainboard</h3>",
+            "<h3>Modem</h3>",
+            "<h3>SIM</h3>",
+            "<h3>Mobilfunk</h3>",
+            "<h3>Netzwerk</h3>",
+            "<h3>Cloud</h3>",
+            "<h3>Statistik / Fehler</h3>",
+        ):
+            self.assertIn(heading, self.lte_ui)
+        self.assertIn('QCheckBox("Cloud-Secrets anzeigen")', self.lte_ui)
+        self.assertIn("••••••••••••••••", self.lte_ui)
+        self.assertIn("Mobilfunk-IP / PDP-IP", self.lte_ui)
+        self.assertIn("MQTT / Cloud", self.lte_ui)
 
     def test_unverified_ascii_candidate_is_not_presented_as_confirmed_id(self):
         self.assertIn("unverified_device_id_candidate", self.modem)
-        self.assertIn("stabile Zuordnung im Binary noch offen", self.desktop)
-        self.assertIn("wird bewusst nicht als ID ausgegeben", self.desktop)
+        self.assertNotIn("Device-/DTU-ID:", self.lte_ui)
 
     def test_advanced_block_reset_only_deletes_local_pending_marker(self):
         self.assertIn('QCheckBox("Blockzustand zurücksetzen erlauben")', self.desktop)
