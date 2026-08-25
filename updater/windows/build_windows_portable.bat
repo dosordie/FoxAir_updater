@@ -47,7 +47,7 @@ echo [3/9] PySide6-GUI als One-Folder-App bauen ...
   --windowed ^
   --name "%APP_NAME%" ^
   --icon "%ICON_FILE%" ^
-  updater\windows\foxair_updater_lte_diagnostics.py || goto :err
+  updater\windows\foxair_updater_operator_display.py || goto :err
 
 if not exist "%OUT%\%APP_NAME%.exe" (
   echo FEHLER: %OUT%\%APP_NAME%.exe fehlt.
