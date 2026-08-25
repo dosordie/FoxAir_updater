@@ -1,23 +1,23 @@
 [Unit]
-Description=FoxAir PHNIX Fake ADB Server
+Description=FoxAir PHNIX Fake ADB Server for existing QEMU lab
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=foxair-adb
-Group=foxair-adb
+# The real modem exposes a root ADB shell.  The QEMU-backed test service must
+# likewise read/write the existing rootfs, invoke chroot/qemu-arm-static and
+# observe/signal the original ARM service process.  This VM is lab-only.
+User=root
+Group=root
 EnvironmentFile=-/etc/default/foxair-fake-adb
 ExecStart=/usr/bin/python3 /opt/foxair-fake-adb/foxair_fake_adb_server.py
 Restart=on-failure
 RestartSec=1
 NoNewPrivileges=true
-PrivateDevices=true
 ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=/var/lib/foxair-fake-adb
-CapabilityBoundingSet=
-AmbientCapabilities=
+ProtectSystem=full
+ReadWritePaths=/var/lib/foxair-fake-adb /opt/phnix-lab
 
 [Install]
 WantedBy=multi-user.target
