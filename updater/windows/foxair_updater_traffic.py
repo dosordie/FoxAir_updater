@@ -92,7 +92,9 @@ class MainWindow(operator.MainWindow):
         if self._traffic_running: return
         self._traffic_running = True; self.traffic_status.setText("Bitte warten …")
         descriptions = {
-            "enable": "Diagnose wird aktiviert und die phnixIot4G-Version geprüft.",
+            "enable": ("Diagnose wird aktiviert: SHA256 wird direkt auf dem Modem geprüft; "
+                       "anschließend werden PID, Prozess-Lebendigkeit, /proc/<PID>/exe und "
+                       "/proc/<PID>/maps unmittelbar vor dem gdbserver-Attach erneut geprüft."),
             "disable": "Diagnose wird deaktiviert; der temporäre Hook wird entfernt.",
             "refresh": "Traffic-Daten werden jetzt manuell aktualisiert.",
         }
@@ -121,7 +123,8 @@ class MainWindow(operator.MainWindow):
             self.traffic_status.setText("Aktiv – passiv angehängt"); self._traffic_timer.start()
             added = self._traffic_ring.add_json_lines(data)
             if action == "enable":
-                self._log("[Modem Diagnose / Traffic] Diagnose ist aktiv und passiv angehängt.")
+                self._log("[Modem Diagnose / Traffic] Diagnose ist aktiv und passiv angehängt; "
+                          "alle modemseitigen Sicherheitsprüfungen wurden bestanden.")
             elif action == "refresh":
                 self._log(f"[Modem Diagnose / Traffic] Aktualisierung abgeschlossen: {added} neue Ereignisse.")
             elif added:

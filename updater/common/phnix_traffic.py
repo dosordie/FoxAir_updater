@@ -8,7 +8,6 @@ data.  The on-device helper is removed again when tracing is disabled.
 from __future__ import annotations
 
 import json
-import hashlib
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,9 +15,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .adb_transport import AdbClient
-from .runtime_profile import SERVICE_SHA256
-
-EXPECTED_SERVICE_SHA256 = SERVICE_SHA256.lower()
 MAX_PAYLOAD = 64 * 1024
 REMOTE_HELPER = "/data/local/tmp/foxair_traffic_trace"
 REMOTE_STATE = "/data/local/tmp/foxair-traffic"
@@ -192,19 +188,12 @@ class TrafficTracer:
     def enable(self) -> str:
         self._offset = 0
         self._partial = ""
-        # Verify the exact bytes on the trusted host first. No ELF utility is
-        # required on the old modem and the fixed addresses are never enabled
-        # for an unknown executable.
-        raw = self.adb.read_file("/data/phnixIot4G")
-        actual_sha256 = hashlib.sha256(raw).hexdigest()
-        if actual_sha256 != EXPECTED_SERVICE_SHA256:
-            raise RuntimeError(
-                "Nicht unterstützte phnixIot4G-Version – Runtime-Trace deaktiviert"
-            )
+        # ADB shell/cat is not binary-transparent on all legacy modems. The
+        # helper therefore performs every build and process check on-device.
         self.adb.push(self.helper, REMOTE_HELPER + ".new")
         self.adb.shell(
             f"chmod 700 {REMOTE_HELPER}.new && mv {REMOTE_HELPER}.new {REMOTE_HELPER} && "
-            f"{REMOTE_HELPER} start --sha256 {EXPECTED_SERVICE_SHA256}"
+            f"{REMOTE_HELPER} start"
         )
         return self.status()
 
