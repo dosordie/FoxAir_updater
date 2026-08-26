@@ -103,7 +103,9 @@ class MainWindow(operator.MainWindow):
         delete_data = self.traffic_delete.isChecked()
         def work():
             try:
-                if action == "enable": status = tracer.enable(); data = tracer.events()
+                if action == "enable":
+                    status = tracer.enable()
+                    data = tracer.events() if status == "active" else tracer.startup_diagnostics
                 elif action == "disable": tracer.disable(delete_data=delete_data); status = "inactive"; data = ""
                 else: status = tracer.status(); data = tracer.events() if status == "active" else ""
                 self._traffic_signals.result.emit(action, status, data)
@@ -118,7 +120,12 @@ class MainWindow(operator.MainWindow):
                 self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
             if self.traffic_delete.isChecked(): self._traffic_ring.clear()
             self._traffic_tracer = None
-            self._log("[Modem Diagnose / Traffic] Diagnose ist inaktiv; temporärer Hook wurde entfernt.")
+            if action == "enable":
+                self._log("[Modem Diagnose / Traffic] Start fehlgeschlagen; Debug-Dateien bleiben "
+                          "auf dem Modem erhalten. Debugger-Ausgaben:\n" + (data or "<keine Ausgabe>"))
+            else:
+                self._log("[Modem Diagnose / Traffic] Diagnose ist inaktiv; es wurde kein automatisches "
+                          "Purge ausgeführt.")
         else:
             self.traffic_status.setText("Aktiv – passiv angehängt"); self._traffic_timer.start()
             added = self._traffic_ring.add_json_lines(data)
