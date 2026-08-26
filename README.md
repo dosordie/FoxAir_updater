@@ -5,93 +5,127 @@ Experimentelles Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX
 > [!CAUTION]
 > ## Experimentell – echtes Versionsupdate noch nicht live validiert
 >
-> Dieses Projekt befindet sich im **Entwicklungs- und Teststadium**.
-> Ein vollständiges Firmwareupdate von einer installierten Mainboard-Version auf
-> eine andere Version wurde auf realer Hardware **noch nicht erfolgreich durchgeführt
-> und bestätigt**.
+> Dieses Projekt befindet sich weiterhin im **Entwicklungs- und Teststadium**.
+> Ein vollständiges Firmwareupdate von einer installierten Mainboard-Version auf eine andere Version wurde auf realer Hardware **noch nicht erfolgreich durchgeführt und bestätigt**.
 >
-> Der reale OTA-Ablauf wurde bislang nur mit **V3.3 → V3.3** getestet. Das Mainboard
-> hat dieses Firmwareangebot erwartungsgemäß abgelehnt, weil V3.3 bereits installiert
-> war. Dabei wurden keine Firmwareblöcke geschrieben.
+> Der reale OTA-Ablauf wurde bislang mit **V3.3 → V3.3** getestet. Das Mainboard hat dieses Firmwareangebot erwartungsgemäß abgelehnt, weil V3.3 bereits installiert war. Dabei wurden keine Firmwareblöcke geschrieben.
 >
-> Damit ist insbesondere **nicht nachgewiesen**, dass ein echtes Update wie
-> **V3.3 → V3.4** bereits sicher oder vollständig funktionsfähig ist.
+> Damit ist insbesondere **nicht nachgewiesen**, dass ein echtes Update wie **V3.3 → V3.4** bereits sicher oder vollständig funktionsfähig ist.
 >
-> Bei der Verwendung kann etwas schiefgehen. Im ungünstigsten Fall können Mainboard,
-> LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein
-> manueller Recovery- oder Reparatureingriff erforderlich werden.
+> Bei der Verwendung kann etwas schiefgehen. Im ungünstigsten Fall können Mainboard, LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
 >
-> **Nutzung ausschließlich auf eigenes Risiko.** Jeder Anwender muss selbst
-> entscheiden, ob er dieses experimentelle Werkzeug verwendet und die möglichen
-> Folgen verantworten kann. Der Ersteller übernimmt, **soweit gesetzlich zulässig**,
-> keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden,
-> die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
+> **Nutzung ausschließlich auf eigenes Risiko.** Jeder Anwender muss selbst entscheiden, ob er dieses experimentelle Werkzeug verwendet und die möglichen Folgen verantworten kann. Der Ersteller übernimmt, **soweit gesetzlich zulässig**, keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
 
-Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt
-[`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), das weiterhin für
-normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
+Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt [`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), das weiterhin für normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
 
-## Aktueller Stand
+## Windows GUI v0.3.1
 
-### Linux / Raspberry Pi
-
-Der Linux-/Raspberry-Pi-Weg ist über einen Installer und einen einfachen Launcher nutzbar:
-
-```text
-./foxair-updater status
-./foxair-updater check MANIFEST
-./foxair-updater update MANIFEST --confirm
-./foxair-updater restore
-./foxair-updater manifest FIRMWARE ...
-./foxair-updater version
-```
-
-Für Entwicklung und Abnahme existiert zusätzlich:
-
-```text
-./foxair-updater same-version MANIFEST --confirm
-```
-
-### Windows
-
-Zusätzlich gibt es eine **experimentelle Windows-GUI** als Portable-ZIP und Setup-EXE.
-Die nächste Windows-Fassung ist **v0.1.8**.
-
-Öffentliche Windows-Versionen werden hier bereitgestellt:
+Die Windows-Version ist inzwischen der hauptsächliche Entwicklungsweg des Projekts. Sie steht als **Portable-ZIP** und **Setup-EXE** auf der GitHub-Releases-Seite bereit:
 
 **[FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)**
+
+ADB wird weiterhin **nicht mitgeliefert**. Die GUI verlinkt den SIMCom-USB-Treiber, die offiziellen Android Platform Tools und die LTE-/USB-Anleitung. Eine vorhandene `adb.exe` kann ausgewählt und gespeichert werden.
 
 > [!NOTE]
 > Die Windows-Builds sind derzeit nicht mit einem kommerziellen Code-Signing-Zertifikat signiert. Windows SmartScreen kann deshalb beim ersten Start **„Der Computer wurde durch Windows geschützt“** anzeigen. Wenn die Datei bewusst von der offiziellen GitHub-Releases-Seite geladen wurde, **Weitere Informationen** und anschließend **Trotzdem ausführen** wählen.
 
-> [!IMPORTANT]
-> Der Windows-Pfad wurde bereits real für **ADB-Verbindung, Remote-ADB über Raspberry Pi,
-> Originalstatus, read-only LTE-Backup/Firmware-Download und Dry-Run** getestet.
->
-> Zusätzlich wurde der normale Windows-**Firmware-Update**-Aufruf über Remote-ADB real mit
-> **V3.3 → V3.3** ausgeführt. Das Mainboard erkannte die bereits installierte Firmware,
-> beendete den Ablauf sicher mit `same-version`, `C357=false` und `C5A8=false`, und der
-> Originalbetrieb wurde anschließend wieder bestätigt. Es wurden dabei **keine Firmwaredaten
-> übertragen**.
->
-> v0.1.7 meldete nach diesem bereits sauber terminal beendeten Same-Version-Lauf noch einen
-> rein hostseitigen Fehler, weil der Windows-Sicherheitswrapper den `run-state.json` in einem
-> anderen lokalen Verzeichnis suchte als dem tatsächlich verwendeten `--state-dir`. Dieser
-> Auswertungsfehler ist in v0.1.8 korrigiert. Ebenfalls korrigiert ist das Speichern/Laden der
-> Remote-ADB-IP und des Ports.
->
-> Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung
-> wurde mit der Windows-GUI weiterhin noch nicht live durchgeführt**.
+### Was die Windows-Version bietet
 
-Die Windows-Version refaktoriert die gemeinsame OTA-Logik bewusst nicht. Details stehen unter
-[`updater/windows/README.md`](updater/windows/README.md).
+- lokale ADB-Verbindung direkt per USB;
+- optional Remote-ADB über einen Raspberry Pi;
+- automatische bzw. manuelle ADB-Reconnect-Funktion;
+- read-only Backup/Firmware-Download per `adb pull`;
+- Sicherung von Firmware-Cache, `OTA_INFO`, Statistik und optional dem Originaldienst `phnixIot4G`;
+- Originalstatus- und Recovery-Prüfung;
+- Firmware-Dry-Run;
+- Manifest-Erzeugung direkt aus einer Firmwaredatei;
+- automatischen Full-Abgleich von Manifest, Firmwareidentität, Größe, MD5 und SHA256;
+- lesbare Ablauf- und Fortschrittsanzeige für den Firmwareupdate-Pfad;
+- read-only Modem-, SIM-, LTE-, Cloud-/MQTT- und Mainboarddiagnose;
+- optionale detaillierte Modem-/Traffic-Diagnose unter **Erweitert**;
+- Wartungsfunktion für den Mainboard-OTA-Vorgangszähler;
+- Loganzeige und Logexport;
+- Portable- und Setup-Build ohne notwendige Python-Installation beim Anwender.
 
-Windows-Releases werden über einen separaten manuellen Actions-Workflow veröffentlicht.
-Unter **Actions → Release Windows** wird nur die Zielversion eingegeben; anschließend erscheinen
-Portable-ZIP und Setup-EXE auf der normalen GitHub-Releases-Seite. Die Windows-Tags verwenden
-das Schema `windows-v...`.
+### Neu bzw. überarbeitet in v0.3.1
 
-## Linux / Raspberry Pi installieren
+- Die **OTA-Vorprüfung verlangt eine aktive MQTT-/Cloud-Verbindung**, bevor ein echtes Update gestartet wird. Hintergrund ist der originale PHNIX-Rebootmechanismus nach längerer Cloud-Offlinezeit.
+- Die Firmware-Update-Seite zeigt Fortschritt, übertragene Datenmenge und die seit Beginn der lokalen Cloud-Sperre **verstrichene Zeit** deutlicher an.
+- Bei einem kurzzeitigen ADB-Verbindungsverlust kann die GUI den vorhandenen OTA-Zustand erneut read-only prüfen, ohne einen zweiten Updatevorgang zu starten.
+- Nach begonnenem C5A8-Firmwaretransfer bleibt der originale `phnixIot4G`-Dienst autoritativ; ein reiner Windows-/ADB-Monitoringfehler darf den laufenden Transfer nicht aktiv stoppen.
+- Die Backup-Seite erklärt die einzelnen Sicherungsoptionen genauer.
+- Die Manifest-Seite beschreibt jetzt, wofür das Manifest benötigt wird und wie Firmwareidentität und Prüfsummen damit abgesichert werden.
+- Die Verbindungsseite wurde aufgeräumt und die Remote-ADB-Hilfe für Raspberry Pi optisch abgegrenzt.
+- `Modem Info / LTE Diagnose` bleibt normal sichtbar; nur die detaillierte `Modem Diagnose / Traffic`-Seite wird über **Erweitert** ein- oder ausgeblendet.
+- Der frühere separate Gleichversionstest und die zugehörige passive-Logger-Checkbox wurden aus der normalen Endanwender-GUI entfernt. Die Backend-/Lab-Funktionen bleiben erhalten.
+- Die getestete Mainboard-OTA-Zählerfunktion wird als **Wartung – Mainboard OTA-Vorgänge** geführt.
+- Modem- und Wartungsfunktionen werden während eines laufenden Firmwareupdates gesperrt, damit keine parallelen Eingriffe stattfinden.
+
+### Screenshots
+
+| Verbindung | Backup |
+|---|---|
+| <img src="docs/DTU_1_connect.png" width="520" alt="FoxAir Updater Verbindung"> | <img src="docs/DTU_2_Backup.png" width="520" alt="FoxAir Updater Backup"> |
+
+| Firmware Update | Modem Info / LTE Diagnose |
+|---|---|
+| <img src="docs/DTU_3_update.png" width="520" alt="FoxAir Updater Firmware Update"> | <img src="docs/DTU_4_info.png" width="520" alt="FoxAir Updater Modem Info"> |
+
+### Aktuell real bestätigt
+
+Real getestet bzw. bestätigt sind unter anderem:
+
+- lokale und Remote-ADB-Verbindung;
+- Originalstatus;
+- read-only LTE-Backup/Firmware-Download;
+- Dry-Run;
+- normaler Windows-Firmware-Update-Aufruf mit **V3.3 → V3.3** bis zur sicheren Gleichversionsablehnung;
+- Mainboard-OTA-Vorgangszähler-Wartung einschließlich Sicherung, kontrolliertem Dienstneustart und Verifikation.
+
+Beim V3.3→V3.3-Test erkannte das Mainboard die bereits installierte Firmware und beendete den Ablauf vor C357/C5A8. Es wurden keine Firmwaredaten übertragen.
+
+Ein **echter Versionswechsel mit C5A8-Datenübertragung auf realer Hardware ist weiterhin nicht live bestätigt**.
+
+### Windows-Architektur
+
+Die Windows-Version hält die gemeinsame OTA-Logik bewusst zentral:
+
+```text
+FoxAir_Updater.exe
+        ↓
+Windows-GUI / Statusdarstellung
+        ↓
+private Python Runtime
+        ↓
+Windows-Sicherheitswrapper
+        ↓
+gemeinsamer PHNIX OTA-Controller
+        ↓
+extern ausgewählte adb.exe
+        ↓
+PHNIX LTE-Modem
+```
+
+Der Windows-Build verwendet die gemeinsamen Controller- und `updater/common`-Quellen und hält damit keine separate zweite OTA-Implementierung vor.
+
+Details zum Windows-Build und zur internen Architektur stehen unter [`updater/windows/README.md`](updater/windows/README.md).
+
+### Remote ADB über Raspberry Pi
+
+Wenn das LTE-Modem per USB an einem Raspberry Pi hängt, kann der ADB-Server im lokalen LAN bereitgestellt werden:
+
+```bash
+adb kill-server
+adb -a -P 5038 nodaemon server
+```
+
+Zum Beenden auf dem Raspberry Pi **Strg+C** drücken. In der Windows-GUI werden IP-Adresse und Port eingetragen. Auch im Remote-Modus wird unter Windows eine lokale `adb.exe` als Client benötigt.
+
+Der Remote-ADB-Port sollte nur in einem vertrauenswürdigen lokalen Netz freigegeben werden.
+
+## Linux / Raspberry Pi
+
+Der Linux-/Raspberry-Pi-Weg bleibt weiterhin nutzbar und verwendet denselben gemeinsamen OTA-Kern.
 
 Als normaler Benutzer ausführen, **nicht** mit `sudo` starten:
 
@@ -102,9 +136,20 @@ wget -O install.sh \
 bash install.sh
 ```
 
+Danach stehen unter anderem zur Verfügung:
+
+```text
+./foxair-updater status
+./foxair-updater check MANIFEST
+./foxair-updater update MANIFEST --confirm
+./foxair-updater restore
+./foxair-updater manifest FIRMWARE ...
+./foxair-updater version
+```
+
 Der Installer:
 
-- prüft beziehungsweise installiert `python3`, `adb`, `usbutils`, `git` und CA-Zertifikate;
+- prüft bzw. installiert `python3`, `adb`, `usbutils`, `git` und CA-Zertifikate;
 - verlangt Python 3.10 oder neuer;
 - verwendet einen schlanken Git-Sparse-Checkout;
 - richtet den USB-Zugriff für das PHNIX-LTE-Modem `1e0e:9001` ein;
@@ -118,109 +163,42 @@ Ausführliche Updater-Anleitung:
 Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
 [`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
 
-## Windows GUI v0.1.8
-
-Die Windows-Version verwendet die gemeinsame OTA-Quelle weiterhin unverändert:
-
-```text
-FoxAir_Updater.exe
-        ↓
-Windows-GUI / lesbare Statusdarstellung
-        ↓
-private Python Runtime
-        ↓
-Windows-Sicherheitswrapper
-        ↓
-phnix_local_ota_controller_core.py
-        ↑ bytegleiche Kopie von
-          tools/phnix_ota/phnix_local_ota_controller.py
-        ↓
-extern ausgewählte adb.exe
-        ↓
-PHNIX LTE-Modem
-```
-
-Die zusätzliche Windows-Sicherheitshülle bildet nur die Launcher-Funktionen nach, die unter
-Linux außerhalb des Controllers liegen: Full-Abgleich direkt vor einem echten Update sowie
-Sicherung und Wiederherstellung eines eventuell vorhandenen LTE-Firmware-Caches. Der gemeinsame
-Controller selbst wird dafür **nicht verändert oder refaktoriert**.
-
-**ADB wird nicht mitgeliefert.** Die GUI enthält zuerst einen Link zum benötigten SIMCom-USB-Treiber und anschließend einen Link auf die offizielle Google-Seite für Android SDK Platform Tools. Eine vorhandene `adb.exe` kann ausgewählt und dauerhaft gemerkt werden.
-
-Die GUI bietet unter anderem:
-
-- lokale ADB-Verbindung oder optional Remote-ADB über einen Raspberry Pi;
-- persistente Speicherung von ADB-Pfad, Remote-Modus, Raspberry-Pi-IP/Port, Backup-Ziel sowie zuletzt verwendeten Firmware-/Manifestordnern;
-- ADB-Erkennung und `adb reconnect` bei kurzzeitigem `offline`;
-- **real getestetes read-only LTE-Backup/Firmware-Download per `adb pull`**;
-- frei wählbaren Backup-Zielordner und **Zielordner öffnen** im Windows-Explorer;
-- Originalstatus mit farbiger OK-/Fehleranzeige;
-- **real getesteten Dry-Run**;
-- normalen Update-Aufruf, real bestätigt bis zur sicheren **V3.3→V3.3-Gleichversionsablehnung**;
-- weiterhin **nicht live validierte C5A8-Firmwareübertragung einer anderen Version**;
-- benutzerfreundliche Ablaufanzeige mit grünen Prüfpunkten, gelben Warnungen und roten Fehlern;
-- verständliche Abschlussmeldungen statt technischer `Exit 0`-Popups;
-- Fortschrittsbalken für einen späteren echten C5A8-Transfer auf Basis von `OTA_INFO offset/length`;
-- Restore über den bestehenden Controller;
-- Full-Firmware-/Manifest-Abgleich unmittelbar vor einem echten Update;
-- Sicherung des ursprünglichen LTE-Firmware-Caches analog zum Linux-Launcher;
-- Manifest-Vorschau mit der vorhandenen `--full --show`-Funktion;
-- automatische Full-Manifest-Erzeugung sowie manuellen Fallback;
-- Auswahl originaler Firmwaredateien auch **ohne `.bin`-Endung**;
-- Gleichversionstest im Bereich „Erweitert“;
-- read-only GitHub-Release-Prüfung ohne automatischen Download oder Installation;
-- Loganzeige, Logexport und Protokoll leeren;
-- dasselbe Programmlogo wie `FoxAir_Control` für EXE, Fenster und Setup.
-
-Beim Portable-Build werden der gemeinsame Controller, Runtime-Helfer und `updater/common/*.py`
-bytegleich aus dem Repository kopiert und mit `fc /b` geprüft. Damit entsteht bewusst keine
-zweite Windows-OTA-Implementierung.
-
-### Remote ADB
-
-Für einen Raspberry Pi mit per USB angeschlossenem LTE-Modem kann der ADB-Server kurzfristig
-im lokalen LAN gestartet werden:
-
-```bash
-adb kill-server
-adb -a -P 5038 nodaemon server
-```
-
-Zum Beenden auf dem Raspberry Pi **Strg+C** drücken. In der Windows-GUI werden nur IP-Adresse
-und Port eingetragen. Intern setzt die GUI `ADB_SERVER_SOCKET`, sodass auch der unveränderte
-gemeinsame Controller den entfernten ADB-Server nutzt.
-
-Build-/Release-Anleitung:
-[`updater/windows/README.md`](updater/windows/README.md)
-
 ## Firmware-Backup / Firmware-Download
 
-Für Windows ist inzwischen die grafische Backup-Funktion der empfohlene Weg. Die vollständige
-Anleitung einschließlich SIMCom-Treiber, ADB, Windows-GUI, manueller PowerShell-Alternative und
-Linux/Raspberry Pi steht hier:
+Unter Windows ist die grafische Backup-Funktion der empfohlene Weg. Sie verwendet ausschließlich read-only `adb pull`.
+
+Gesichert werden können:
+
+- `/cache/phnixIot_device_OTA` – aktuell im LTE-Cache vorhandene Firmware-/OTA-Datei;
+- `/data/phnixIot_device_OTA_INFO` – persistenter OTA-/Resume-Zustand;
+- `/data/phnixIot_device_statisic` – persistente Betriebs-, Reset-, Kommunikations- und OTA-Zähler;
+- `/data/phnixIot4G` – originaler PHNIX-LTE-Dienst.
+
+Die vollständige Anleitung steht unter:
 
 **[`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)**
 
-Die Backup-Funktion ist read-only und verwendet ausschließlich `adb pull`. Firmware- und
-Datendateien aus dem LTE-Modem werden nicht automatisch veröffentlicht und dürfen insbesondere
-nicht in dieses öffentliche Repository eingecheckt werden.
+Firmware- und Datendateien aus dem LTE-Modem werden nicht automatisch veröffentlicht und sollen insbesondere nicht in dieses öffentliche Repository eingecheckt werden.
 
-## Firmware bereitstellen
+## Firmware und Manifest
 
-Firmwaredateien werden **nicht über dieses öffentliche GitHub-Repository verteilt**.
-Der Installer lädt keine Mainboard-Firmware herunter.
+Firmwaredateien werden **nicht über dieses öffentliche GitHub-Repository verteilt**. Der Installer lädt keine Mainboard-Firmware herunter.
 
-Firmware und Manifest werden unter Linux lokal gemeinsam abgelegt, zum Beispiel:
+Das Manifest beschreibt die zu übertragende Firmware eindeutig und enthält bzw. bindet unter anderem:
 
-```text
-~/FoxAir_updater/firmware/FW3.4.bin
-~/FoxAir_updater/firmware/FW3.4.json
-```
+- Software-/Produktcode;
+- Firmwareversion;
+- Ziel-/SSID;
+- Dateigröße;
+- MD5;
+- SHA256;
+- Referenz auf die zugehörige Firmwaredatei.
 
-Unter Windows können originale Firmwaredateien ohne Umbenennung über die Manifest-Registerkarte
-analysiert werden. Die Datei muss keine `.bin`-Endung besitzen.
+Damit prüft der Updater vor dem eigentlichen OTA, dass die ausgewählte Firmwaredatei exakt zu den erwarteten Metadaten und Prüfsummen passt.
 
-Ein Manifest kann unter Linux lokal erzeugt werden:
+Unter Windows ist die automatische Full-Variante der empfohlene Weg: Firmware auswählen, analysieren lassen und Manifest automatisch erzeugen. Die Firmwaredatei wird dabei nicht verändert und muss keine `.bin`-Endung besitzen.
+
+Unter Linux kann ein Manifest ebenfalls lokal erzeugt werden, zum Beispiel:
 
 ```sh
 cd ~/FoxAir_updater
@@ -230,9 +208,23 @@ cd ~/FoxAir_updater
   --target-ssid 0063
 ```
 
-Empfohlen ist inzwischen die Full-Variante, welche die Firmwareidentität direkt aus dem Image
-liest. Unter Windows stehen **Vorschau aus Firmware (Full / Show)** und
-**Manifest automatisch erzeugen (Full)** direkt in der GUI zur Verfügung.
+## Technische Sicherheitsgrenze
+
+Der aktuelle Live-Pfad ist für genau den untersuchten Originaldienst `phnixIot4G` ausgelegt:
+
+```text
+Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
+SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
+```
+
+Der frühe OTA-Vorhandshake und der eigentliche Firmwaretransfer werden bewusst unterschiedlich behandelt:
+
+- **Vor dem ersten C5A8** kann ein kontrollierter Guarded-Hold-/Recoverypfad verwendet werden.
+- **Ab dem ersten C5A8** ist der originale PHNIX-Dienst autoritativ; ein Monitoringfehler darf den Transfer nicht automatisch abbrechen.
+- `C36E Status 3` ist **kein sicherer Stopppunkt**.
+- Ein fehlendes `C37B/3` stoppt die anschließende Mainboard-Promotion nicht; das ACK gehört zur Status-/Retrylogik und ist kein Promotion-Gate.
+
+Diese Erkenntnisse basieren auf der analysierten Mainboard-Firmware V3.3. Details befinden sich unter [`docs/reverse_engineering/`](docs/reverse_engineering/).
 
 ## Repository-Struktur
 
@@ -249,47 +241,14 @@ FoxAir_updater/
 ├─ tools/phnix_ota/         # OTA-Controller, Runtime-Helfer, Manifestwerkzeug
 ├─ devtools/                # Simulatoren und Laborwerkzeuge
 ├─ tests/                   # Regressionstests
-└─ foxair-updater           # einfacher Linux-Endanwender-Launcher
+└─ foxair-updater           # Linux-Endanwender-Launcher
 ```
-
-Der Linux-Installer checkt für Endanwender bewusst nur die benötigten Bereiche aus.
-`devtools`, `tests`, `docs/reverse_engineering`, `updater/windows` und
-`firmware_manifests` bleiben auf GitHub, erscheinen aber nicht im normalen
-Linux-Endanwender-Checkout.
-
-## Technische Sicherheitsgrenze
-
-Der aktuelle Live-Pfad ist für genau den untersuchten Originaldienst `phnixIot4G`
-ausgelegt:
-
-```text
-Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
-SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
-```
-
-Der Controller arbeitet fail-closed. Nicht eindeutig terminale Zustände führen zu
-einem geschützten `Guarded Hold`, statt automatisch aggressiv aufzuräumen.
-
-Der bekannte V3.3-Gleichversionstest prüft den frühen Handshake und die sichere
-Ablehnung einer bereits installierten Version. Er beweist ausdrücklich nicht den
-späteren C5A8-Firmware-Schreibpfad eines echten Versionswechsels.
 
 ## Projektumfang
 
-Enthalten sind unter anderem:
+Enthalten sind unter anderem Firmware-Reverse-Engineering, PHNIX-LTE-Modem-/Runtime-Analyse, OTA-/IAP-Protokollanalyse, Firmwareupdate-, Recovery- und Validierungswerkzeuge, Manifest-/Hashprüfung sowie Simulatoren und Regressionstests.
 
-- Firmware-Reverse-Engineering;
-- PHNIX-LTE-Modem-/Runtime-Analyse, soweit für OTA relevant;
-- OTA-/IAP-Protokollanalyse;
-- Firmwareupdate-, Recovery- und Validierungswerkzeuge;
-- Manifest- und Hashprüfung;
-- Simulatoren, Laborwerkzeuge und Regressionstests.
-
-Nicht Schwerpunkt dieses Repositorys sind:
-
-- die normale FoxAir-Control-GUI;
-- normale Endanwender-Steuerlogik;
-- allgemeine Modbus-Werkzeuge ohne direkten Firmware-/Updater-Bezug.
+Nicht Schwerpunkt dieses Repositorys sind die normale FoxAir-Control-GUI, normale Endanwender-Steuerlogik oder allgemeine Modbus-Werkzeuge ohne direkten Firmware-/Updater-Bezug.
 
 ## 💙 Unterstützung
 
@@ -298,18 +257,12 @@ Wenn er dir gefällt oder dir weiterhilft, freue ich mich über eine kleine Spen
 
 [![Spenden via PayPal](https://img.shields.io/badge/Spenden-PayPal-blue.svg?logo=paypal)](https://www.paypal.com/paypalme/AuhuberD)
 
-
 ## Lizenz
 
-Dieses Repository steht unter der **GNU General Public License v3.0**,
-SPDX-Kennung **`GPL-3.0-only`**.
+Dieses Repository steht unter der **GNU General Public License v3.0**, SPDX-Kennung **`GPL-3.0-only`**.
 
 Siehe [`LICENSE`](LICENSE).
 
-Weitergabe und Änderungen sind damit erlaubt, abgeleitete Werke müssen bei
-Weitergabe jedoch ebenfalls unter den Bedingungen der GPLv3 stehen und der
-zugehörige Quellcode muss gemäß den Lizenzbedingungen verfügbar gemacht werden.
+Weitergabe und Änderungen sind damit erlaubt, abgeleitete Werke müssen bei Weitergabe jedoch ebenfalls unter den Bedingungen der GPLv3 stehen und der zugehörige Quellcode muss gemäß den Lizenzbedingungen verfügbar gemacht werden.
 
-Die GPL enthält ausdrücklich einen Gewährleistungs- und Haftungsausschluss. Die
-zusätzlichen technischen Warnhinweise oben bleiben davon unabhängig wichtig, weil
-dieses Projekt einen experimentellen Firmware-Schreibpfad für reale Hardware enthält.
+Die GPL enthält ausdrücklich einen Gewährleistungs- und Haftungsausschluss.
