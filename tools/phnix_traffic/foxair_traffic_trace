@@ -1,14 +1,15 @@
 #!/system/bin/sh
-# Ephemeral, passive tracer for the one verified non-PIE ARM32 build.
+# Ephemeral, metadata-only tracer for the one verified non-PIE ARM32 build.
 set -u
 STATE=/data/local/tmp/foxair-traffic
 BIN=/data/phnixIot4G
 EXPECTED_SHA256=7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 WATCHDOG_PIDS=$STATE/watchdogs.pids
-GDB_INPUT=$STATE/gdb.input
+PAYLOAD_MODE=metadata_only
 
 pid_of_service() { pidof phnixIot4G 2>/dev/null | awk '{print $1}'; }
 watchdog_pids() { ps | awk '$4 == "{helloworld}" {print $1}'; }
+unsupported() { echo "Sicherheitsprüfung fehlgeschlagen: $1 – Runtime-Trace deaktiviert" >&2; exit 3; }
 
 resume_watchdogs() {
   if test -f "$WATCHDOG_PIDS"; then
@@ -16,15 +17,10 @@ resume_watchdogs() {
     rm -f "$WATCHDOG_PIDS"
   fi
 }
-
 freeze_watchdogs() {
   watchdog_pids > "$WATCHDOG_PIDS"
   test -s "$WATCHDOG_PIDS" || unsupported "keine {helloworld}-Watchdogs gefunden"
   while read -r wd; do test -n "$wd" && kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
-}
-unsupported() {
-  echo "Sicherheitsprüfung fehlgeschlagen: $1 – Runtime-Trace deaktiviert" >&2
-  exit 3
 }
 
 verify_running_binary() {
@@ -37,22 +33,66 @@ verify_running_binary() {
   test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || unsupported "SHA256 von $BIN ist ${ACTUAL_SHA256:-nicht ermittelbar}, erwartet $EXPECTED_SHA256"
 }
 
+remove_runtime_markers() {
+  rm -f "$STATE/active" "$STATE/gdb.pid" "$STATE/gdbserver.pid" "$STATE/monitor.pid" \
+    "$STATE/service.pid" "$STATE/gdb.input" "$STATE"/*.fifo "$STATE"/*.pipe
+}
+
+# GDB's command file deliberately contains the orderly sequence after continue:
+# interrupt (SIGINT), delete breakpoints, detach, quit.  TERM is only a fallback.
 stop_debuggers() {
-  if test -r "$STATE/gdb.pid" && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then
-    # Interrupt `continue`, then let the same GDB session detach cleanly.
-    kill -INT "$(cat "$STATE/gdb.pid")" 2>/dev/null || true
-    test -p "$GDB_INPUT" && printf 'detach\nquit\n' > "$GDB_INPUT" || true
+  DETACH_OK=0
+  GDB_PID=$(cat "$STATE/gdb.pid" 2>/dev/null || true)
+  if test -n "$GDB_PID" && kill -0 "$GDB_PID" 2>/dev/null; then
+    kill -INT "$GDB_PID" 2>/dev/null || true
     COUNT=0
-    while kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null && test "$COUNT" -lt 10; do sleep 1; COUNT=$((COUNT + 1)); done
-    kill -TERM "$(cat "$STATE/gdb.pid")" 2>/dev/null || true
+    while kill -0 "$GDB_PID" 2>/dev/null && test "$COUNT" -lt 12; do sleep 1; COUNT=$((COUNT + 1)); done
+    if kill -0 "$GDB_PID" 2>/dev/null; then
+      echo "KRITISCH: GDB konnte das gestoppte Ziel nicht sauber detachieren" >> "$STATE/helper.log"
+      kill -TERM "$GDB_PID" 2>/dev/null || true
+      DETACH_OK=1
+    fi
   fi
-  test -r "$STATE/gdb-input.pid" && kill "$(cat "$STATE/gdb-input.pid")" 2>/dev/null || true
-  test -r "$STATE/gdbserver.pid" && kill -TERM "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || true
+  GDBSERVER_PID=$(cat "$STATE/gdbserver.pid" 2>/dev/null || true)
+  test -n "$GDBSERVER_PID" && kill -TERM "$GDBSERVER_PID" 2>/dev/null || true
+  return "$DETACH_OK"
 }
 
 emergency_cleanup() {
-  stop_debuggers
+  stop_debuggers || true
   resume_watchdogs
+  remove_runtime_markers
+}
+
+critical_failure() {
+  REASON=$1
+  OLD_PID=$(cat "$STATE/service.pid" 2>/dev/null || true)
+  NEW_PID=$(pid_of_service)
+  printf 'critical|%s|old_pid=%s|new_pid=%s|hooks=%s\n' "$REASON" "$OLD_PID" "${NEW_PID:-none}" \
+    "$(tr '\n' ',' < "$STATE/hooks" 2>/dev/null | sed 's/,$//')" > "$STATE/failure"
+  echo "KRITISCH: $REASON (PID alt=$OLD_PID, PID neu=${NEW_PID:-none})" >> "$STATE/helper.log"
+  emergency_cleanup
+}
+
+monitor_trace() {
+  while test -f "$STATE/active"; do
+    OLD_PID=$(cat "$STATE/service.pid" 2>/dev/null || true)
+    NEW_PID=$(pid_of_service)
+    if test -z "$OLD_PID" || test "$OLD_PID" != "$NEW_PID" || ! kill -0 "$OLD_PID" 2>/dev/null; then
+      critical_failure pid_changed
+      return
+    fi
+    if grep -E 'Program received signal SIGSEGV|received signal SIGSEGV' "$STATE/gdb.log" "$STATE/raw.log" >/dev/null 2>&1; then
+      critical_failure sigsegv
+      return
+    fi
+    GDB_PID=$(cat "$STATE/gdb.pid" 2>/dev/null || true)
+    if test -z "$GDB_PID" || ! kill -0 "$GDB_PID" 2>/dev/null; then
+      critical_failure debugger_exited
+      return
+    fi
+    sleep 1
+  done
 }
 
 stop_trace() {
@@ -60,45 +100,81 @@ stop_trace() {
   mkdir -p "$STATE"
   trap emergency_cleanup EXIT INT TERM
   freeze_watchdogs
-  stop_debuggers
+  rm -f "$STATE/active"
+  STOP_OK=0
+  stop_debuggers || STOP_OK=1
   SAME_PID=$(pid_of_service)
-  test -n "$OLD_PID" && test "$SAME_PID" = "$OLD_PID" && kill -0 "$OLD_PID" 2>/dev/null
-  PID_OK=$?
+  if test -z "$OLD_PID" || test "$SAME_PID" != "$OLD_PID" || ! kill -0 "$OLD_PID" 2>/dev/null; then STOP_OK=1; fi
   resume_watchdogs
+  remove_runtime_markers
   trap - EXIT INT TERM
-  rm -f "$STATE/gdb.pid" "$STATE/gdb-input.pid" "$STATE/gdbserver.pid" "$STATE/active" "$GDB_INPUT"
   test "${1:-}" = --purge && rm -rf "$STATE"
-  test "$PID_OK" -eq 0 || { echo "Stopfehler: phnixIot4G-PID ist nicht unverändert aktiv" >&2; return 7; }
+  test "$STOP_OK" -eq 0 || { echo "Stopfehler: Detach fehlgeschlagen oder phnixIot4G-PID geändert" >&2; return 7; }
+  echo stopped
 }
 
 startup_failed() {
-  FAILED_COMPONENT=$1
-  FAILED_LOG=$2
-  echo "Startfehler: $FAILED_COMPONENT wurde innerhalb der Startprüfung beendet" >&2
-  echo "--- $FAILED_LOG ---" >&2
-  if test -r "$FAILED_LOG"; then cat "$FAILED_LOG" >&2; else echo "<Logdatei nicht lesbar>" >&2; fi
-  # Stop surviving tracer processes, but deliberately retain all debug files.
-  stop_trace
+  echo "Startfehler: $1" >&2
+  echo "Startfehler: $1" >> "$STATE/helper.log"
+  emergency_cleanup
   exit 6
 }
 
+append_hook() {
+  ID=$1
+  case "$ID" in
+    mqtt_tx_update) ADDR=0x1F6FC; BODY='printf "FOX|hook_hit|mqtt_tx_update|len=%u|ptr=0x%x\\n",$r1,$r0' ;;
+    mqtt_rx_get) ADDR=0x1EED0; BODY='printf "FOX|hook_hit|mqtt_rx_get|len=0|ptr=0x%x\\n",$r2' ;;
+    mqtt_rx_ota) ADDR=0x1ED98; BODY='printf "FOX|hook_hit|mqtt_rx_ota|len=0|ptr=0x%x\\n",$r2' ;;
+    mqtt_tx_ota) ADDR=0x1F9B0; BODY='printf "FOX|hook_hit|mqtt_tx_ota|len=%u|ptr=0x%x\\n",$r1,$r0' ;;
+    http_ota_chunk) ADDR=0x19A54; BODY='printf "FOX|hook_hit|http_ota_chunk|len=%u|ptr=0x%x\\n",$r1*$r2,$r0' ;;
+    ota_start_mainboard) ADDR=0x19E70; BODY='printf "FOX|hook_hit|ota_start_mainboard|len=0|ptr=0x0\\n"' ;;
+    ota_start_dtu) ADDR=0x19C18; BODY='printf "FOX|hook_hit|ota_start_dtu|len=0|ptr=0x0\\n"' ;;
+    provision_linked_go_query) ADDR=0x16960; BODY='printf "FOX|hook_hit|provision_linked_go_query|len=%u|ptr=0x0\\n",$r1*$r2' ;;
+    provision_legacy_query) ADDR=0x15C58; BODY='printf "FOX|hook_hit|provision_legacy_query|len=%u|ptr=0x0\\n",$r1*$r2' ;;
+    provision_create_by_sign) ADDR=0x164AC; BODY='printf "FOX|hook_hit|provision_create_by_sign|len=0|ptr=0x0\\n"' ;;
+    provision_aliyun_register) ADDR=0x22FF4; BODY='printf "FOX|hook_hit|provision_aliyun_register|len=0|ptr=0x0\\n"' ;;
+    provision_aliyun_register_response) ADDR=0x22B9C; BODY='printf "FOX|hook_hit|provision_aliyun_register_response|len=0|ptr=0x0\\n"' ;;
+    *) echo "Unbekannte Hook-ID: $ID" >&2; return 2 ;;
+  esac
+  test -z "${SEEN:-}" || case ",$SEEN," in *,$ID,*) return 0;; esac
+  SEEN=${SEEN:+$SEEN,}$ID
+  echo "$ID" >> "$STATE/hooks"
+  cat >> "$STATE/trace.gdb" <<EOF
+break *$ADDR
+commands
+ silent
+ $BODY
+ continue
+end
+EOF
+}
+
 start_trace() {
-  test "$#" -eq 0 || unsupported "unerwartete Startparameter"
-  command -v gdb >/dev/null && command -v gdbserver >/dev/null || { echo "gdb/gdbserver missing" >&2; exit 4; }
-  PID=$(pid_of_service); test -n "$PID" || { echo "phnixIot4G inactive" >&2; exit 5; }
+  HOOKS=""
+  while test "$#" -gt 0; do
+    case "$1" in
+      --hook) test "$#" -ge 2 || unsupported "--hook benötigt eine ID"; HOOKS="$HOOKS $2"; shift 2 ;;
+      --hooks) test "$#" -ge 2 || unsupported "--hooks benötigt IDs"; HOOKS="$HOOKS $(echo "$2" | tr ',' ' ')"; shift 2 ;;
+      --mode) test "$#" -ge 2 || unsupported "--mode benötigt einen Wert"; PAYLOAD_MODE=$2; shift 2 ;;
+      *) unsupported "unerwarteter Startparameter: $1" ;;
+    esac
+  done
+  test "$PAYLOAD_MODE" = metadata_only || unsupported "nur metadata_only ist derzeit freigegeben"
+  test -n "$HOOKS" || unsupported "kein Hook ausgewählt"
+  mkdir -p "$STATE"
+  rm -f "$STATE/failure"
+  : > "$STATE/hooks"; : > "$STATE/trace.gdb"; : > "$STATE/helper.log"
+  SEEN=""
+  # Validate and generate every breakpoint before any debugger attach.
+  for ID in $HOOKS; do append_hook "$ID" || { remove_runtime_markers; exit 2; }; done
+  command -v gdb >/dev/null && command -v gdbserver >/dev/null || startup_failed "gdb/gdbserver fehlt"
+  PID=$(pid_of_service); test -n "$PID" || startup_failed "phnixIot4G inaktiv"
   verify_running_binary "$PID"
-  if test -r "$STATE/service.pid"; then
-    stop_trace
-  else
-    emergency_cleanup
-    rm -rf "$STATE"
-  fi
-  mkdir -p "$STATE"; : > "$STATE/events.jsonl"
-  # This first implementation intentionally makes no claim that arbitrary
-  # pointers are map-validated.  Every variable buffer is length-capped and a
-  # failed debugger read only terminates the tracer. No process-memory write or
-  # injected code is used.
-  cat > "$STATE/trace.gdb" <<'EOF'
+  emergency_cleanup
+  mkdir -p "$STATE"
+  # append_hook output survived cleanup because cleanup intentionally retains diagnostics.
+  cat > "$STATE/header.gdb" <<'EOF'
 set architecture arm
 set pagination off
 set confirm off
@@ -111,154 +187,49 @@ set logging overwrite off
 set logging redirect on
 set logging on
 target remote 127.0.0.1:12346
-break *0x1F6FC
-commands
- silent
- if $r1 >= 0 && $r1 <= 65536 && $r0 > 0x1000
-  printf "FOX|mqtt|tx|user/update|%u|0x%x|",$r1,$r0
-  set $i=0
-  while $i<$r1
-   printf "%02x ",*(unsigned char*)($r0+$i)
-   set $i=$i+1
-  end
-  printf "\n"
- end
- continue
-end
-break *0x1EED0
-commands
- silent
- if $r2 > 0x1000 && *(unsigned int*)($r2+4) > 0x1000
-  set $m=*(unsigned int*)($r2+4)
-  if *(unsigned int*)($m+8) <= 65536 && *(unsigned int*)($m+16) > 0x1000
-   set $n=*(unsigned int*)($m+8)
-   set $p=*(unsigned int*)($m+16)
-   printf "FOX|mqtt|rx|user/get|%u|0x%x|",$n,$p
-   set $i=0
-   while $i<$n
-    printf "%02x ",*(unsigned char*)($p+$i)
-    set $i=$i+1
-   end
-   printf "\n"
-  end
- end
- continue
-end
-break *0x1ED98
-commands
- silent
- if $r2 > 0x1000 && *(unsigned int*)($r2+4) > 0x1000
-  set $m=*(unsigned int*)($r2+4)
-  if *(unsigned int*)($m+8) <= 65536 && *(unsigned int*)($m+16) > 0x1000
-   set $n=*(unsigned int*)($m+8)
-   set $p=*(unsigned int*)($m+16)
-   printf "FOX|mqtt|rx|ota|%u|0x%x|",$n,$p
-   set $i=0
-   while $i<$n
-    printf "%02x ",*(unsigned char*)($p+$i)
-    set $i=$i+1
-   end
-   printf "\n"
-  end
- end
- continue
-end
-break *0x19A54
-commands
- silent
- if $r1 <= 65536 && $r2 <= 65536 && $r1*$r2 <= 65536 && $r0 > 0x1000
-  printf "FOX|http|rx|ota_chunk|%u|0x%x|\n",$r1*$r2,$r0
- end
- continue
-end
-break *0x1F9B0
-commands
- silent
- if $r1 >= 0 && $r1 <= 65536 && $r0 > 0x1000
-  printf "FOX|mqtt|tx|ota_update|%u|0x%x|",$r1,$r0
-  set $i=0
-  while $i<$r1
-   printf "%02x ",*(unsigned char*)($r0+$i)
-   set $i=$i+1
-  end
-  printf "\n"
- end
- continue
-end
-break *0x19E70
-commands
- silent
- printf "META|ota_start|mainboard|/cache/phnixIot_device_OTA|%.1024s\n",(char*)0x933E1
- continue
-end
-break *0x19C18
-commands
- silent
- printf "META|ota_start|dtu|/data/phnixIot4G_OTA|%.1024s\n",(char*)0x931A9
- continue
-end
-# Provisioning payload bodies deliberately never enter raw.log: response
-# buffers can contain credentials. These hooks only record safe metadata.
-break *0x16960
-commands
- silent
- printf "META|provision|linked_go_queryiotdevice|http|%u\n",$r1*$r2
- continue
-end
-break *0x15C58
-commands
- silent
- printf "META|provision|legacy_queryiotdevice|http|%u\n",$r1*$r2
- continue
-end
-break *0x164AC
-commands
- silent
- printf "META|provision|linked_go_create_device_by_sign|http|0\n"
- continue
-end
-break *0x22FF4
-commands
- silent
- printf "META|provision|aliyun_dynamic_register|https|0\n"
- continue
-end
-break *0x22B9C
-commands
- silent
- printf "META|provision|aliyun_dynamic_register_response|https|0\n"
- continue
-end
-continue
 EOF
-  # Close the verification/attach race: the same PID, executable link, hash,
-  # liveness and maps readability must still hold immediately before attach.
-  test "$PID" = "$(pid_of_service)" || unsupported "phnixIot4G-PID hat sich vor dem Attach geändert"
+  cat "$STATE/trace.gdb" >> "$STATE/header.gdb"
+  cat >> "$STATE/header.gdb" <<'EOF'
+continue
+delete breakpoints
+detach
+quit
+EOF
+  mv "$STATE/header.gdb" "$STATE/trace.gdb"
+  test "$PID" = "$(pid_of_service)" || unsupported "phnixIot4G-PID hat sich vor Attach geändert"
   verify_running_binary "$PID"
   trap emergency_cleanup EXIT INT TERM
   freeze_watchdogs
   gdbserver --attach 127.0.0.1:12346 "$PID" >"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
   sleep 1
-  kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || startup_failed "gdbserver" "$STATE/gdbserver.log"
-  rm -f "$GDB_INPUT"; mkfifo "$GDB_INPUT"
-  gdb -q -batch -x "$STATE/trace.gdb" < "$GDB_INPUT" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
-  # Keep stdin open while tracing; stop_trace writes detach/quit to this FIFO.
-  (while :; do sleep 3600; done) > "$GDB_INPUT" & echo $! > "$STATE/gdb-input.pid"
+  kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || startup_failed "gdbserver beendet"
+  gdb -q -batch -x "$STATE/trace.gdb" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
   sleep 1
-  kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null || startup_failed "gdb" "$STATE/gdb.log"
-  test "$PID" = "$(pid_of_service)" && kill -0 "$PID" 2>/dev/null || startup_failed "phnixIot4G" "$STATE/gdb.log"
-  echo "$PID" > "$STATE/service.pid"; touch "$STATE/active"; echo active
+  kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null || startup_failed "gdb beendet"
+  test "$PID" = "$(pid_of_service)" && kill -0 "$PID" 2>/dev/null || startup_failed "PID nach Breakpoint-Installation geändert"
+  echo "$PID" > "$STATE/service.pid"
+  touch "$STATE/active"
+  test "$PID" = "$(pid_of_service)" && kill -0 "$PID" 2>/dev/null || startup_failed "PID nach continue geändert"
   resume_watchdogs
   trap - EXIT INT TERM
+  monitor_trace >/dev/null 2>&1 & echo $! > "$STATE/monitor.pid"
+  echo active
 }
 
 status_trace() {
-  if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" && kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then echo active; else echo inactive; fi
+  if test -r "$STATE/failure"; then cat "$STATE/failure"; return; fi
+  if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" \
+    && kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then
+    echo active
+  else
+    remove_runtime_markers
+    echo inactive
+  fi
 }
 
 case "${1:-}" in
- start) shift; start_trace "$@" ;;
- stop) shift; stop_trace "${1:-}" ;;
- status) status_trace ;;
- *) echo "usage: $0 {start|stop [--purge]|status}" >&2; exit 2 ;;
+  start) shift; start_trace "$@" ;;
+  stop) shift; stop_trace "$@" ;;
+  status) status_trace ;;
+  *) echo "usage: $0 {start --hook ID [--hook ID ...] [--mode metadata_only]|stop [--purge]|status}" >&2; exit 2 ;;
 esac

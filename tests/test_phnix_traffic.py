@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 
 from updater.common.phnix_traffic import (
-    EventRing, TrafficTracer, export_events, mask_secret, parse_gdb_trace, sanitize_fields,
+    DEFAULT_HOOKS, HOOKS, EventRing, TrafficTracer, export_events, mask_secret,
+    parse_gdb_trace, sanitize_fields,
 )
 
 HELPER = Path("tools/phnix_traffic/foxair_traffic_trace")
@@ -63,7 +64,19 @@ class TrafficTest(unittest.TestCase):
         for address in ("0x1F6FC", "0x1EED0", "0x1ED98", "0x1F9B0", "0x19A54",
                         "0x19E70", "0x19C18", "0x16960", "0x15C58", "0x164AC",
                         "0x22FF4", "0x22B9C"):
-            self.assertIn(f"break *{address}", hook)
+            self.assertIn(f"ADDR={address}", hook)
+
+    def test_metadata_hook_records_never_contain_payload_bytes(self):
+        parsed = json.loads(parse_gdb_trace(
+            "FOX|hook_hit|mqtt_tx_update|len=123|ptr=0x4567"))
+        self.assertEqual(parsed["channel"], "mqtt_tx_update")
+        self.assertEqual(parsed["length"], 123)
+        self.assertEqual(parsed["payload_type"], "metadata")
+        self.assertIsNone(parsed["payload_hex"])
+
+    def test_safe_default_is_exactly_one_mqtt_tx_hook(self):
+        self.assertEqual(DEFAULT_HOOKS, ("mqtt_tx_update",))
+        self.assertEqual(len(HOOKS), 12)
 
     def test_all_secret_spellings_are_removed_from_ring_and_export(self):
         secrets = {"DeviceSecret": "device-raw-secret", "ProductSecret": "product-raw-secret",
@@ -191,8 +204,8 @@ class TrafficTest(unittest.TestCase):
         self.assertGreaterEqual(hook.count("sleep 1"), 2)
         self.assertLess(hook.index(server_check), hook.index("gdb -q -batch"))
         self.assertLess(hook.index(gdb_check), hook.index('touch "$STATE/active"'))
-        self.assertIn('startup_failed "gdbserver" "$STATE/gdbserver.log"', hook)
-        self.assertIn('startup_failed "gdb" "$STATE/gdb.log"', hook)
+        self.assertIn('startup_failed "gdbserver beendet"', hook)
+        self.assertIn('startup_failed "gdb beendet"', hook)
 
     def test_helper_guards_debugger_stops_with_external_watchdogs(self):
         hook = HELPER.read_text(encoding="utf-8")
@@ -213,8 +226,47 @@ class TrafficTest(unittest.TestCase):
             "set logging file /data/local/tmp/foxair-traffic/raw.log",
         ))
         self.assertIn(initialization, hook)
-        self.assertIn("printf 'detach\\nquit\\n'", hook)
-        self.assertIn('test "$SAME_PID" = "$OLD_PID"', hook)
+        self.assertLess(hook.index("delete breakpoints"), hook.index("detach\nquit"))
+        self.assertIn('test "$SAME_PID" != "$OLD_PID"', hook)
+
+    def test_sigsegv_and_pid_change_are_critical_and_not_ignored(self):
+        hook = HELPER.read_text(encoding="utf-8")
+        self.assertIn("critical_failure sigsegv", hook)
+        self.assertIn("critical_failure pid_changed", hook)
+        self.assertNotIn("SIGSEGV nostop", hook)
+        self.assertNotIn("handle SIGSEGV", hook)
+
+    def test_helper_validates_selection_before_attach_and_cleans_markers(self):
+        hook = HELPER.read_text(encoding="utf-8")
+        self.assertLess(hook.index('test -n "$HOOKS"'), hook.index("gdbserver --attach"))
+        self.assertLess(hook.index('for ID in $HOOKS'), hook.index("gdbserver --attach"))
+        self.assertIn("Unbekannte Hook-ID", hook)
+        self.assertIn('rm -f "$STATE/active" "$STATE/gdb.pid" "$STATE/gdbserver.pid"', hook)
+        self.assertNotIn('rm -f "$STATE/gdb.log"', hook)
+
+    def test_enable_passes_only_selected_hook_ids(self):
+        class FakeAdb:
+            def __init__(self): self.commands = []
+            def push(self, *_args): pass
+            def shell(self, command, check=True):
+                self.commands.append(command)
+                return "active"
+        adb = FakeAdb()
+        tracer = TrafficTracer(adb, HELPER)
+        tracer.enable(("mqtt_rx_get", "http_ota_chunk"))
+        start = next(command for command in adb.commands if " start " in command)
+        self.assertIn("--hook mqtt_rx_get", start)
+        self.assertIn("--hook http_ota_chunk", start)
+        self.assertNotIn("--hook mqtt_tx_update", start)
+
+    def test_enable_rejects_empty_and_unknown_hook_sets_before_push(self):
+        class FakeAdb:
+            def push(self, *_args): raise AssertionError("must reject before push")
+        tracer = TrafficTracer(FakeAdb(), HELPER)
+        with self.assertRaisesRegex(ValueError, "Mindestens"):
+            tracer.enable(())
+        with self.assertRaisesRegex(ValueError, "Unbekannte"):
+            tracer.enable(("not_a_hook",))
 
 
 if __name__ == "__main__":

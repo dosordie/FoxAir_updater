@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QGroupBox, QHBoxLayout, QLabel,
 import foxair_updater_operator_display as operator
 from updater.common.adb_transport import AdbClient
 from updater.common.phnix_traffic import EventRing, TrafficTracer
+from updater.common.phnix_traffic import DEFAULT_HOOKS, HOOKS
 
 
 class TrafficSignals(QObject):
@@ -44,6 +45,24 @@ class MainWindow(operator.MainWindow):
                       "kein RS485-Zugriff und keine Änderung an <code>/data/phnixIot4G</code>. "
                       "Der flüchtige GDB-Hook wird nur für die exakt geprüfte Build-ID aktiviert.")
         note.setWordWrap(True); layout.addWidget(note)
+        hooks_box = QGroupBox("Zu verwendende Hooks"); hooks_layout = QVBoxLayout(hooks_box)
+        self.traffic_hooks = {}
+        for group in ("MQTT", "HTTP / OTA", "Provisionierung"):
+            group_box = QGroupBox(group); group_layout = QVBoxLayout(group_box)
+            for hook_id, (hook_group, label) in HOOKS.items():
+                if hook_group != group: continue
+                checkbox = QCheckBox(label); checkbox.setChecked(hook_id in DEFAULT_HOOKS)
+                self.traffic_hooks[hook_id] = checkbox; group_layout.addWidget(checkbox)
+            hooks_layout.addWidget(group_box)
+        preset_row = QHBoxLayout()
+        mqtt_tx = QPushButton("Nur MQTT TX"); mqtt_tx.clicked.connect(
+            lambda _checked=False: self._select_traffic_hooks(("mqtt_tx_update", "mqtt_tx_ota")))
+        mqtt_rx = QPushButton("Nur MQTT RX"); mqtt_rx.clicked.connect(
+            lambda _checked=False: self._select_traffic_hooks(("mqtt_rx_get", "mqtt_rx_ota")))
+        none = QPushButton("Alle abwählen"); none.clicked.connect(
+            lambda _checked=False: self._select_traffic_hooks(()))
+        for button in (mqtt_tx, mqtt_rx, none): preset_row.addWidget(button)
+        hooks_layout.addLayout(preset_row); layout.addWidget(hooks_box)
         row = QHBoxLayout()
         self.traffic_enable = QCheckBox("Diagnose aktivieren")
         self.traffic_enable.toggled.connect(self._traffic_toggle); row.addWidget(self.traffic_enable)
@@ -66,6 +85,13 @@ class MainWindow(operator.MainWindow):
         box = QGroupBox(title); inner = QVBoxLayout(box); label = QLabel("Noch kein Ereignis.")
         label.setWordWrap(True); inner.addWidget(label); layout.addWidget(box); return label
 
+    def _select_traffic_hooks(self, selected):
+        selected = set(selected)
+        for hook_id, checkbox in self.traffic_hooks.items(): checkbox.setChecked(hook_id in selected)
+
+    def _selected_traffic_hooks(self):
+        return tuple(hook_id for hook_id, checkbox in self.traffic_hooks.items() if checkbox.isChecked())
+
     def _tracer(self):
         if self._traffic_tracer is not None:
             return self._traffic_tracer
@@ -76,19 +102,27 @@ class MainWindow(operator.MainWindow):
         return self._traffic_tracer
 
     def _traffic_toggle(self, checked):
+        hooks = self._selected_traffic_hooks()
+        if checked and not hooks:
+            self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
+            self.traffic_status.setText("Kein Hook ausgewählt")
+            self._log("[Modem Diagnose / Traffic] Start verweigert: Kein Hook ausgewählt.")
+            return
         tracer = self._tracer()
         if tracer is None:
             self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False); return
         if checked:
             self._traffic_ring.clear()
-        self._traffic_work("enable" if checked else "disable", tracer)
+            self._log("[Modem Diagnose / Traffic] Aktivierte Hooks:\n" +
+                      "\n".join(f"- {hook}" for hook in hooks))
+        self._traffic_work("enable" if checked else "disable", tracer, hooks=hooks)
 
     def _traffic_poll(self, manual=False):
         if not self.traffic_enable.isChecked() or self._traffic_running: return
         tracer = self._tracer()
         if tracer: self._traffic_work("refresh" if manual else "poll", tracer)
 
-    def _traffic_work(self, action, tracer):
+    def _traffic_work(self, action, tracer, *, hooks=()):
         if self._traffic_running: return
         self._traffic_running = True; self.traffic_status.setText("Bitte warten …")
         descriptions = {
@@ -104,7 +138,7 @@ class MainWindow(operator.MainWindow):
         def work():
             try:
                 if action == "enable":
-                    status = tracer.enable()
+                    status = tracer.enable(hooks, mode="metadata_only")
                     data = tracer.events() if status == "active" else tracer.startup_diagnostics
                 elif action == "disable": tracer.disable(delete_data=delete_data); status = "inactive"; data = ""
                 else: status = tracer.status(); data = tracer.events() if status == "active" else ""
@@ -114,6 +148,17 @@ class MainWindow(operator.MainWindow):
 
     def _traffic_result(self, action, status, data):
         self._traffic_running = False
+        if status.startswith("critical|"):
+            fields = dict(part.split("=", 1) for part in status.split("|")[2:] if "=" in part)
+            reason = status.split("|", 2)[1]
+            if reason == "sigsegv":
+                message = "phnixIot4G erhielt SIGSEGV während aktiven Hooks: " + fields.get("hooks", "unbekannt")
+            elif reason == "pid_changed":
+                message = ("phnixIot4G wurde während des Traces neu gestartet. "
+                           f"PID alt: {fields.get('old_pid', '?')}, PID neu: {fields.get('new_pid', '?')}")
+            else:
+                message = "Debugger wurde unerwartet beendet; aktive Hooks: " + fields.get("hooks", "unbekannt")
+            self._log("[Modem Diagnose / Traffic] KRITISCH:\n" + message)
         if status != "active":
             self._traffic_timer.stop(); self.traffic_status.setText("Inaktiv (Prozess/Hook beendet)")
             if self.traffic_enable.isChecked():
