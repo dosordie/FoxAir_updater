@@ -44,6 +44,108 @@ class MainWindow(traffic.MainWindow):
         if hasattr(self, "adb_remote") and hasattr(self, "remote_host"):
             self._update_window_title()
 
+    def _update(self):
+        widget = super()._update()
+        phase_font = self.progress_text.font()
+        phase_font.setPointSize(max(13, phase_font.pointSize() + 1))
+        phase_font.setBold(True)
+        self.progress_text.setFont(phase_font)
+        return widget
+
+    @staticmethod
+    def _byte_progress_text(offset: int | None, length: int | None) -> str:
+        if isinstance(offset, int) and isinstance(length, int) and length > 0:
+            return (
+                f"100 % – {offset:,} / {length:,} Byte – Übertragung abgeschlossen"
+            ).replace(",", ".")
+        return "100 % – Übertragung abgeschlossen"
+
+    def _render_post_transfer_phase(self, phase: str) -> None:
+        phases = {
+            "transfer-complete": (
+                "transfer-complete",
+                "ok",
+                "Firmwareübertragung vollständig abgeschlossen.",
+                "Übertragung abgeschlossen – Firmware wird im Staging-Bereich geprüft.",
+                "100 % – Übertragung abgeschlossen",
+            ),
+            "staging-verified": (
+                "staging-verified",
+                "ok",
+                "Staging-Firmware wurde vollständig geprüft.",
+                "Staging-Prüfung erfolgreich – Mainboard bereitet die Übernahme vor.",
+                "100 % – Staging geprüft",
+            ),
+            "promotion": (
+                "promotion",
+                "warn",
+                "Mainboard übernimmt die geprüfte Firmware in den Zielbereich.",
+                "Firmware wird auf dem Mainboard übernommen.",
+                "100 % – Firmware wird übernommen",
+            ),
+            "promotion-committed": (
+                "promotion-committed",
+                "ok",
+                "Firmware wurde geprüft, übernommen und als Zielversion bestätigt.",
+                "Firmware übernommen – Mainboard-Abschluss läuft.",
+                "100 % – Firmware übernommen",
+            ),
+            "restoring-original": (
+                "restoring-original",
+                "warn",
+                "LTE-Originalbetrieb wird nach dem Mainboard-Update wiederhergestellt.",
+                "Mainboard-Update abgeschlossen – LTE-Originalbetrieb wird wiederhergestellt.",
+                "100 % – Originalbetrieb wird wiederhergestellt",
+            ),
+            "success": (
+                "phase-success",
+                "ok",
+                "Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.",
+                "Mainboard-Update erfolgreich – Originalbetrieb wird abschließend geprüft.",
+                "100 % – Mainboard-Update erfolgreich",
+            ),
+        }
+        item = phases.get(phase)
+        if not item:
+            return
+        key, level, step_text, large_text, progress_text = item
+        self._set_step(key, level, step_text)
+        self.progress_text.setText(large_text)
+        self.progress.setValue(100)
+        self.progress.setFormat(progress_text)
+
+    def _handle_record(self, record: dict):
+        super()._handle_record(record)
+
+        event = record.get("event")
+        if event == "transfer-complete":
+            offset = record.get("offset")
+            length = record.get("length")
+            self._set_step(
+                "transfer-complete",
+                "ok",
+                (
+                    f"Firmwareübertragung vollständig: {offset:,} / {length:,} Byte."
+                ).replace(",", ".")
+                if isinstance(offset, int) and isinstance(length, int) and length > 0
+                else "Firmwareübertragung vollständig abgeschlossen.",
+            )
+            self.progress_text.setText(
+                "Übertragung abgeschlossen – Firmware wird im Staging-Bereich geprüft."
+            )
+            self.progress.setValue(100)
+            self.progress.setFormat(self._byte_progress_text(offset, length))
+        elif event == "services-restored" and record.get("ok") is True:
+            self.progress_text.setText(
+                "Firmwareupdate erfolgreich – Originaldienst, Watchdogs und Cloud/MQTT laufen wieder."
+            )
+            self.progress.setValue(100)
+            self.progress.setFormat("100 % – Firmwareupdate erfolgreich abgeschlossen")
+
+        phase = self._record_phase(record)
+        if phase:
+            self._render_post_transfer_phase(phase)
+
     def _advanced(self):
         widget = super()._advanced()
         layout = widget.layout()
