@@ -108,9 +108,12 @@ class TrafficTest(unittest.TestCase):
                 self.pushed = True
                 self.commands.append(("push", args))
 
-            def shell(self, command):
+            def shell(self, command, check=True):
                 self.commands.append(((command,), {}))
                 return "active"
+
+            def read_file(self, remote):
+                raise AssertionError(f"unexpected diagnostic read: {remote}")
 
         adb = FakeAdb()
         self.assertEqual(TrafficTracer(adb, "helper").enable(), "active")
@@ -131,6 +134,45 @@ class TrafficTest(unittest.TestCase):
         self.assertEqual(verify_calls, 2)
         self.assertLess(hook.rfind('verify_running_binary "$PID"'),
                         hook.index("gdbserver --attach"))
+
+    def test_failed_enable_reads_both_debug_logs_without_purge(self):
+        class FakeAdb:
+            def __init__(self):
+                self.commands = []
+
+            def push(self, *args):
+                self.commands.append(("push", args))
+
+            def shell(self, command, check=True):
+                self.commands.append(("shell", command, check))
+                if command.endswith(" status; else echo inactive; fi"):
+                    return "inactive"
+                return ""
+
+            def read_file(self, remote):
+                self.commands.append(("read_file", remote))
+                return ("failure from " + remote).encode()
+
+        adb = FakeAdb()
+        tracer = TrafficTracer(adb, "helper")
+        self.assertEqual(tracer.enable(), "inactive")
+        self.assertIn("failure from /data/local/tmp/foxair-traffic/gdbserver.log",
+                      tracer.startup_diagnostics)
+        self.assertIn("failure from /data/local/tmp/foxair-traffic/gdb.log",
+                      tracer.startup_diagnostics)
+        self.assertFalse(any("--purge" in repr(command) for command in adb.commands))
+
+    def test_helper_waits_for_both_debuggers_before_marking_active(self):
+        hook = Path("tools/phnix_traffic/foxair_traffic_trace").read_text(encoding="utf-8")
+        server_check = 'kill -0 "$(cat "$STATE/gdbserver.pid")"'
+        gdb_check = 'kill -0 "$(cat "$STATE/gdb.pid")"'
+        self.assertIn(server_check, hook)
+        self.assertIn(gdb_check, hook)
+        self.assertGreaterEqual(hook.count("sleep 1"), 2)
+        self.assertLess(hook.index(server_check), hook.index("gdb -q -batch"))
+        self.assertLess(hook.index(gdb_check), hook.index('touch "$STATE/active"'))
+        self.assertIn('startup_failed "gdbserver" "$STATE/gdbserver.log"', hook)
+        self.assertIn('startup_failed "gdb" "$STATE/gdb.log"', hook)
 
 
 if __name__ == "__main__":

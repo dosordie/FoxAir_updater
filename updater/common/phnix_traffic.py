@@ -184,18 +184,34 @@ class TrafficTracer:
         self.helper = Path(helper)
         self._offset = 0
         self._partial = ""
+        self.startup_diagnostics = ""
 
     def enable(self) -> str:
         self._offset = 0
         self._partial = ""
+        self.startup_diagnostics = ""
         # ADB shell/cat is not binary-transparent on all legacy modems. The
         # helper therefore performs every build and process check on-device.
         self.adb.push(self.helper, REMOTE_HELPER + ".new")
-        self.adb.shell(
-            f"chmod 700 {REMOTE_HELPER}.new && mv {REMOTE_HELPER}.new {REMOTE_HELPER} && "
-            f"{REMOTE_HELPER} start"
-        )
-        return self.status()
+        self.adb.shell(f"chmod 700 {REMOTE_HELPER}.new && mv {REMOTE_HELPER}.new {REMOTE_HELPER}")
+        # A failed helper start is deliberately non-fatal here: status and both
+        # debugger logs must be collected before any caller can consider cleanup.
+        self.adb.shell(f"{REMOTE_HELPER} start", check=False)
+        status = self.status()
+        if status != "active":
+            self.startup_diagnostics = self._read_startup_diagnostics()
+        return status
+
+    def _read_startup_diagnostics(self) -> str:
+        sections = []
+        for name in ("gdbserver.log", "gdb.log"):
+            remote = f"{REMOTE_STATE}/{name}"
+            try:
+                content = self.adb.read_file(remote).decode("utf-8", errors="replace")
+            except Exception as error:
+                content = f"<nicht lesbar: {error}>"
+            sections.append(f"--- {remote} ---\n{content.rstrip() or '<leer>'}")
+        return "\n".join(sections)
 
     def disable(self, *, delete_data: bool = True) -> None:
         cleanup = " --purge" if delete_data else ""

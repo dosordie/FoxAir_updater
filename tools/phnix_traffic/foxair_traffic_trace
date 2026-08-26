@@ -28,6 +28,17 @@ stop_trace() {
   test "${1:-}" = --purge && rm -rf "$STATE"
 }
 
+startup_failed() {
+  FAILED_COMPONENT=$1
+  FAILED_LOG=$2
+  echo "Startfehler: $FAILED_COMPONENT wurde innerhalb der Startprüfung beendet" >&2
+  echo "--- $FAILED_LOG ---" >&2
+  if test -r "$FAILED_LOG"; then cat "$FAILED_LOG" >&2; else echo "<Logdatei nicht lesbar>" >&2; fi
+  # Stop surviving tracer processes, but deliberately retain all debug files.
+  stop_trace
+  exit 6
+}
+
 start_trace() {
   test "$#" -eq 0 || unsupported "unerwartete Startparameter"
   command -v gdb >/dev/null && command -v gdbserver >/dev/null || { echo "gdb/gdbserver missing" >&2; exit 4; }
@@ -172,12 +183,15 @@ EOF
   verify_running_binary "$PID"
   gdbserver --attach 127.0.0.1:12346 "$PID" >"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
   sleep 1
+  kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || startup_failed "gdbserver" "$STATE/gdbserver.log"
   gdb -q -batch -x "$STATE/trace.gdb" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  sleep 1
+  kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null || startup_failed "gdb" "$STATE/gdb.log"
   echo "$PID" > "$STATE/service.pid"; touch "$STATE/active"; echo active
 }
 
 status_trace() {
-  if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then echo active; else echo inactive; fi
+  if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" && kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then echo active; else echo inactive; fi
 }
 
 case "${1:-}" in
