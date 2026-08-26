@@ -4,8 +4,9 @@ from pathlib import Path
 
 from updater.common.phnix_traffic import (
     DEFAULT_HOOKS, HOOKS, EventRing, TrafficTracer, export_events, mask_secret,
-    parse_gdb_trace, sanitize_fields,
+    decode_payload, parse_gdb_trace, sanitize_fields,
 )
+from updater.common.phnix_frames import modbus_crc16
 
 HELPER = Path("tools/phnix_traffic/foxair_traffic_trace")
 
@@ -17,6 +18,40 @@ class FakeGuardian:
 
 
 class TrafficTest(unittest.TestCase):
+    def test_full_tx_and_rx_payload_records(self):
+        blob = b'{"cmd":"update"}' + b"\x01\x02\x03"
+        raw = ("FOXBIN|mqtt|tx|user/update|16|0|0x1000\n"
+               "FOXBIN|mqtt|rx|user/get|3|16|0x2000")
+        rows = [json.loads(line) for line in parse_gdb_trace(raw, blob).splitlines()]
+        self.assertEqual(rows[0]["payload_hex"], blob[:16].hex(" ").upper())
+        self.assertEqual(rows[1]["payload_hex"], "01 02 03")
+        self.assertEqual(rows[1]["length"], 3)
+
+    def test_host_decoders_keep_raw_and_reuse_phnix_parser(self):
+        body = bytes.fromhex("63 10 08 36 00 02 04 00 01 00 2D")
+        frame = body + modbus_crc16(body).to_bytes(2, "little")
+        kind, _text, fields = decode_payload(frame)
+        self.assertEqual(kind, "phnix")
+        self.assertEqual(fields["address_hex"], "0x0836")
+        event = json.loads(parse_gdb_trace(
+            f"FOXBIN|mqtt|tx|user/update|{len(frame)}|0|0x1", frame))
+        self.assertEqual(event["payload_hex"], frame.hex(" ").upper())
+        self.assertEqual(event["fields"]["values"][1]["value"], 0x2D)
+
+    def test_json_and_unknown_binary_detection(self):
+        kind, text, fields = decode_payload(b'{"deviceSecret":"abcdefgh","command":7}')
+        self.assertEqual(kind, "json")
+        self.assertIn("****efgh", text)
+        self.assertEqual(fields["command"], 7)
+        self.assertEqual(decode_payload(b"\x00\xff\x01")[0], "binary")
+
+    def test_rx_hooks_dereference_message_length_and_payload(self):
+        helper = HELPER.read_text(encoding="utf-8")
+        self.assertIn("*(unsigned int *)($r2+4)+0x08", helper)
+        self.assertIn("*(unsigned int *)($r2+4)+0x10", helper)
+        self.assertIn("append binary memory", helper)
+        self.assertNotIn("printf per byte", helper)
+
     def test_helper_uses_android_shebang_and_unix_line_endings(self):
         helper = HELPER.read_bytes()
         self.assertNotIn(b"\r\n", helper)

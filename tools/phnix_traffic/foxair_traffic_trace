@@ -1,11 +1,11 @@
 #!/system/bin/sh
-# Ephemeral, metadata-only tracer for the one verified non-PIE ARM32 build.
+# Ephemeral full-payload tracer for the one verified non-PIE ARM32 build.
 set -u
 STATE=/data/local/tmp/foxair-traffic
 BIN=/data/phnixIot4G
 EXPECTED_SHA256=7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 WATCHDOG_PIDS=$STATE/watchdogs.pids
-PAYLOAD_MODE=metadata_only
+PAYLOAD_MODE=full
 RUN_ID_FILE=$STATE/run.id
 GDB_INPUT=$STATE/gdb.input
 MAX_TRACE_SECONDS=120
@@ -204,11 +204,12 @@ startup_failed() {
 
 append_hook() {
   ID=$1
+  PROTOCOL= DIRECTION= CHANNEL= PTR= LENGTH= BODY=
   case "$ID" in
-    mqtt_tx_update) ADDR=0x1F6FC; BODY='printf "FOX|hook_hit|mqtt_tx_update|len=%u|ptr=0x%x\n",$r1,$r0' ;;
-    mqtt_rx_get) ADDR=0x1EED0; BODY='printf "FOX|hook_hit|mqtt_rx_get|len=0|ptr=0x%x\n",$r2' ;;
-    mqtt_rx_ota) ADDR=0x1ED98; BODY='printf "FOX|hook_hit|mqtt_rx_ota|len=0|ptr=0x%x\n",$r2' ;;
-    mqtt_tx_ota) ADDR=0x1F9B0; BODY='printf "FOX|hook_hit|mqtt_tx_ota|len=%u|ptr=0x%x\n",$r1,$r0' ;;
+    mqtt_tx_update) ADDR=0x1F6FC; PROTOCOL=mqtt; DIRECTION=tx; CHANNEL=user/update; PTR='$r0'; LENGTH='$r1' ;;
+    mqtt_rx_get) ADDR=0x1EED0; PROTOCOL=mqtt; DIRECTION=rx; CHANNEL=user/get; PTR='*(unsigned int *)(*(unsigned int *)($r2+4)+0x10)'; LENGTH='*(unsigned int *)(*(unsigned int *)($r2+4)+0x08)' ;;
+    mqtt_rx_ota) ADDR=0x1ED98; PROTOCOL=mqtt; DIRECTION=rx; CHANNEL=ota; PTR='*(unsigned int *)(*(unsigned int *)($r2+4)+0x10)'; LENGTH='*(unsigned int *)(*(unsigned int *)($r2+4)+0x08)' ;;
+    mqtt_tx_ota) ADDR=0x1F9B0; PROTOCOL=mqtt; DIRECTION=tx; CHANNEL=ota_update; PTR='$r0'; LENGTH='$r1' ;;
     http_ota_chunk) ADDR=0x19A54; BODY='printf "FOX|hook_hit|http_ota_chunk|len=%u|ptr=0x%x\n",$r1*$r2,$r0' ;;
     ota_start_mainboard) ADDR=0x19E70; BODY='printf "FOX|hook_hit|ota_start_mainboard|len=0|ptr=0x0\n"' ;;
     ota_start_dtu) ADDR=0x19C18; BODY='printf "FOX|hook_hit|ota_start_dtu|len=0|ptr=0x0\n"' ;;
@@ -222,6 +223,19 @@ append_hook() {
   test -z "${SEEN:-}" || case ",$SEEN," in *,$ID,*) return 0;; esac
   SEEN=${SEEN:+$SEEN,}$ID
   echo "$ID" >> "$STATE/hooks"
+  if test "${PROTOCOL:-}" = mqtt && test "$PAYLOAD_MODE" = full; then
+    BODY="set \$fox_ptr=$PTR
+set \$fox_len=$LENGTH
+if \$fox_ptr != 0 && \$fox_len >= 0 && \$fox_len <= 65536
+ append binary memory $STATE/payload.bin \$fox_ptr \$fox_ptr+\$fox_len
+ printf \"FOXBIN|$PROTOCOL|$DIRECTION|$CHANNEL|%u|%u|0x%x\\n\",\$fox_len,\$fox_payload_offset,\$fox_ptr
+ set \$fox_payload_offset=\$fox_payload_offset+\$fox_len
+else
+ printf \"FOX|hook_hit|$ID|len=%u|ptr=0x%x\\n\",\$fox_len,\$fox_ptr
+end"
+  elif test "${PROTOCOL:-}" = mqtt; then
+    BODY="printf \"FOX|hook_hit|$ID|len=%u|ptr=0x%x\\n\",$LENGTH,$PTR"
+  fi
   cat >> "$STATE/trace.gdb" <<EOF
 break *$ADDR
 commands
@@ -243,7 +257,7 @@ start_trace() {
       *) unsupported "unerwarteter Startparameter: $1" ;;
     esac
   done
-  test "$PAYLOAD_MODE" = metadata_only || unsupported "nur metadata_only ist derzeit freigegeben"
+  case "$PAYLOAD_MODE" in metadata_only|preview|full) ;; *) unsupported "unbekannter Payload-Modus" ;; esac
   case "$MAX_TRACE_SECONDS" in *[!0-9]*|'') unsupported "ungültige maximale Laufzeit" ;; esac
   test "$MAX_TRACE_SECONDS" -ge 15 && test "$MAX_TRACE_SECONDS" -le 600 \
     || unsupported "maximale Laufzeit muss zwischen 15 und 600 Sekunden liegen"
@@ -261,7 +275,7 @@ start_trace() {
   RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
   echo "$RUN_ID" > "$RUN_ID_FILE"
   rm -f "$STATE/failure"
-  : > "$STATE/hooks"; : > "$STATE/trace.gdb"; : > "$STATE/helper.log"
+  : > "$STATE/hooks"; : > "$STATE/trace.gdb"; : > "$STATE/helper.log"; : > "$STATE/payload.bin"
   printf 'run_id=%s start\n' "$RUN_ID" >> "$STATE/helper.log"
   SEEN=""
   # Validate and generate every breakpoint before any debugger attach.
@@ -286,6 +300,7 @@ set logging overwrite on
 set logging redirect on
 set logging on
 target remote 127.0.0.1:12346
+set $fox_payload_offset=0
 EOF
   cat "$STATE/trace.gdb" >> "$STATE/header.gdb"
   cat >> "$STATE/header.gdb" <<EOF

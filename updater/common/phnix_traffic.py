@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .adb_transport import AdbClient
+from .phnix_frames import PhnixStreamParser, REGISTER_NAMES
 MAX_PAYLOAD = 64 * 1024
 REMOTE_HELPER = "/data/local/tmp/foxair_traffic_trace"
 REMOTE_STATE = "/data/local/tmp/foxair-traffic"
@@ -76,6 +77,24 @@ class TrafficEvent:
     fields: dict[str, Any] = field(default_factory=dict)
     sensitive: bool = False
 
+    @property
+    def summary(self) -> str:
+        if self.payload_type == "phnix":
+            return (f"0x{self.fields['slave']:02X} FC{self.fields['function']:02X} "
+                    f"Reg {self.fields.get('address_hex', '–')} ×{self.fields.get('quantity', 0)}")
+        if self.payload_type == "json":
+            command = self.fields.get("command") or self.fields.get("cmd") or self.fields.get("code")
+            return f"JSON {command}" if command is not None else "JSON " + str(self.fields)[:64]
+        return self.payload_hex[:80] if self.payload_hex else ("Chunk" if self.payload_type == "chunk" else "")
+
+    def details(self) -> str:
+        raw = self.payload_hex or "–"
+        if self.payload_type == "json":
+            decoded = json.dumps(self.fields, ensure_ascii=False, indent=2)
+        else:
+            decoded = json.dumps(self.fields, ensure_ascii=False, indent=2) if self.fields else "Unbekannte Binärdaten"
+        return f"Raw ({self.length} Byte):\n{raw}\n\nDekodiert:\n{decoded}"
+
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> "TrafficEvent":
         length = int(raw.get("length", 0))
@@ -105,6 +124,34 @@ class TrafficEvent:
         )
 
 
+def decode_payload(payload: bytes) -> tuple[str, str | None, dict[str, Any]]:
+    """Decode on the host while always returning the unmodified raw hex."""
+    raw_hex = payload.hex(" ").upper() or None
+    try:
+        text = payload.decode("utf-8")
+        value = json.loads(text)
+        safe = sanitize_fields(value)
+        return "json", json.dumps(safe, ensure_ascii=False, indent=2), safe if isinstance(safe, dict) else {"value": safe}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    parser = PhnixStreamParser(max_buffer=MAX_PAYLOAD)
+    frames = parser.feed(payload)
+    if len(frames) == 1 and frames[0].raw == payload:
+        decoded = frames[0].decoded()
+        if frames[0].payload and frames[0].address is not None:
+            decoded["values"] = [
+                {"address": address, "address_hex": f"0x{address:04X}",
+                 "value": int.from_bytes(frames[0].payload[index * 2:index * 2 + 2], "big")}
+                for index, address in enumerate(range(frames[0].address,
+                    frames[0].address + len(frames[0].payload) // 2))
+            ]
+            for item in decoded["values"]:
+                if item["address"] in REGISTER_NAMES:
+                    item["name"] = REGISTER_NAMES[item["address"]]
+        return "phnix", None, decoded
+    return "binary", None, {}
+
+
 class EventRing:
     def __init__(self, limit: int = 500):
         self._events: deque[TrafficEvent] = deque(maxlen=limit)
@@ -129,10 +176,31 @@ class EventRing:
         self._events.clear()
 
 
-def parse_gdb_trace(content: str) -> str:
+def parse_gdb_trace(content: str, payload_blob: bytes = b"") -> str:
     """Convert bounded GDB hook records to the canonical JSON-lines format."""
     result = []
     for line in content.splitlines():
+        if line.startswith("FOXBIN|"):
+            parts = line.split("|")
+            if len(parts) != 7:
+                continue
+            _, protocol, direction, channel, length_text, offset_text, pointer = parts
+            try:
+                length, offset = int(length_text), int(offset_text)
+            except ValueError:
+                continue
+            if length < 0 or length > MAX_PAYLOAD or offset < 0 or offset + length > len(payload_blob):
+                continue
+            payload = payload_blob[offset:offset + length]
+            payload_type, payload_text, fields = decode_payload(payload)
+            result.append(json.dumps({
+                "timestamp": datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds"),
+                "protocol": protocol, "direction": direction, "channel": channel,
+                "length": length, "payload_type": payload_type,
+                "payload_hex": payload.hex(" ").upper() or None, "payload_text": payload_text,
+                "fields": fields, "sensitive": False, "pointer": pointer,
+            }, ensure_ascii=False))
+            continue
         if line.startswith("FOX|hook_hit|"):
             parts = line.split("|", 4)
             if len(parts) != 5 or parts[2] not in HOOKS:
@@ -228,7 +296,7 @@ class TrafficTracer:
         self._guardian = None
 
     def enable(
-        self, hooks: Iterable[str] = DEFAULT_HOOKS, *, mode: str = "metadata_only",
+        self, hooks: Iterable[str] = DEFAULT_HOOKS, *, mode: str = "full",
         max_seconds: int = 120,
     ) -> str:
         self._offset = 0
@@ -240,8 +308,8 @@ class TrafficTracer:
         unknown = [hook for hook in selected if hook not in HOOKS]
         if unknown:
             raise ValueError("Unbekannte Traffic-Hook-ID: " + ", ".join(unknown))
-        if mode != "metadata_only":
-            raise ValueError("Derzeit ist ausschließlich metadata_only freigegeben.")
+        if mode not in PAYLOAD_MODES:
+            raise ValueError("Unbekannter Payload-Modus.")
         if not 15 <= max_seconds <= 600:
             raise ValueError("Die maximale Laufzeit muss zwischen 15 und 600 Sekunden liegen.")
         helper_bytes = self.helper.read_bytes()
@@ -327,7 +395,11 @@ class TrafficTracer:
             complete, _, self._partial = combined.rpartition("\n")
         else:
             complete, self._partial = combined, ""
-        return parse_gdb_trace(complete)
+        try:
+            payload_blob = self.adb.read_file(f"{REMOTE_STATE}/payload.bin")
+        except Exception:
+            payload_blob = b""
+        return parse_gdb_trace(complete, payload_blob)
 
 
 def export_events(events: Iterable[TrafficEvent]) -> str:

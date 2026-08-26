@@ -5,9 +5,9 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtWidgets import (QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
                                QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QTextEdit, QVBoxLayout, QWidget)
 
 import foxair_updater_operator_display as operator
 from updater.common.adb_transport import AdbClient
@@ -73,7 +73,9 @@ class MainWindow(operator.MainWindow):
         raw = QGroupBox("Rohereignisse (Ringbuffer: 500)"); raw_layout = QVBoxLayout(raw)
         self.traffic_table = QTableWidget(0, 6)
         self.traffic_table.setHorizontalHeaderLabels(["Zeit", "Richtung", "Protokoll", "Kanal", "Länge", "Kurzinhalt"])
+        self.traffic_table.doubleClicked.connect(self._traffic_details)
         self.traffic_table.horizontalHeader().setStretchLastSection(True); raw_layout.addWidget(self.traffic_table)
+        details = QPushButton("Details"); details.clicked.connect(self._traffic_details); raw_layout.addWidget(details)
         layout.addWidget(raw, 1)
         return page
 
@@ -184,9 +186,8 @@ class MainWindow(operator.MainWindow):
     def _render_traffic(self):
         events = self._traffic_ring.snapshot(); self.traffic_table.setRowCount(len(events))
         for row, event in enumerate(events):
-            short = event.payload_hex or event.payload_text or ("chunk" if event.payload_type == "chunk" else "")
             values = [event.timestamp[11:19], event.direction.upper(), event.protocol.upper(), event.channel,
-                      f"{event.length} B", short[:80]]
+                      f"{event.length} B", event.summary]
             for col, value in enumerate(values): self.traffic_table.setItem(row, col, QTableWidgetItem(value))
         mqtt = [e for e in events if e.protocol == "mqtt"]
         self.traffic_mqtt.setText("<br>".join(f"{e.direction.upper()} {e.channel}: {e.length} B – {(e.payload_hex or '')[:48]}" for e in mqtt[-3:]) or "Noch kein Ereignis.")
@@ -204,3 +205,13 @@ class MainWindow(operator.MainWindow):
         else: self.traffic_http.setText("Noch kein Ereignis.")
         prov = [e for e in events if "register" in e.channel or "queryiotdevice" in e.channel]
         self.traffic_provision.setText(prov[-1].channel if prov else "Noch kein Ereignis.")
+
+    def _traffic_details(self, _checked=False):
+        row = self.traffic_table.currentRow()
+        events = self._traffic_ring.snapshot()
+        if row < 0 or row >= len(events): return
+        dialog = QDialog(self); dialog.setWindowTitle("Traffic-Details"); dialog.resize(760, 520)
+        layout = QVBoxLayout(dialog); text = QTextEdit(); text.setReadOnly(True)
+        text.setPlainText(events[row].details()); layout.addWidget(text)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close); buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons); dialog.exec()
