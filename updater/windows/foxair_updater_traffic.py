@@ -23,6 +23,7 @@ class MainWindow(operator.MainWindow):
     def __init__(self):
         self._traffic_ring = EventRing(500)
         self._traffic_running = False
+        self._traffic_tracer = None
         self._traffic_signals = TrafficSignals()
         self._traffic_signals.result.connect(self._traffic_result)
         self._traffic_signals.error.connect(self._traffic_error)
@@ -66,15 +67,20 @@ class MainWindow(operator.MainWindow):
         label.setWordWrap(True); inner.addWidget(label); layout.addWidget(box); return label
 
     def _tracer(self):
+        if self._traffic_tracer is not None:
+            return self._traffic_tracer
         adb = self._require_adb()
         if not adb: return None
         helper = operator.lte.desktop.app.base.backend_dir() / "tools/phnix_traffic/foxair_traffic_trace"
-        return TrafficTracer(AdbClient(adb, env=self._process_env()), helper)
+        self._traffic_tracer = TrafficTracer(AdbClient(adb, env=self._process_env()), helper)
+        return self._traffic_tracer
 
     def _traffic_toggle(self, checked):
         tracer = self._tracer()
         if tracer is None:
             self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False); return
+        if checked:
+            self._traffic_ring.clear()
         self._traffic_work("enable" if checked else "disable", tracer)
 
     def _traffic_poll(self):
@@ -85,10 +91,11 @@ class MainWindow(operator.MainWindow):
     def _traffic_work(self, action, tracer):
         if self._traffic_running: return
         self._traffic_running = True; self.traffic_status.setText("Bitte warten …")
+        delete_data = self.traffic_delete.isChecked()
         def work():
             try:
                 if action == "enable": status = tracer.enable(); data = tracer.events()
-                elif action == "disable": tracer.disable(delete_data=self.traffic_delete.isChecked()); status = "inactive"; data = ""
+                elif action == "disable": tracer.disable(delete_data=delete_data); status = "inactive"; data = ""
                 else: status = tracer.status(); data = tracer.events() if status == "active" else ""
                 self._traffic_signals.result.emit(status, data)
             except Exception as error: self._traffic_signals.error.emit(str(error))
@@ -101,9 +108,10 @@ class MainWindow(operator.MainWindow):
             if self.traffic_enable.isChecked():
                 self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
             if self.traffic_delete.isChecked(): self._traffic_ring.clear()
+            self._traffic_tracer = None
         else:
             self.traffic_status.setText("Aktiv – passiv angehängt"); self._traffic_timer.start()
-            self._traffic_ring.clear(); self._traffic_ring.add_json_lines(data)
+            self._traffic_ring.add_json_lines(data)
         self._render_traffic()
 
     def _traffic_error(self, message):
@@ -112,16 +120,24 @@ class MainWindow(operator.MainWindow):
 
     def _render_traffic(self):
         events = self._traffic_ring.snapshot(); self.traffic_table.setRowCount(len(events))
-        latest = {}
         for row, event in enumerate(events):
-            latest[(event.protocol, event.channel)] = event
             short = event.payload_hex or event.payload_text or ("chunk" if event.payload_type == "chunk" else "")
             values = [event.timestamp[11:19], event.direction.upper(), event.protocol.upper(), event.channel,
                       f"{event.length} B", short[:80]]
             for col, value in enumerate(values): self.traffic_table.setItem(row, col, QTableWidgetItem(value))
         mqtt = [e for e in events if e.protocol == "mqtt"]
         self.traffic_mqtt.setText("<br>".join(f"{e.direction.upper()} {e.channel}: {e.length} B – {(e.payload_hex or '')[:48]}" for e in mqtt[-3:]) or "Noch kein Ereignis.")
-        chunks = [e for e in events if e.protocol in ("http", "https")]
-        self.traffic_http.setText(f"Empfangene OTA-Daten: {sum(e.length for e in chunks):,} Byte".replace(",", ".") if chunks else "Noch kein Ereignis.")
+        starts = [e for e in events if e.channel == "ota_download_start"]
+        if starts:
+            start = starts[-1]; fields = start.fields
+            start_index = max(i for i, event in enumerate(events) if event is start)
+            chunks = [e for e in events[start_index + 1:] if e.channel == "ota_chunk"]
+            self.traffic_http.setText(
+                f"Typ: {fields.get('download_type', 'unbekannt')}<br>URL: {fields.get('url', '–')}<br>"
+                f"Ziel: {fields.get('target', '–')}<br>Empfang: "
+                + f"{sum(e.length for e in chunks):,} Byte".replace(",", ".")
+                + f"<br>Status: {fields.get('status', 'aktiv')}<br>MD5: nicht sicher verfügbar"
+            )
+        else: self.traffic_http.setText("Noch kein Ereignis.")
         prov = [e for e in events if "register" in e.channel or "queryiotdevice" in e.channel]
         self.traffic_provision.setText(prov[-1].channel if prov else "Noch kein Ereignis.")

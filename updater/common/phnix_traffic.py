@@ -74,6 +74,7 @@ class TrafficEvent:
                 text = json.dumps(sanitize_fields(json.loads(text)), ensure_ascii=False)
             except (json.JSONDecodeError, TypeError):
                 text = None if raw.get("sensitive") else text
+        sensitive = bool(raw.get("sensitive", False))
         return cls(
             timestamp=str(raw.get("timestamp") or datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")),
             protocol=str(raw.get("protocol", "unknown")),
@@ -81,10 +82,10 @@ class TrafficEvent:
             channel=str(raw.get("channel", "unknown")),
             length=length,
             payload_type=str(raw.get("payload_type", "binary")),
-            payload_hex=raw.get("payload_hex"),
-            payload_text=text,
+            payload_hex=None if sensitive else raw.get("payload_hex"),
+            payload_text=None if sensitive else text,
             fields=fields,
-            sensitive=bool(raw.get("sensitive", False)),
+            sensitive=sensitive,
         )
 
 
@@ -116,6 +117,30 @@ def parse_gdb_trace(content: str) -> str:
     """Convert bounded GDB hook records to the canonical JSON-lines format."""
     result = []
     for line in content.splitlines():
+        if line.startswith("META|"):
+            parts = line.split("|", 5)
+            now = datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")
+            if len(parts) == 5 and parts[1] == "ota_start":
+                _, _, download_type, target, url = parts
+                result.append(json.dumps({
+                    "timestamp": now, "protocol": "https" if url.startswith("https:") else "http",
+                    "direction": "rx", "channel": "ota_download_start", "length": 0,
+                    "payload_type": "metadata", "fields": {"download_type": download_type,
+                    "url": url[:1024], "target": target, "status": "aktiv"}, "sensitive": False,
+                }, ensure_ascii=False))
+            elif len(parts) == 5 and parts[1] == "provision":
+                _, _, channel, transport, length_text = parts
+                try:
+                    safe_length = min(MAX_PAYLOAD, max(0, int(length_text)))
+                except ValueError:
+                    continue
+                result.append(json.dumps({
+                    "timestamp": now, "protocol": transport, "direction": "rx",
+                    "channel": channel, "length": safe_length, "payload_type": "metadata",
+                    "fields": {"response": "beobachtet; sensible Felder vor Logspeicherung verworfen"},
+                    "sensitive": True,
+                }, ensure_ascii=False))
+            continue
         if not line.startswith("FOX|"):
             continue
         parts = line.split("|", 6)
@@ -159,8 +184,12 @@ class TrafficTracer:
     def __init__(self, adb: AdbClient, helper: str | Path):
         self.adb = adb
         self.helper = Path(helper)
+        self._offset = 0
+        self._partial = ""
 
     def enable(self) -> str:
+        self._offset = 0
+        self._partial = ""
         self.adb.push(self.helper, REMOTE_HELPER + ".new")
         self.adb.shell(
             f"chmod 700 {REMOTE_HELPER}.new && mv {REMOTE_HELPER}.new {REMOTE_HELPER} && "
@@ -176,5 +205,46 @@ class TrafficTracer:
         return self.adb.shell(f"if [ -x {REMOTE_HELPER} ]; then {REMOTE_HELPER} status; else echo inactive; fi")
 
     def events(self) -> str:
-        raw = self.adb.shell(f"if [ -r {REMOTE_STATE}/raw.log ]; then cat {REMOTE_STATE}/raw.log; fi")
-        return parse_gdb_trace(raw)
+        command = (
+            f"if [ -r {REMOTE_STATE}/raw.log ]; then "
+            f"n=$(wc -c < {REMOTE_STATE}/raw.log); echo FOXAIR_SIZE:$n; "
+            f"if [ $n -gt {self._offset} ]; then dd if={REMOTE_STATE}/raw.log bs=1 "
+            f"skip={self._offset} count=$((n-{self._offset})) 2>/dev/null; fi; "
+            f"else echo FOXAIR_SIZE:0; fi"
+        )
+        response = self.adb.run("shell", command)
+        first, separator, tail = response.partition("\n")
+        if not first.startswith("FOXAIR_SIZE:"):
+            return ""
+        try:
+            size = int(first.split(":", 1)[1])
+        except ValueError:
+            return ""
+        # Log truncation/restart: discard the stale partial record and restart.
+        if size < self._offset:
+            self._offset = 0
+            self._partial = ""
+            return ""
+        self._offset = size
+        combined = self._partial + (tail if separator else "")
+        if combined and not combined.endswith("\n"):
+            complete, _, self._partial = combined.rpartition("\n")
+        else:
+            complete, self._partial = combined, ""
+        return parse_gdb_trace(complete)
+
+
+def export_events(events: Iterable[TrafficEvent]) -> str:
+    """Create a redacted JSON export; raw sensitive payloads are never used."""
+    rows = []
+    for event in events:
+        row = {
+            "timestamp": event.timestamp, "protocol": event.protocol,
+            "direction": event.direction, "channel": event.channel,
+            "length": event.length, "payload_type": event.payload_type,
+            "payload_hex": None if event.sensitive else event.payload_hex,
+            "payload_text": None if event.sensitive else event.payload_text,
+            "fields": sanitize_fields(event.fields), "sensitive": event.sensitive,
+        }
+        rows.append(json.dumps(row, ensure_ascii=False))
+    return "\n".join(rows)

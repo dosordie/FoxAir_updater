@@ -21,11 +21,10 @@ start_trace() {
   command -v gdb >/dev/null && command -v gdbserver >/dev/null || { echo "gdb/gdbserver missing" >&2; exit 4; }
   PID=$(pid_of_service); test -n "$PID" || { echo "phnixIot4G inactive" >&2; exit 5; }
   stop_trace; mkdir -p "$STATE"; : > "$STATE/events.jsonl"
-  # Keep the kernel's readable-map snapshot with the ephemeral trace state.
-  # GDB performs the actual reads while the inferior is stopped; an invalid
-  # access therefore terminates the tracer rather than writing into/injecting
-  # code in the service.  No /proc/PID/mem write is ever issued.
-  awk '$2 ~ /^r/ {print $1}' "/proc/$PID/maps" > "$STATE/readable.maps" || exit 6
+  # This first implementation intentionally makes no claim that arbitrary
+  # pointers are map-validated.  Every variable buffer is length-capped and a
+  # failed debugger read only terminates the tracer. No process-memory write or
+  # injected code is used.
   cat > "$STATE/trace.gdb" <<'EOF'
 set pagination off
 set confirm off
@@ -92,6 +91,64 @@ commands
  if $r1 <= 65536 && $r2 <= 65536 && $r1*$r2 <= 65536 && $r0 > 0x1000
   printf "FOX|http|rx|ota_chunk|%u|0x%x|\n",$r1*$r2,$r0
  end
+ continue
+end
+break *0x1F9B0
+commands
+ silent
+ if $r1 >= 0 && $r1 <= 65536 && $r0 > 0x1000
+  printf "FOX|mqtt|tx|ota_update|%u|0x%x|",$r1,$r0
+  set $i=0
+  while $i<$r1
+   printf "%02x ",*(unsigned char*)($r0+$i)
+   set $i=$i+1
+  end
+  printf "\n"
+ end
+ continue
+end
+break *0x19E70
+commands
+ silent
+ printf "META|ota_start|mainboard|/cache/phnixIot_device_OTA|%.1024s\n",(char*)0x933E1
+ continue
+end
+break *0x19C18
+commands
+ silent
+ printf "META|ota_start|dtu|/data/phnixIot4G_OTA|%.1024s\n",(char*)0x931A9
+ continue
+end
+# Provisioning payload bodies deliberately never enter raw.log: response
+# buffers can contain credentials. These hooks only record safe metadata.
+break *0x16960
+commands
+ silent
+ printf "META|provision|linked_go_queryiotdevice|http|%u\n",$r1*$r2
+ continue
+end
+break *0x15C58
+commands
+ silent
+ printf "META|provision|legacy_queryiotdevice|http|%u\n",$r1*$r2
+ continue
+end
+break *0x164AC
+commands
+ silent
+ printf "META|provision|linked_go_create_device_by_sign|http|0\n"
+ continue
+end
+break *0x22FF4
+commands
+ silent
+ printf "META|provision|aliyun_dynamic_register|https|0\n"
+ continue
+end
+break *0x22B9C
+commands
+ silent
+ printf "META|provision|aliyun_dynamic_register_response|https|0\n"
  continue
 end
 continue
