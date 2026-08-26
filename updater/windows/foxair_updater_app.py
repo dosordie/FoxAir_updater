@@ -625,6 +625,16 @@ class MainWindow(base.MainWindow):
             self._set_step("update-complete", "ok", "Firmwareübertragung und Mainboard-Abschluss erfolgreich.")
             self.progress.setValue(100)
             self.progress.setFormat("100 % – Firmwareupdate abgeschlossen")
+        elif event == "monitoring-connection-lost":
+            self.ota_monitoring_lost = True
+            self.ota_reattach_btn.setVisible(True)
+            self.progress_text.setText(
+                "ADB-Verbindung verloren – Firmwareupdate kann auf LTE-Modem/Mainboard weiterlaufen."
+            )
+            self._set_step(
+                "monitoring-lost", "warn",
+                "ADB-Verbindung verloren. Wärmepumpe und LTE-Modem nicht stromlos machen.",
+            )
 
         phase = self._record_phase(record)
         if phase:
@@ -972,6 +982,7 @@ class MainWindow(base.MainWindow):
             same = self._same_version_seen(records)
             guarded = self._has_event(records, "guarded-hold") or self._has_event(records, "manual-recovery-required")
             completed = self._has_event(records, "complete") or self._has_phase(records, "success")
+            monitoring_lost = self._has_event(records, "monitoring-connection-lost")
             if code == 0 and same:
                 self._flow_title = "Update nicht durchgeführt – gleiche Firmware"
                 self._set_step("update-result", "warn", "Mainboard hat die bereits installierte Firmware erkannt und sicher abgelehnt.")
@@ -987,12 +998,34 @@ class MainWindow(base.MainWindow):
                 self._set_step("update-result", "ok", "Firmwareupdate vollständig und sicher abgeschlossen.")
                 self.progress.setValue(100)
                 self.progress.setFormat("100 % – Firmwareupdate abgeschlossen")
-                QMessageBox.information(
-                    self,
-                    "Firmwareupdate erfolgreich",
-                    "Das Firmwareupdate wurde vollständig abgeschlossen.\n\n"
-                    "Der Originalbetrieb wurde anschließend geprüft.",
+                success_box = QMessageBox(self)
+                success_box.setWindowTitle("Firmwareupdate erfolgreich")
+                success_box.setIcon(QMessageBox.Information)
+                success_box.setText(
+                    '<h2 style="color:#16803a;">✓ Firmwareupdate erfolgreich</h2>'
+                    "<p>Das Firmwareupdate wurde vollständig abgeschlossen.</p>"
+                    "<p>Der Originalbetrieb wurde anschließend geprüft.</p>"
                 )
+                success_box.setStyleSheet(
+                    "QLabel{min-width:520px;font-size:15px;} QPushButton{min-width:110px;min-height:32px;}"
+                )
+                success_box.exec()
+            elif monitoring_lost:
+                self.ota_monitoring_lost = True
+                self.ota_reattach_btn.setVisible(True)
+                self._flow_title = "ADB-Monitoring unterbrochen"
+                self._set_step(
+                    "update-result", "warn",
+                    "Firmwareupdate kann weiterlaufen. Wärmepumpe und LTE-Modem nicht stromlos machen.",
+                )
+                QMessageBox.warning(
+                    self,
+                    "ADB-Verbindung verloren",
+                    "ADB-Verbindung verloren – Firmwareupdate kann auf LTE-Modem/Mainboard weiterlaufen.\n\n"
+                    "Wärmepumpe und LTE-Modem nicht stromlos machen. Anschließend „ADB neu verbinden / "
+                    "OTA-Status prüfen“ verwenden.",
+                )
+                QTimer.singleShot(1500, self._reattach_ota)
             elif guarded:
                 self._flow_title = "Update sicher angehalten"
                 self._set_step("update-result", "error", "Guarded Hold – keine weiteren Updatebefehle ausführen.")

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
 
         self.busy = False
         self.pending_after_reconnect = False
+        self.ota_monitoring_lost = False
         self.pending_manifest_output: Path | None = None
 
         self.controller = backend_dir() / "tools/phnix_ota/phnix_local_ota_controller.py"
@@ -194,9 +196,17 @@ class MainWindow(QMainWindow):
         remote_form.addRow("ADB-Server-Port:", self.remote_port)
         layout.addWidget(remote_form_widget)
 
+        remote_help_frame = QFrame()
+        remote_help_frame.setObjectName("remoteAdbHelp")
+        remote_help_frame.setStyleSheet(
+            "QFrame#remoteAdbHelp{background:#f7f8fa;border:1px solid #d0d5dd;"
+            "border-radius:4px;padding:8px;}"
+        )
+        remote_help_layout = QVBoxLayout(remote_help_frame)
         self.remote_help = QLabel()
         self.remote_help.setWordWrap(True)
-        layout.addWidget(self.remote_help)
+        remote_help_layout.addWidget(self.remote_help)
+        layout.addWidget(remote_help_frame)
 
         self.adb_state = QLabel("ADB noch nicht geprüft.")
         self.adb_state.setWordWrap(True)
@@ -289,8 +299,12 @@ class MainWindow(QMainWindow):
         self.progress_text.setFont(progress_font)
         layout.addWidget(self.progress_text)
         self.progress = QProgressBar()
-        self.progress.setMinimumHeight(34)
+        self.progress.setMinimumHeight(42)
         layout.addWidget(self.progress)
+        self.ota_reattach_btn = QPushButton("ADB neu verbinden / OTA-Status prüfen")
+        self.ota_reattach_btn.clicked.connect(self._reattach_ota)
+        self.ota_reattach_btn.setVisible(False)
+        layout.addWidget(self.ota_reattach_btn)
         self.dry = QPushButton("Vorprüfung / Dry-Run")
         self.dry.clicked.connect(self._dry)
         layout.addWidget(self.dry)
@@ -340,6 +354,25 @@ class MainWindow(QMainWindow):
     def _manifest(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        explanation = QLabel(
+            "<h3>Was ist das Manifest?</h3>"
+            "Das Manifest beschreibt exakt die Firmwaredatei, die an das Mainboard übertragen "
+            "werden soll. Es definiert Software-/Produktcode, Firmware-/Display-Version, "
+            "Ziel/SSID, Dateigröße, MD5, SHA256 und die zugehörige Firmwaredatei.<br><br>"
+            "<h3>Warum wird es benötigt?</h3>"
+            "Es verbindet <b>Firmwaredatei + erkannte Firmwareidentität + kryptografische "
+            "Prüfsummen</b> zu einem eindeutig überprüfbaren Updatepaket. Vor dem Update werden "
+            "Dateizuordnung, Größe, MD5, SHA256, Softwarecode, angebotene Version und "
+            "Mainboard-Ziel geprüft.<br><br>"
+            "<b>Empfohlener Weg (Full):</b> 1. Originale Firmwaredatei auswählen, "
+            "2. „Manifest automatisch erzeugen“ wählen, 3. die automatische Analyse und "
+            "Eintragung der Werte/Prüfsummen abwarten, 4. das Manifest unter „Firmware Update“ "
+            "auswählen.<br><br><b>Das Manifest verändert die Firmwaredatei NICHT.</b> Der manuelle "
+            "Fallback ist nur vorgesehen, wenn die automatische Analyse nicht möglich ist und "
+            "alle Werte sicher bekannt sind."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
         row = QHBoxLayout()
         self.firmware = QLineEdit()
         button = QPushButton("Firmware…")
@@ -698,7 +731,46 @@ class MainWindow(QMainWindow):
         self._buttons()
         self._log(f"[Exit {code}]")
 
-        if op == "adb":
+        if op == "ota-reattach":
+            status = None
+            json_start = output.find("{")
+            if json_start >= 0:
+                try:
+                    candidate = json.loads(output[json_start:])
+                    status = candidate if isinstance(candidate, dict) else None
+                except json.JSONDecodeError:
+                    pass
+            if code == 0 and isinstance(status, dict):
+                self.ota_monitoring_lost = False
+                self.ota_reattach_btn.setVisible(False)
+                if hasattr(self, "_handle_record"):
+                    self._handle_record(status)
+                hook = status.get("hook") if isinstance(status.get("hook"), dict) else {}
+                phase = hook.get("phase")
+                info = status.get("ota_info") if isinstance(status.get("ota_info"), dict) else {}
+                if phase == "success" and hook.get("terminal") is True:
+                    self.progress_text.setText("Firmwareupdate erfolgreich abgeschlossen.")
+                elif phase in {"success-report"} or (
+                    info.get("crc_ok") is True and info.get("length", 0) > 0
+                    and info.get("offset") == info.get("length")
+                ):
+                    self.progress_text.setText(
+                        "Firmwareübertragung abgeschlossen – Mainboard verarbeitet das Update weiter."
+                    )
+                elif status.get("transfer_started") is True or phase == "c5a8":
+                    self.progress_text.setText("Firmwareupdate läuft weiter.")
+                else:
+                    self.progress_text.setText(
+                        "OTA-Zustand konnte nicht sicher bestimmt werden. Keine automatische Aktion ausgeführt."
+                    )
+            else:
+                self.ota_monitoring_lost = True
+                self.ota_reattach_btn.setVisible(True)
+                self.progress_text.setText(
+                    "OTA-Zustand konnte nicht sicher bestimmt werden. Keine automatische Aktion ausgeführt."
+                )
+            self._buttons()
+        elif op == "adb":
             device = next((line for line in output.splitlines() if "\tdevice" in line or " device " in line), "")
             offline = next((line for line in output.splitlines() if "\toffline" in line or " offline " in line), "")
             source = (
@@ -803,6 +875,21 @@ class MainWindow(QMainWindow):
         adb = self._require_adb()
         if adb:
             self._run("reconnect", [str(adb), "reconnect"])
+
+    def _reattach_ota(self):
+        """Reconnect ADB and read the existing OTA session without changing it."""
+        adb = self._require_adb()
+        if not adb:
+            return
+        command = [
+            str(backend_python()), str(self.controller), "--adb", str(adb),
+            "--output", "json", "--no-color", "status",
+        ]
+        self._run_sequence(
+            "ota-reattach",
+            [[str(adb), "reconnect"], command],
+            str(backend_dir()),
+        )
 
     def _backup_run(self):
         adb = self._require_adb()
@@ -955,6 +1042,8 @@ class MainWindow(QMainWindow):
         enabled = not self.busy
         self.adb_check.setEnabled(enabled and adb_ready)
         self.adb_reconnect.setEnabled(enabled and adb_ready)
+        if hasattr(self, "ota_reattach_btn"):
+            self.ota_reattach_btn.setEnabled(enabled and adb_ready and self.ota_monitoring_lost)
         self.backup_button.setEnabled(enabled and adb_ready)
         self.status_btn.setEnabled(enabled and adb_ready)
         self.restore_btn.setEnabled(enabled and adb_ready)
