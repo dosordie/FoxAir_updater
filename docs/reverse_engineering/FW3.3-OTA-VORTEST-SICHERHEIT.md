@@ -1,8 +1,8 @@
 # Mainboard-Firmware V3.3 – Sicherheit eines abbrechbaren OTA-Vortests
 
-Stand: 25. August 2026
+Stand: 26. August 2026
 
-Diese Datei untersucht ausschließlich einen OTA-Vorhandshake, der **vor dem ersten C5A8-Firmwaredatenblock** abgebrochen wird. Es wurde keine Verbindung zu ser2net oder realer Hardware geöffnet und nichts gesendet.
+Diese Datei untersucht primär einen OTA-Vorhandshake, der **vor dem ersten C5A8-Firmwaredatenblock** abgebrochen wird. Ergänzend ist inzwischen auch der V3.3-Fehlerfall eines **bereits begonnenen, aber stehenbleibenden C5A8-Transfers** rekonstruiert, insbesondere der `0x7530`-Interblock-Timeout und dessen C544-Recoverypfad. Es wurde keine Verbindung zu ser2net oder realer Hardware geöffnet und nichts gesendet.
 
 > **Korrektur zur Mainboardbasis:** Die V3.3-BIN ist für `0x08050000` gelinkt. Frühere absolute Funktionsadressen aus einer fälschlich angenommenen Basis `0x08080000` lagen `+0x30000` zu hoch. Die hier verwendeten Adressen sind korrigiert. RAM-Adressen, EEPROM-Offets und echte Flashzielbereiche bleiben unverändert.
 
@@ -139,6 +139,173 @@ Der spätere C5A8-Wartepfad besitzt eine Timeoutschwelle von:
 ```
 
 Eine sichere Umrechnung in Sekunden ist statisch nicht belegt.
+
+# C5A8-Transfer stoppt – `0x7530`-Interblock-Timeout und C544-Recovery
+
+Der bisher offene Fall „Firmwaretransfer beginnt, bleibt aber beispielsweise bei 50 % stehen und weder Sender noch Cancelpfad greifen ein“ ist für V3.3 statisch weitgehend geschlossen.
+
+## Bedeutung des `0x7530`-Zählers
+
+Im C5A8-Worker bei ungefähr `0x08078628` wird ein eigener Wartezähler nur dann erhöht, wenn der C5A8-Empfangszustand aktiv ist, aber kein neuer Datenblock zur Verarbeitung bereitsteht:
+
+```text
+state + 0x95 == 1    C5A8-Empfang/Warten aktiv
+state + 0x8C == 0    kein neuer Datenblock vorhanden
+state + 0x7AC++      Interblock-Wartezähler
+```
+
+Die Schwelle lautet:
+
+```text
+0x7530 = 30000 Worker-Aufrufe
+```
+
+Jeder verarbeitete gültige C5A8-Block setzt den Wartezähler wieder auf `0`. Damit ist `0x7530` kein Gesamt-OTA-Timeout, sondern ein **Timeout auf das Ausbleiben des nächsten C5A8-Datenblocks**.
+
+Eine belastbare Umrechnung der 30000 Worker-Aufrufe in Sekunden ist weiterhin nicht belegt.
+
+## Direkte Timeoutaktion
+
+Beim Erreichen der Schwelle wird sinngemäß ausgeführt:
+
+```text
+state + 0x7AC = 0    Interblock-Zähler löschen
+state + 0x95  = 0    aktiven C5A8-Wartezustand beenden
+state + 0x96  = 1    Fallback-/Recoveryzustand setzen
+0x20010AA0    = 1    nachgelagerten Fallbacktimer starten
+```
+
+In diesem Branch wurden **keine** direkten Aufrufe oder Flags für folgende Aktionen gefunden:
+
+```text
+kein C36A-Cancel
+kein Staging-Erase
+kein Target-Erase 0x08050000...
+kein Image-Copy
+kein MD5-Abschluss
+kein Chain-Jump
+kein MCU-Systemreset
+```
+
+Damit gilt:
+
+> **C5A8-Timeout ist nicht identisch mit einem automatischen Cancel.**
+
+## Nachgelagerter Fallbacktimer
+
+Der OTA-Retry-/Control-Worker bei ungefähr `0x08076470` verarbeitet anschließend den gesetzten Fallbackzustand `state+0x96 == 1` und zählt `0x20010AA0` weiter.
+
+Die dabei verwendete zweite Schwelle lautet:
+
+```text
+0x000249F0 = 150000 interne Aufrufe
+```
+
+Bei Erreichen dieser Schwelle wird unter anderem gesetzt:
+
+```text
+0x200133F8 + 0x14 = 1
+```
+
+Dieses Byte ist im Status-/Handshake-Scheduler eindeutig das **C544-Sendeflag**.
+
+## C544 als Recovery-/Resynchronisationspfad
+
+Der Warmlink-Sendescheduler prüft `0x200133F8+0x14`. Bei gesetztem Flag sendet er:
+
+```text
+Slave       0x63
+FC          0x10
+Register    0xC544
+Quantity    13 Register
+```
+
+und löscht anschließend das Sendeflag wieder.
+
+Damit ergibt sich der rekonstruierte V3.3-Pfad:
+
+```text
+C5A8-Transfer läuft
+        ↓
+kein weiterer Block
+        ↓
+0x7530 Interblock-Timeout
+        ↓
+C5A8-Wartezustand verlassen
+        ↓
+Fallbacktimer / 0x249F0
+        ↓
+C544-Softwareinfo senden
+        ↓
+Gegenstelle kann OTA-Zustand neu synchronisieren / Resume vorbereiten
+```
+
+C544 enthält die aktuelle Board-Softwareidentität und -version. Der originale LTE-Dienst `phnixIot4G` verwendet genau dieses Telegramm für seine bekannte Resume-Entscheidung. Der Modemdienst prüft dabei u. a. gespeicherten Offset, Dateilänge, Softwarecode und Zielversion und stößt bei gültigem Resume anschließend einen erneuten C350/C357-Handschlag an. Siehe [`PHNIX_phnixIot4G_C544_softcode_resume.md`](PHNIX_phnixIot4G_C544_softcode_resume.md).
+
+## Abgrenzung zum echten C36A-Cancel
+
+Der echte Cancelworker bei `0x08078D68` wird nur über das separate Cancel-Request-Flag:
+
+```text
+0x200133F8 + 0x1B = 1
+```
+
+aktiviert. Dieses Flag stammt aus dem C36A-RX-Pfad.
+
+Der `0x7530`-Timeout setzt dieses Flag nicht. Er führt daher nicht automatisch die C36A-Aktionen aus, insbesondere nicht:
+
+- EEPROM `0x3F0` auf 0 setzen,
+- C36C-Cancelbestätigung vorbereiten,
+- optionalen Staging-Erase ausführen.
+
+## Zustand eines nur teilweise übertragenen Images
+
+Ein bereits empfangener Teil der Firmware verbleibt zunächst im Stagingbereich ab:
+
+```text
+0x080A1000
+```
+
+Das aktuell laufende Mainimage bei:
+
+```text
+0x08050000
+```
+
+wird durch diesen Timeoutpfad nicht angefasst.
+
+Die Promotion setzt einen vollständig abgeschlossenen C5A8-Transfer und die erfolgreiche erste MD5-Prüfung über das Stagingimage voraus. Ein halbes bzw. unvollständiges Image erreicht diesen Pfad nicht.
+
+Damit wurde für den reinen Timeoutpfad kein Mechanismus gefunden, der ein unvollständiges Stagingimage:
+
+- nach `0x08050000` kopiert,
+- bootet,
+- oder autonom zur Promotion freigibt.
+
+## Wenn keine Gegenstelle mehr reagiert
+
+Auch für den Extremfall:
+
+```text
+Transfer stoppt teilweise
+kein C36A
+kein Reboot
+keine Gegenstelle reagiert auf C544
+```
+
+wurde aus dem `0x7530`-Pfad heraus kein autonomer destruktiver Folgepfad gefunden.
+
+Statisch ergibt sich:
+
+1. aktiver C5A8-Wartezustand endet,
+2. C544 wird nach dem zweiten Fallbacktimer angefordert/gesendet,
+3. vorhandene Teilblöcke bleiben im Stagingbereich,
+4. das laufende Image bleibt unverändert,
+5. kein automatischer Cancel, Erase, Copy, Jump oder Reset wird ausgelöst.
+
+Ein neu eintreffender gültiger Warmlink-/Serviceframe löscht zudem den Fallbackzustand `state+0x96` wieder. Das passt zum vorgesehenen Rehandshake-/Resume-Verhalten.
+
+**Bewertung: statisch bestätigt für den bekannten V3.3-Anwendungscode.**
 
 # C36A / C36C – Cancel
 
@@ -327,12 +494,13 @@ Siehe [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdog
 
 # Risikobewertung
 
-| Test | Firmware-Flash | EEPROM | Jump/Reset | Risiko |
+| Test / Fehlerfall | Firmware-Flash | EEPROM | Jump/Reset | Risiko |
 |---|---|---|---|---|
 | C350 identische V3.3-Kennung | nein | nein | nein | **sehr niedrig** |
 | C350 inkompatibles Ziel | nein | nein | nein | **sehr niedrig** |
 | C350 kompatibel, anderer Build | nein | nein | nein | **niedrig** |
 | C357 ohne C5A8 | nein | **ja, `0x3F0`** | nein | **niedrig bis moderat** |
+| C5A8-Transfer teilweise, dann Timeout | **ja, nur Stagingbereich** | Pending-/Resume-State bleibt möglich | **kein autonomer Jump/Reset gefunden** | **moderat, Recovery/Resume vorgesehen** |
 
 # Empfohlener minimaler ser2net-Vortest
 
@@ -398,3 +566,7 @@ die bevorzugte Grenze.
 Der vollständige Pfad nach C5A8 einschließlich Status-3-ACK/Retry, Target-Erase, zweiter MD5-Prüfung, EEPROM-Role-/Transition-State, Loader-Handoff und Power-Loss-Matrix ist separat dokumentiert:
 
 [`FW3.3-OTA-PROMOTION-RECOVERY.md`](FW3.3-OTA-PROMOTION-RECOVERY.md)
+
+Die C544-Seite des originalen LTE-Dienstes einschließlich Softwareinfo, Resume-Vergleich und erneutem C350/C357-Handschlag ist separat dokumentiert:
+
+[`PHNIX_phnixIot4G_C544_softcode_resume.md`](PHNIX_phnixIot4G_C544_softcode_resume.md)
