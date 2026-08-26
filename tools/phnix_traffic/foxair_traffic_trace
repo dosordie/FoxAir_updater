@@ -1,0 +1,114 @@
+#!/system/bin/sh
+# Ephemeral, passive tracer for the one verified non-PIE ARM32 build.
+set -u
+STATE=/data/local/tmp/foxair-traffic
+BIN=/data/phnixIot4G
+EXPECTED=af4dcae12639bedce833ee5efa5da009777b6319
+
+pid_of_service() { pidof phnixIot4G 2>/dev/null | awk '{print $1}'; }
+build_id() { readelf -n "$BIN" 2>/dev/null | sed -n 's/.*Build ID: //p' | head -1; }
+
+stop_trace() {
+  test -r "$STATE/gdb.pid" && kill "$(cat "$STATE/gdb.pid")" 2>/dev/null || true
+  test -r "$STATE/gdbserver.pid" && kill "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || true
+  rm -f "$STATE/gdb.pid" "$STATE/gdbserver.pid" "$STATE/active"
+  test "${1:-}" = --purge && rm -rf "$STATE"
+}
+
+start_trace() {
+  test "${1:-}" = --build-id && test "${2:-}" = "$EXPECTED" || { echo "build-id argument mismatch" >&2; exit 2; }
+  test "$(build_id)" = "$EXPECTED" || { echo "unsupported build; runtime hook disabled" >&2; exit 3; }
+  command -v gdb >/dev/null && command -v gdbserver >/dev/null || { echo "gdb/gdbserver missing" >&2; exit 4; }
+  PID=$(pid_of_service); test -n "$PID" || { echo "phnixIot4G inactive" >&2; exit 5; }
+  stop_trace; mkdir -p "$STATE"; : > "$STATE/events.jsonl"
+  # Keep the kernel's readable-map snapshot with the ephemeral trace state.
+  # GDB performs the actual reads while the inferior is stopped; an invalid
+  # access therefore terminates the tracer rather than writing into/injecting
+  # code in the service.  No /proc/PID/mem write is ever issued.
+  awk '$2 ~ /^r/ {print $1}' "/proc/$PID/maps" > "$STATE/readable.maps" || exit 6
+  cat > "$STATE/trace.gdb" <<'EOF'
+set pagination off
+set confirm off
+set logging file /data/local/tmp/foxair-traffic/raw.log
+set logging overwrite off
+set logging redirect on
+set logging on
+target remote 127.0.0.1:12346
+break *0x1F6FC
+commands
+ silent
+ if $r1 >= 0 && $r1 <= 65536 && $r0 > 0x1000
+  printf "FOX|mqtt|tx|user/update|%u|0x%x|",$r1,$r0
+  set $i=0
+  while $i<$r1
+   printf "%02x ",*(unsigned char*)($r0+$i)
+   set $i=$i+1
+  end
+  printf "\n"
+ end
+ continue
+end
+break *0x1EED0
+commands
+ silent
+ if $r2 > 0x1000 && *(unsigned int*)($r2+4) > 0x1000
+  set $m=*(unsigned int*)($r2+4)
+  if *(unsigned int*)($m+8) <= 65536 && *(unsigned int*)($m+16) > 0x1000
+   set $n=*(unsigned int*)($m+8)
+   set $p=*(unsigned int*)($m+16)
+   printf "FOX|mqtt|rx|user/get|%u|0x%x|",$n,$p
+   set $i=0
+   while $i<$n
+    printf "%02x ",*(unsigned char*)($p+$i)
+    set $i=$i+1
+   end
+   printf "\n"
+  end
+ end
+ continue
+end
+break *0x1ED98
+commands
+ silent
+ if $r2 > 0x1000 && *(unsigned int*)($r2+4) > 0x1000
+  set $m=*(unsigned int*)($r2+4)
+  if *(unsigned int*)($m+8) <= 65536 && *(unsigned int*)($m+16) > 0x1000
+   set $n=*(unsigned int*)($m+8)
+   set $p=*(unsigned int*)($m+16)
+   printf "FOX|mqtt|rx|ota|%u|0x%x|",$n,$p
+   set $i=0
+   while $i<$n
+    printf "%02x ",*(unsigned char*)($p+$i)
+    set $i=$i+1
+   end
+   printf "\n"
+  end
+ end
+ continue
+end
+break *0x19A54
+commands
+ silent
+ if $r1 <= 65536 && $r2 <= 65536 && $r1*$r2 <= 65536 && $r0 > 0x1000
+  printf "FOX|http|rx|ota_chunk|%u|0x%x|\n",$r1*$r2,$r0
+ end
+ continue
+end
+continue
+EOF
+  gdbserver --attach 127.0.0.1:12346 "$PID" >"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
+  sleep 1
+  gdb -q -batch -x "$STATE/trace.gdb" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  echo "$PID" > "$STATE/service.pid"; touch "$STATE/active"; echo active
+}
+
+status_trace() {
+  if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then echo active; else echo inactive; fi
+}
+
+case "${1:-}" in
+ start) shift; start_trace "$@" ;;
+ stop) shift; stop_trace "${1:-}" ;;
+ status) status_trace ;;
+ *) echo "usage: $0 {start --build-id ID|stop [--purge]|status}" >&2; exit 2 ;;
+esac

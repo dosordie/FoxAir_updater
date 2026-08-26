@@ -58,6 +58,7 @@ copy /y "%ICON_FILE%" "%OUT%\app_icon.ico" >nul || goto :err
 echo [4/9] Gemeinsames Backend plus Windows-Sicherheitshuette kopieren ...
 if exist "%OUT%\backend" rmdir /s /q "%OUT%\backend"
 mkdir "%OUT%\backend\tools\phnix_ota" || goto :err
+mkdir "%OUT%\backend\tools\phnix_traffic" || goto :err
 mkdir "%OUT%\backend\updater\common" || goto :err
 
 copy /y updater\__init__.py "%OUT%\backend\updater\__init__.py" >nul || goto :err
@@ -71,6 +72,7 @@ rem Die GUI startet unter dem bisherigen Dateinamen nur die Windows-Sicherheitsh
 copy /y updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :err
 copy /y tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\" >nul || goto :err
 copy /y tools\phnix_ota\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\" >nul || goto :err
+copy /y tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\" >nul || goto :err
 
 echo [5/9] Bytegleichheit des gemeinsamen Backends pruefen ...
 fc /b tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" >nul || goto :backenderr
@@ -78,6 +80,7 @@ fc /b tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tool
 fc /b updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :backenderr
 fc /b tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" >nul || goto :backenderr
 fc /b tools\phnix_ota\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook" >nul || goto :backenderr
+fc /b tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\foxair_traffic_trace" >nul || goto :backenderr
 for %%F in (updater\common\*.py) do (
   fc /b "%%F" "%OUT%\backend\updater\common\%%~nxF" >nul || goto :backenderr
 )
