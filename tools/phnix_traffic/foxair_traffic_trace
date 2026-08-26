@@ -4,8 +4,24 @@ set -u
 STATE=/data/local/tmp/foxair-traffic
 BIN=/data/phnixIot4G
 EXPECTED_SHA256=7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
+WATCHDOG_PIDS=$STATE/watchdogs.pids
+GDB_INPUT=$STATE/gdb.input
 
 pid_of_service() { pidof phnixIot4G 2>/dev/null | awk '{print $1}'; }
+watchdog_pids() { ps | awk '$4 == "{helloworld}" {print $1}'; }
+
+resume_watchdogs() {
+  if test -f "$WATCHDOG_PIDS"; then
+    while read -r wd; do test -n "$wd" && kill -CONT "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    rm -f "$WATCHDOG_PIDS"
+  fi
+}
+
+freeze_watchdogs() {
+  watchdog_pids > "$WATCHDOG_PIDS"
+  test -s "$WATCHDOG_PIDS" || unsupported "keine {helloworld}-Watchdogs gefunden"
+  while read -r wd; do test -n "$wd" && kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+}
 unsupported() {
   echo "Sicherheitsprüfung fehlgeschlagen: $1 – Runtime-Trace deaktiviert" >&2
   exit 3
@@ -21,11 +37,38 @@ verify_running_binary() {
   test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || unsupported "SHA256 von $BIN ist ${ACTUAL_SHA256:-nicht ermittelbar}, erwartet $EXPECTED_SHA256"
 }
 
+stop_debuggers() {
+  if test -r "$STATE/gdb.pid" && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then
+    # Interrupt `continue`, then let the same GDB session detach cleanly.
+    kill -INT "$(cat "$STATE/gdb.pid")" 2>/dev/null || true
+    test -p "$GDB_INPUT" && printf 'detach\nquit\n' > "$GDB_INPUT" || true
+    COUNT=0
+    while kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null && test "$COUNT" -lt 10; do sleep 1; COUNT=$((COUNT + 1)); done
+    kill -TERM "$(cat "$STATE/gdb.pid")" 2>/dev/null || true
+  fi
+  test -r "$STATE/gdb-input.pid" && kill "$(cat "$STATE/gdb-input.pid")" 2>/dev/null || true
+  test -r "$STATE/gdbserver.pid" && kill -TERM "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || true
+}
+
+emergency_cleanup() {
+  stop_debuggers
+  resume_watchdogs
+}
+
 stop_trace() {
-  test -r "$STATE/gdb.pid" && kill "$(cat "$STATE/gdb.pid")" 2>/dev/null || true
-  test -r "$STATE/gdbserver.pid" && kill "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || true
-  rm -f "$STATE/gdb.pid" "$STATE/gdbserver.pid" "$STATE/active"
+  OLD_PID=$(cat "$STATE/service.pid" 2>/dev/null || true)
+  mkdir -p "$STATE"
+  trap emergency_cleanup EXIT INT TERM
+  freeze_watchdogs
+  stop_debuggers
+  SAME_PID=$(pid_of_service)
+  test -n "$OLD_PID" && test "$SAME_PID" = "$OLD_PID" && kill -0 "$OLD_PID" 2>/dev/null
+  PID_OK=$?
+  resume_watchdogs
+  trap - EXIT INT TERM
+  rm -f "$STATE/gdb.pid" "$STATE/gdb-input.pid" "$STATE/gdbserver.pid" "$STATE/active" "$GDB_INPUT"
   test "${1:-}" = --purge && rm -rf "$STATE"
+  test "$PID_OK" -eq 0 || { echo "Stopfehler: phnixIot4G-PID ist nicht unverändert aktiv" >&2; return 7; }
 }
 
 startup_failed() {
@@ -44,14 +87,25 @@ start_trace() {
   command -v gdb >/dev/null && command -v gdbserver >/dev/null || { echo "gdb/gdbserver missing" >&2; exit 4; }
   PID=$(pid_of_service); test -n "$PID" || { echo "phnixIot4G inactive" >&2; exit 5; }
   verify_running_binary "$PID"
-  stop_trace; mkdir -p "$STATE"; : > "$STATE/events.jsonl"
+  if test -r "$STATE/service.pid"; then
+    stop_trace
+  else
+    emergency_cleanup
+    rm -rf "$STATE"
+  fi
+  mkdir -p "$STATE"; : > "$STATE/events.jsonl"
   # This first implementation intentionally makes no claim that arbitrary
   # pointers are map-validated.  Every variable buffer is length-capped and a
   # failed debugger read only terminates the tracer. No process-memory write or
   # injected code is used.
   cat > "$STATE/trace.gdb" <<'EOF'
+set architecture arm
 set pagination off
 set confirm off
+set print thread-events off
+set auto-load safe-path /
+set libthread-db-search-path /lib
+file /data/phnixIot4G
 set logging file /data/local/tmp/foxair-traffic/raw.log
 set logging overwrite off
 set logging redirect on
@@ -181,13 +235,21 @@ EOF
   # liveness and maps readability must still hold immediately before attach.
   test "$PID" = "$(pid_of_service)" || unsupported "phnixIot4G-PID hat sich vor dem Attach geändert"
   verify_running_binary "$PID"
+  trap emergency_cleanup EXIT INT TERM
+  freeze_watchdogs
   gdbserver --attach 127.0.0.1:12346 "$PID" >"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
   sleep 1
   kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || startup_failed "gdbserver" "$STATE/gdbserver.log"
-  gdb -q -batch -x "$STATE/trace.gdb" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  rm -f "$GDB_INPUT"; mkfifo "$GDB_INPUT"
+  gdb -q -batch -x "$STATE/trace.gdb" < "$GDB_INPUT" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  # Keep stdin open while tracing; stop_trace writes detach/quit to this FIFO.
+  (while :; do sleep 3600; done) > "$GDB_INPUT" & echo $! > "$STATE/gdb-input.pid"
   sleep 1
   kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null || startup_failed "gdb" "$STATE/gdb.log"
+  test "$PID" = "$(pid_of_service)" && kill -0 "$PID" 2>/dev/null || startup_failed "phnixIot4G" "$STATE/gdb.log"
   echo "$PID" > "$STATE/service.pid"; touch "$STATE/active"; echo active
+  resume_watchdogs
+  trap - EXIT INT TERM
 }
 
 status_trace() {
