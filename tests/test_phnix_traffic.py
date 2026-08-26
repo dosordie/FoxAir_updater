@@ -194,6 +194,28 @@ class TrafficTest(unittest.TestCase):
         self.assertIn('startup_failed "gdbserver" "$STATE/gdbserver.log"', hook)
         self.assertIn('startup_failed "gdb" "$STATE/gdb.log"', hook)
 
+    def test_helper_guards_debugger_stops_with_external_watchdogs(self):
+        hook = HELPER.read_text(encoding="utf-8")
+        self.assertIn("watchdog_pids > \"$WATCHDOG_PIDS\"", hook)
+        self.assertIn('kill -STOP "$wd"', hook)
+        self.assertIn('kill -CONT "$wd"', hook)
+        self.assertIn("trap emergency_cleanup EXIT INT TERM", hook)
+        self.assertLess(hook.index("freeze_watchdogs\n  gdbserver --attach"),
+                        hook.index("gdbserver --attach"))
+        self.assertIn("resume_watchdogs\n  trap - EXIT INT TERM", hook)
+
+    def test_gdb_lifecycle_matches_runtime_hook_initialization_and_detaches(self):
+        hook = HELPER.read_text(encoding="utf-8")
+        initialization = "\n".join((
+            "set architecture arm", "set pagination off", "set confirm off",
+            "set print thread-events off", "set auto-load safe-path /",
+            "set libthread-db-search-path /lib", "file /data/phnixIot4G",
+            "set logging file /data/local/tmp/foxair-traffic/raw.log",
+        ))
+        self.assertIn(initialization, hook)
+        self.assertIn("printf 'detach\\nquit\\n'", hook)
+        self.assertIn('test "$SAME_PID" = "$OLD_PID"', hook)
+
 
 if __name__ == "__main__":
     unittest.main()
