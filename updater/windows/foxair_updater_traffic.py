@@ -38,6 +38,7 @@ class MainWindow(operator.MainWindow):
         self.traffic_tab_index = self.tabs.insertTab(
             self.modem_tab_index + 1, self._traffic_page(), "Modem Diagnose / Traffic"
         )
+        self.tabs.setTabVisible(self.traffic_tab_index, self.show_modem_diagnostics.isChecked())
 
     def _traffic_page(self):
         page = QWidget(); layout = QVBoxLayout(page)
@@ -65,7 +66,7 @@ class MainWindow(operator.MainWindow):
         self.traffic_enable.toggled.connect(self._traffic_toggle); row.addWidget(self.traffic_enable)
         self.traffic_delete = QCheckBox("Daten beim Deaktivieren löschen"); self.traffic_delete.setChecked(True)
         row.addWidget(self.traffic_delete)
-        refresh = QPushButton("Jetzt aktualisieren"); refresh.clicked.connect(lambda _checked=False: self._traffic_poll(manual=True)); row.addWidget(refresh)
+        self.traffic_refresh_btn = QPushButton("Jetzt aktualisieren"); self.traffic_refresh_btn.clicked.connect(lambda _checked=False: self._traffic_poll(manual=True)); row.addWidget(self.traffic_refresh_btn)
         self.traffic_status = QLabel("Inaktiv"); row.addWidget(self.traffic_status, 1); layout.addLayout(row)
         self.traffic_mqtt = self._summary(layout, "MQTT")
         self.traffic_http = self._summary(layout, "HTTP / OTA")
@@ -99,6 +100,8 @@ class MainWindow(operator.MainWindow):
         return self._traffic_tracer
 
     def _traffic_toggle(self, checked):
+        if self.busy:
+            return
         hooks = self._selected_traffic_hooks()
         if checked and not hooks:
             self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
@@ -221,3 +224,12 @@ class MainWindow(operator.MainWindow):
         else: self.traffic_http.setText("Noch kein Ereignis.")
         prov = [e for e in events if "register" in e.channel or "queryiotdevice" in e.channel]
         self.traffic_provision.setText(prov[-1].channel if prov else "Noch kein Ereignis.")
+
+    def _buttons(self):
+        super()._buttons()
+        if hasattr(self, "traffic_enable"):
+            enabled = not self.busy and not self._traffic_running
+            self.traffic_enable.setEnabled(enabled)
+            self.traffic_refresh_btn.setEnabled(enabled and self.traffic_enable.isChecked())
+            for checkbox in self.traffic_hooks.values():
+                checkbox.setEnabled(enabled and not self.traffic_enable.isChecked())

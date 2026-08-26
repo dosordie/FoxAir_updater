@@ -135,7 +135,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
             '"PHNIX-STATISTICS-WRITE"', self.maintenance_ui
         )
         self.assertIn(
-            "Experimentelles Ändern des persistenten Statistikzustands erlauben",
+            "Ändern des persistenten Statistikzustands erlauben",
             self.maintenance_ui,
         )
         self.assertNotIn("kill -TERM", self.maintenance_ui)

@@ -18,6 +18,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     validate_logger_checklist,
     remote_status,
     restore_original_runtime,
+    mqtt_tcp_established,
 )
 from updater.common.firmware_manifest import FirmwareManifest
 
@@ -35,6 +36,11 @@ def test_manifest():
 
 
 class OtaInfoTests(unittest.TestCase):
+    def test_mqtt_preflight_requires_tcp_established(self):
+        self.assertFalse(mqtt_tcp_established("tcp 0 1 10.0.0.2:1234 1.2.3.4:1883 SYN_SENT"))
+        self.assertFalse(mqtt_tcp_established("tcp 0 0 0.0.0.0:1883 0.0.0.0:* LISTEN"))
+        self.assertTrue(mqtt_tcp_established("tcp 0 0 10.0.0.2:4567 1.2.3.4:1883 ESTABLISHED"))
+
     def make_info(self) -> bytearray:
         raw = bytearray(220)
         raw[28:34] = b"V1.2\0\0"

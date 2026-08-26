@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 APP_VERSION = "0.2.99"
 ADB_URL = "https://developer.android.com/tools/releases/platform-tools?hl=de#downloads"
 HOWTO_URL = "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md"
+MODEM_DRIVER_URL = "https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip"
 
 
 def root_dir() -> Path:
@@ -109,8 +110,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._connection(), "Verbindung")
         self.tabs.addTab(self._backup(), "Backup")
         self.tabs.addTab(self._update(), "Firmware Update")
-        self.tabs.addTab(self._status(), "Status / Recovery")
         self.tabs.addTab(self._manifest(), "Manifest")
+        self.tabs.addTab(self._status(), "Status / Recovery")
         self.tabs.addTab(self._advanced(), "Erweitert")
         layout.addWidget(self.tabs)
 
@@ -135,6 +136,20 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(widget)
 
         row = QHBoxLayout()
+        button = QPushButton("SIMCom USB-Treiber")
+        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(MODEM_DRIVER_URL)))
+        row.addWidget(button)
+        button = QPushButton("Android Platform Tools")
+        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(ADB_URL)))
+        row.addWidget(button)
+        button = QPushButton("LTE-/USB-Anleitung")
+        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(HOWTO_URL)))
+        row.addWidget(button)
+        row.addStretch()
+        layout.addLayout(row)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("adb.exe Pfad:"))
         self.adb = QLineEdit()
         self.adb.setPlaceholderText(r"C:\platform-tools\adb.exe")
         self.adb.editingFinished.connect(self._adb_changed)
@@ -144,15 +159,7 @@ class MainWindow(QMainWindow):
         row.addWidget(button)
         layout.addLayout(row)
 
-        row = QHBoxLayout()
-        button = QPushButton("Offizielle Platform Tools herunterladen")
-        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(ADB_URL)))
-        row.addWidget(button)
-        button = QPushButton("LTE-/USB-Anleitung")
-        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(HOWTO_URL)))
-        row.addWidget(button)
-        row.addStretch()
-        layout.addLayout(row)
+        layout.addWidget(QLabel("<hr>"))
 
         layout.addWidget(QLabel("<b>ADB-Verbindungsmodus</b>"))
         row = QHBoxLayout()
@@ -164,6 +171,15 @@ class MainWindow(QMainWindow):
         row.addWidget(self.adb_remote)
         row.addStretch()
         layout.addLayout(row)
+
+        description = QLabel(
+            "<b>Lokal:</b> Das USB-Modem hängt direkt am Windows-Rechner.<br>"
+            "<b>Remote:</b> Das USB-Modem hängt z. B. am Raspberry Pi; Windows verwendet "
+            "dessen ADB-Server.<br>Auch im Remote-Modus wird lokal eine "
+            "<code>adb.exe</code> als Client benötigt."
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
 
         remote_form_widget = QWidget()
         remote_form = QFormLayout(remote_form_widget)
@@ -230,11 +246,21 @@ class MainWindow(QMainWindow):
         for item in (self.backup_fw, self.backup_info, self.backup_stat, self.backup_service):
             layout.addWidget(item)
 
+        details = QLabel(
+            "<b>Firmware:</b> aktuell im LTE-Cache vorhandene OTA-/Firmwaredatei<br>"
+            "<b>OTA_INFO:</b> persistenter OTA-/Resume-Zustand des LTE-Dienstes<br>"
+            "<b>Statistik:</b> persistente Betriebs-, Kommunikations-, Reset- und OTA-Zähler<br>"
+            "<b>Originaldienst phnixIot4G:</b> originale ausführbare PHNIX-LTE-Programmdatei"
+        )
+        details.setWordWrap(True)
+        layout.addWidget(details)
+
         self.backup_button = QPushButton("Backup erstellen")
         self.backup_button.clicked.connect(self._backup_run)
         layout.addWidget(self.backup_button)
         note = QLabel(
-            "Read-only: Die Funktion verwendet ausschließlich adb pull und verändert nichts am LTE-Modem."
+            "<b>Read-only:</b> Das Backup erfolgt ausschließlich per <code>adb pull</code> "
+            "und verändert nichts am LTE-Modem oder Mainboard."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -257,8 +283,13 @@ class MainWindow(QMainWindow):
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         self.progress_text = QLabel("Kein Update aktiv.")
+        progress_font = self.progress_text.font()
+        progress_font.setPointSize(max(12, progress_font.pointSize() + 2))
+        progress_font.setBold(True)
+        self.progress_text.setFont(progress_font)
         layout.addWidget(self.progress_text)
         self.progress = QProgressBar()
+        self.progress.setMinimumHeight(34)
         layout.addWidget(self.progress)
         self.dry = QPushButton("Vorprüfung / Dry-Run")
         self.dry.clicked.connect(self._dry)
@@ -280,11 +311,23 @@ class MainWindow(QMainWindow):
         self.status_btn = QPushButton("Originalzustand prüfen")
         self.status_btn.clicked.connect(self._status_run)
         layout.addWidget(self.status_btn)
+        check_note = QLabel(
+            "<b>Read-only-Prüfung:</b> Prüft das LTE-Modem auf normalen Originalbetrieb: "
+            "Originaldienst läuft, Programmdatei/SHA stimmt, kein Debugger, keine lokale "
+            "OTA-Injection und keine Cloud-Sperre, Watchdogs laufen, MQTT/Cloud ist wieder "
+            "verbunden und temporärer lokaler OTA-Zustand ist bereinigt. Es wird nichts verändert."
+        )
+        check_note.setWordWrap(True)
+        layout.addWidget(check_note)
         self.status_text = QLabel("Noch kein Statuscheck.")
         self.status_text.setWordWrap(True)
         layout.addWidget(self.status_text)
         note = QLabel(
-            "Restore ist nur vor begonnenem C5A8 zulässig. Die Entscheidung trifft ausschließlich der bestehende Controller."
+            "<b>Kontrollierter Recoverypfad:</b> Die Wiederherstellung ist nur vor einem "
+            "begonnenen C5A8-Firmwaretransfer zulässig. Sobald C5A8 begonnen hat, ist das "
+            "automatische Restore absichtlich gesperrt; ab dem ersten C5A8 bleibt der originale "
+            "PHNIX-Dienst autoritativ. C36E Status 3 und ein fehlendes C37B/3 sind ausdrücklich "
+            "keine sicheren Stopp- oder Restorepunkte."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -361,20 +404,6 @@ class MainWindow(QMainWindow):
     def _advanced(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        row = QHBoxLayout()
-        self.same_manifest = QLineEdit()
-        self.same_manifest.textChanged.connect(self._buttons)
-        button = QPushButton("Manifest…")
-        button.clicked.connect(lambda: self._pick_manifest(self.same_manifest))
-        row.addWidget(self.same_manifest, 1)
-        row.addWidget(button)
-        layout.addLayout(row)
-        self.logger = QCheckBox("Passiver RS485-Logger läuft tatsächlich")
-        self.logger.toggled.connect(self._buttons)
-        layout.addWidget(self.logger)
-        self.same_btn = QPushButton("Gleichversionstest starten")
-        self.same_btn.clicked.connect(self._same)
-        layout.addWidget(self.same_btn)
         layout.addStretch()
         return widget
 
@@ -918,9 +947,6 @@ class MainWindow(QMainWindow):
         update_manifest_ready = (
             Path(self.update_manifest.text().strip()).is_file() if hasattr(self, "update_manifest") else False
         )
-        same_manifest_ready = (
-            Path(self.same_manifest.text().strip()).is_file() if hasattr(self, "same_manifest") else False
-        )
         firmware_ready = (
             Path(self.firmware.text().strip()).is_file() if hasattr(self, "firmware") else False
         )
@@ -937,7 +963,8 @@ class MainWindow(QMainWindow):
         self.manifest_preview_btn.setEnabled(enabled and firmware_ready)
         self.manifest_full_btn.setEnabled(enabled and firmware_ready)
         self.manifest_btn.setEnabled(enabled and firmware_ready)
-        self.same_btn.setEnabled(enabled and adb_ready and same_manifest_ready and self.logger.isChecked())
+        if hasattr(self, "same_btn"):
+            self.same_btn.setEnabled(enabled and adb_ready)
 
     def _log(self, text):
         self.log.appendPlainText(text)
