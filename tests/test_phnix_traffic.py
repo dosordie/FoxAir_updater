@@ -1,7 +1,5 @@
 import json
 import unittest
-from unittest.mock import patch
-
 from pathlib import Path
 
 from updater.common.phnix_traffic import (
@@ -100,44 +98,32 @@ class TrafficTest(unittest.TestCase):
         self.assertIn("skip=0", adb.calls[0][1])
         self.assertIn("skip=32", adb.calls[1][1])
 
-    def test_enable_hashes_bytes_from_adb_client_before_installing_helper(self):
+    def test_enable_delegates_binary_verification_to_modem_helper(self):
         class FakeAdb:
             def __init__(self):
                 self.pushed = False
                 self.commands = []
 
-            def read_file(self, remote):
-                self.commands.append(("read_file", remote))
-                return b"verified binary"
-
             def push(self, *args):
                 self.pushed = True
+                self.commands.append(("push", args))
 
             def shell(self, command):
                 self.commands.append(((command,), {}))
                 return "active"
 
-        expected = __import__("hashlib").sha256(b"verified binary").hexdigest()
         adb = FakeAdb()
-        with patch("updater.common.phnix_traffic.EXPECTED_SERVICE_SHA256", expected):
-            self.assertEqual(TrafficTracer(adb, "helper").enable(), "active")
-        self.assertEqual(adb.commands[0], ("read_file", "/data/phnixIot4G"))
+        self.assertEqual(TrafficTracer(adb, "helper").enable(), "active")
         self.assertTrue(adb.pushed)
-        self.assertIn("start --sha256 " + expected, adb.commands[1][0][0])
-
-    def test_unknown_binary_is_rejected_before_helper_push(self):
-        class FakeAdb:
-            def read_file(self, remote): return b"unknown"
-            def push(self, *args): raise AssertionError("helper must not be pushed")
-
-        with self.assertRaisesRegex(RuntimeError, "Nicht unterstützte phnixIot4G-Version"):
-            TrafficTracer(FakeAdb(), "helper").enable()
+        self.assertNotIn("read_file", repr(adb.commands))
+        self.assertTrue(any("foxair_traffic_trace start" in repr(call) for call in adb.commands))
 
     def test_remote_helper_needs_no_elf_utilities_and_rechecks_before_attach(self):
         hook = Path("tools/phnix_traffic/foxair_traffic_trace").read_text(encoding="utf-8")
         self.assertNotIn("readelf", hook)
         self.assertNotIn("objdump", hook)
         self.assertIn('/bin/sha256sum "$BIN"', hook)
+        self.assertIn("EXPECTED_SHA256=7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7", hook)
         self.assertIn('readlink "/proc/$CHECK_PID/exe"', hook)
         self.assertIn('kill -0 "$CHECK_PID"', hook)
         self.assertIn('test -r "/proc/$CHECK_PID/maps"', hook)

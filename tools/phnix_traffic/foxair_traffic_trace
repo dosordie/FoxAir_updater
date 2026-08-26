@@ -3,22 +3,22 @@
 set -u
 STATE=/data/local/tmp/foxair-traffic
 BIN=/data/phnixIot4G
-EXPECTED_SHA256=
+EXPECTED_SHA256=7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 
 pid_of_service() { pidof phnixIot4G 2>/dev/null | awk '{print $1}'; }
 unsupported() {
-  echo "Nicht unterstützte phnixIot4G-Version – Runtime-Trace deaktiviert" >&2
+  echo "Sicherheitsprüfung fehlgeschlagen: $1 – Runtime-Trace deaktiviert" >&2
   exit 3
 }
 
 verify_running_binary() {
   CHECK_PID=${1:-}
-  test -n "$CHECK_PID" || unsupported
-  kill -0 "$CHECK_PID" 2>/dev/null || unsupported
-  test -r "/proc/$CHECK_PID/maps" || unsupported
-  test "$(readlink "/proc/$CHECK_PID/exe" 2>/dev/null)" = "$BIN" || unsupported
+  test -n "$CHECK_PID" || unsupported "keine eindeutige phnixIot4G-PID"
+  kill -0 "$CHECK_PID" 2>/dev/null || unsupported "PID $CHECK_PID ist nicht mehr aktiv"
+  test "$(readlink "/proc/$CHECK_PID/exe" 2>/dev/null)" = "$BIN" || unsupported "Prozess $CHECK_PID verwendet nicht $BIN"
+  test -r "/proc/$CHECK_PID/maps" || unsupported "/proc/$CHECK_PID/maps ist nicht lesbar"
   ACTUAL_SHA256=$(/bin/sha256sum "$BIN" 2>/dev/null | awk '{print $1}')
-  test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || unsupported
+  test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || unsupported "SHA256 von $BIN ist ${ACTUAL_SHA256:-nicht ermittelbar}, erwartet $EXPECTED_SHA256"
 }
 
 stop_trace() {
@@ -29,9 +29,7 @@ stop_trace() {
 }
 
 start_trace() {
-  test "${1:-}" = --sha256 || unsupported
-  EXPECTED_SHA256=${2:-}
-  test "${#EXPECTED_SHA256}" -eq 64 || unsupported
+  test "$#" -eq 0 || unsupported "unerwartete Startparameter"
   command -v gdb >/dev/null && command -v gdbserver >/dev/null || { echo "gdb/gdbserver missing" >&2; exit 4; }
   PID=$(pid_of_service); test -n "$PID" || { echo "phnixIot4G inactive" >&2; exit 5; }
   verify_running_binary "$PID"
@@ -170,7 +168,7 @@ continue
 EOF
   # Close the verification/attach race: the same PID, executable link, hash,
   # liveness and maps readability must still hold immediately before attach.
-  test "$PID" = "$(pid_of_service)" || unsupported
+  test "$PID" = "$(pid_of_service)" || unsupported "phnixIot4G-PID hat sich vor dem Attach geändert"
   verify_running_binary "$PID"
   gdbserver --attach 127.0.0.1:12346 "$PID" >"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
   sleep 1
@@ -186,5 +184,5 @@ case "${1:-}" in
  start) shift; start_trace "$@" ;;
  stop) shift; stop_trace "${1:-}" ;;
  status) status_trace ;;
- *) echo "usage: $0 {start --sha256 SHA256|stop [--purge]|status}" >&2; exit 2 ;;
+ *) echo "usage: $0 {start|stop [--purge]|status}" >&2; exit 2 ;;
 esac
