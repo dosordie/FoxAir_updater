@@ -6,6 +6,7 @@ BIN=/data/phnixIot4G
 EXPECTED_SHA256=7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 WATCHDOG_PIDS=$STATE/watchdogs.pids
 PAYLOAD_MODE=metadata_only
+RUN_ID_FILE=$STATE/run.id
 
 pid_of_service() { pidof phnixIot4G 2>/dev/null | awk '{print $1}'; }
 watchdog_pids() { ps | awk '$4 == "{helloworld}" {print $1}'; }
@@ -39,36 +40,43 @@ remove_runtime_markers() {
 }
 
 # GDB's command file deliberately contains the orderly sequence after continue:
-# interrupt (SIGINT), delete breakpoints, detach, quit.  TERM is only a fallback.
+# interrupt (SIGINT), confirm stop, delete breakpoints, detach, confirm, quit.
 stop_debuggers() {
-  DETACH_OK=0
   GDB_PID=$(cat "$STATE/gdb.pid" 2>/dev/null || true)
+  test -n "$GDB_PID" || return 0
+  DETACH_OK=1
   if test -n "$GDB_PID" && kill -0 "$GDB_PID" 2>/dev/null; then
+    # SIGINT interrupts the inferior.  The command file writes explicit markers
+    # only after GDB has regained control and after detach has succeeded.
     kill -INT "$GDB_PID" 2>/dev/null || true
     COUNT=0
-    while kill -0 "$GDB_PID" 2>/dev/null && test "$COUNT" -lt 12; do sleep 1; COUNT=$((COUNT + 1)); done
-    if kill -0 "$GDB_PID" 2>/dev/null; then
-      echo "KRITISCH: GDB konnte das gestoppte Ziel nicht sauber detachieren" >> "$STATE/helper.log"
-      kill -TERM "$GDB_PID" 2>/dev/null || true
-      DETACH_OK=1
-    fi
+    while ! grep -F "FOX|detached|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)" "$STATE/raw.log" >/dev/null 2>&1 \
+      && kill -0 "$GDB_PID" 2>/dev/null && test "$COUNT" -lt 12; do sleep 1; COUNT=$((COUNT + 1)); done
   fi
-  GDBSERVER_PID=$(cat "$STATE/gdbserver.pid" 2>/dev/null || true)
-  test -n "$GDBSERVER_PID" && kill -TERM "$GDBSERVER_PID" 2>/dev/null || true
+  if grep -F "FOX|detached|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)" "$STATE/raw.log" >/dev/null 2>&1; then
+    DETACH_OK=0
+    GDBSERVER_PID=$(cat "$STATE/gdbserver.pid" 2>/dev/null || true)
+    test -n "$GDBSERVER_PID" && kill -TERM "$GDBSERVER_PID" 2>/dev/null || true
+  else
+    echo "run_id=$(cat "$RUN_ID_FILE" 2>/dev/null) KRITISCH: Zielstillstand/Detach nicht bestätigt; GDB und gdbserver bleiben unangetastet" >> "$STATE/helper.log"
+  fi
   return "$DETACH_OK"
 }
 
 emergency_cleanup() {
-  stop_debuggers || true
-  resume_watchdogs
-  remove_runtime_markers
+  if stop_debuggers; then
+    resume_watchdogs
+    remove_runtime_markers
+  else
+    echo "run_id=$(cat "$RUN_ID_FILE" 2>/dev/null) Sicherheitsstopp: Laufzeitmarker und angehaltene Watchdogs bleiben für manuellen Detach erhalten" >> "$STATE/helper.log"
+  fi
 }
 
 critical_failure() {
   REASON=$1
   OLD_PID=$(cat "$STATE/service.pid" 2>/dev/null || true)
   NEW_PID=$(pid_of_service)
-  printf 'critical|%s|old_pid=%s|new_pid=%s|hooks=%s\n' "$REASON" "$OLD_PID" "${NEW_PID:-none}" \
+  printf 'critical|%s|run_id=%s|old_pid=%s|new_pid=%s|hooks=%s\n' "$REASON" "$(cat "$RUN_ID_FILE" 2>/dev/null)" "$OLD_PID" "${NEW_PID:-none}" \
     "$(tr '\n' ',' < "$STATE/hooks" 2>/dev/null | sed 's/,$//')" > "$STATE/failure"
   echo "KRITISCH: $REASON (PID alt=$OLD_PID, PID neu=${NEW_PID:-none})" >> "$STATE/helper.log"
   emergency_cleanup
@@ -105,10 +113,12 @@ stop_trace() {
   stop_debuggers || STOP_OK=1
   SAME_PID=$(pid_of_service)
   if test -z "$OLD_PID" || test "$SAME_PID" != "$OLD_PID" || ! kill -0 "$OLD_PID" 2>/dev/null; then STOP_OK=1; fi
-  resume_watchdogs
-  remove_runtime_markers
+  if test "$STOP_OK" -eq 0; then
+    resume_watchdogs
+    remove_runtime_markers
+  fi
   trap - EXIT INT TERM
-  test "${1:-}" = --purge && rm -rf "$STATE"
+  test "$STOP_OK" -ne 0 || { test "${1:-}" = --purge && rm -rf "$STATE"; }
   test "$STOP_OK" -eq 0 || { echo "Stopfehler: Detach fehlgeschlagen oder phnixIot4G-PID geändert" >&2; return 7; }
   echo stopped
 }
@@ -163,8 +173,20 @@ start_trace() {
   test "$PAYLOAD_MODE" = metadata_only || unsupported "nur metadata_only ist derzeit freigegeben"
   test -n "$HOOKS" || unsupported "kein Hook ausgewählt"
   mkdir -p "$STATE"
+  test ! -f "$STATE/active" || unsupported "ein Trace ist bereits aktiv oder wartet auf sicheren manuellen Detach"
+  remove_runtime_markers
+  OLD_RUN_ID=$(cat "$RUN_ID_FILE" 2>/dev/null || true)
+  if test -n "$OLD_RUN_ID"; then
+    ARCHIVE="$STATE/archive/$OLD_RUN_ID"; mkdir -p "$ARCHIVE"
+    for LOG in helper.log gdbserver.log gdb.log raw.log failure hooks trace.gdb; do
+      test ! -e "$STATE/$LOG" || mv "$STATE/$LOG" "$ARCHIVE/$LOG"
+    done
+  fi
+  RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  echo "$RUN_ID" > "$RUN_ID_FILE"
   rm -f "$STATE/failure"
   : > "$STATE/hooks"; : > "$STATE/trace.gdb"; : > "$STATE/helper.log"
+  printf 'run_id=%s start\n' "$RUN_ID" >> "$STATE/helper.log"
   SEEN=""
   # Validate and generate every breakpoint before any debugger attach.
   for ID in $HOOKS; do append_hook "$ID" || { remove_runtime_markers; exit 2; }; done
@@ -183,16 +205,19 @@ set auto-load safe-path /
 set libthread-db-search-path /lib
 file /data/phnixIot4G
 set logging file /data/local/tmp/foxair-traffic/raw.log
-set logging overwrite off
+set logging overwrite on
 set logging redirect on
 set logging on
 target remote 127.0.0.1:12346
 EOF
   cat "$STATE/trace.gdb" >> "$STATE/header.gdb"
-  cat >> "$STATE/header.gdb" <<'EOF'
+  cat >> "$STATE/header.gdb" <<EOF
+printf "FOX|run_started|run_id=$RUN_ID\\n"
 continue
+printf "FOX|target_stopped|run_id=$RUN_ID\\n"
 delete breakpoints
 detach
+printf "FOX|detached|run_id=$RUN_ID\\n"
 quit
 EOF
   mv "$STATE/header.gdb" "$STATE/trace.gdb"
@@ -200,10 +225,12 @@ EOF
   verify_running_binary "$PID"
   trap emergency_cleanup EXIT INT TERM
   freeze_watchdogs
-  gdbserver --attach 127.0.0.1:12346 "$PID" >"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
+  printf 'run_id=%s\n' "$RUN_ID" > "$STATE/gdbserver.log"
+  gdbserver --attach 127.0.0.1:12346 "$PID" >>"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
   sleep 1
   kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || startup_failed "gdbserver beendet"
-  gdb -q -batch -x "$STATE/trace.gdb" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  printf 'run_id=%s\n' "$RUN_ID" > "$STATE/gdb.log"
+  gdb -q -batch -x "$STATE/trace.gdb" >>"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
   sleep 1
   kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null || startup_failed "gdb beendet"
   test "$PID" = "$(pid_of_service)" && kill -0 "$PID" 2>/dev/null || startup_failed "PID nach Breakpoint-Installation geändert"
@@ -220,9 +247,8 @@ status_trace() {
   if test -r "$STATE/failure"; then cat "$STATE/failure"; return; fi
   if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" \
     && kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then
-    echo active
+    echo "active|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)"
   else
-    remove_runtime_markers
     echo inactive
   fi
 }
