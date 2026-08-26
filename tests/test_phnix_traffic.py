@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from pathlib import Path
 
@@ -98,6 +99,53 @@ class TrafficTest(unittest.TestCase):
         self.assertEqual(json.loads(parsed)["payload_hex"], "63")
         self.assertIn("skip=0", adb.calls[0][1])
         self.assertIn("skip=32", adb.calls[1][1])
+
+    def test_enable_hashes_exec_out_bytes_before_installing_helper(self):
+        class FakeAdb:
+            def __init__(self):
+                self.pushed = False
+                self.commands = []
+
+            def run(self, *args, **kwargs):
+                self.commands.append((args, kwargs))
+                return b"verified binary"
+
+            def push(self, *args):
+                self.pushed = True
+
+            def shell(self, command):
+                self.commands.append(((command,), {}))
+                return "active"
+
+        expected = __import__("hashlib").sha256(b"verified binary").hexdigest()
+        adb = FakeAdb()
+        with patch("updater.common.phnix_traffic.EXPECTED_SERVICE_SHA256", expected):
+            self.assertEqual(TrafficTracer(adb, "helper").enable(), "active")
+        self.assertEqual(adb.commands[0][0], ("exec-out", "cat", "/data/phnixIot4G"))
+        self.assertTrue(adb.commands[0][1]["binary"])
+        self.assertTrue(adb.pushed)
+        self.assertIn("start --sha256 " + expected, adb.commands[1][0][0])
+
+    def test_unknown_binary_is_rejected_before_helper_push(self):
+        class FakeAdb:
+            def run(self, *args, **kwargs): return b"unknown"
+            def push(self, *args): raise AssertionError("helper must not be pushed")
+
+        with self.assertRaisesRegex(RuntimeError, "Nicht unterstützte phnixIot4G-Version"):
+            TrafficTracer(FakeAdb(), "helper").enable()
+
+    def test_remote_helper_needs_no_elf_utilities_and_rechecks_before_attach(self):
+        hook = Path("tools/phnix_traffic/foxair_traffic_trace").read_text(encoding="utf-8")
+        self.assertNotIn("readelf", hook)
+        self.assertNotIn("objdump", hook)
+        self.assertIn('/bin/sha256sum "$BIN"', hook)
+        self.assertIn('readlink "/proc/$CHECK_PID/exe"', hook)
+        self.assertIn('kill -0 "$CHECK_PID"', hook)
+        self.assertIn('test -r "/proc/$CHECK_PID/maps"', hook)
+        verify_calls = hook.count('verify_running_binary "$PID"')
+        self.assertEqual(verify_calls, 2)
+        self.assertLess(hook.rfind('verify_running_binary "$PID"'),
+                        hook.index("gdbserver --attach"))
 
 
 if __name__ == "__main__":
