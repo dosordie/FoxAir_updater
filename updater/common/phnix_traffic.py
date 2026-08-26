@@ -19,6 +19,23 @@ MAX_PAYLOAD = 64 * 1024
 REMOTE_HELPER = "/data/local/tmp/foxair_traffic_trace"
 REMOTE_STATE = "/data/local/tmp/foxair-traffic"
 
+HOOKS = {
+    "mqtt_tx_update": ("MQTT", "MQTT TX / user/update"),
+    "mqtt_rx_get": ("MQTT", "MQTT RX / user/get"),
+    "mqtt_rx_ota": ("MQTT", "MQTT RX / OTA"),
+    "mqtt_tx_ota": ("MQTT", "MQTT TX / OTA"),
+    "http_ota_chunk": ("HTTP / OTA", "OTA Download-Chunks"),
+    "ota_start_mainboard": ("HTTP / OTA", "Mainboard OTA Start"),
+    "ota_start_dtu": ("HTTP / OTA", "DTU OTA Start"),
+    "provision_linked_go_query": ("Provisionierung", "Linked-Go Query"),
+    "provision_legacy_query": ("Provisionierung", "Legacy Query"),
+    "provision_create_by_sign": ("Provisionierung", "CreateDeviceBySign"),
+    "provision_aliyun_register": ("Provisionierung", "Aliyun Dynamic Register"),
+    "provision_aliyun_register_response": ("Provisionierung", "Aliyun Register Response"),
+}
+DEFAULT_HOOKS = ("mqtt_tx_update",)
+PAYLOAD_MODES = ("metadata_only", "preview", "full")
+
 
 def mask_secret(value: object) -> str:
     """Return the only representation of secrets allowed in logs/exports."""
@@ -115,6 +132,28 @@ def parse_gdb_trace(content: str) -> str:
     """Convert bounded GDB hook records to the canonical JSON-lines format."""
     result = []
     for line in content.splitlines():
+        if line.startswith("FOX|hook_hit|"):
+            parts = line.split("|", 4)
+            if len(parts) != 5 or parts[2] not in HOOKS:
+                continue
+            try:
+                length = int(parts[3].removeprefix("len="))
+            except ValueError:
+                continue
+            if length < 0 or length > MAX_PAYLOAD or not parts[4].startswith("ptr="):
+                continue
+            hook_id = parts[2]
+            group = HOOKS[hook_id][0]
+            protocol = "mqtt" if group == "MQTT" else "http" if group == "HTTP / OTA" else "https"
+            direction = "tx" if "_tx_" in hook_id else "rx"
+            result.append(json.dumps({
+                "timestamp": datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds"),
+                "protocol": protocol, "direction": direction, "channel": hook_id,
+                "length": length, "payload_type": "metadata", "payload_hex": None,
+                "payload_text": None, "fields": {"pointer": parts[4][4:]},
+                "sensitive": group == "Provisionierung",
+            }, ensure_ascii=False))
+            continue
         if line.startswith("META|"):
             parts = line.split("|", 5)
             now = datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")
@@ -186,10 +225,18 @@ class TrafficTracer:
         self._partial = ""
         self.startup_diagnostics = ""
 
-    def enable(self) -> str:
+    def enable(self, hooks: Iterable[str] = DEFAULT_HOOKS, *, mode: str = "metadata_only") -> str:
         self._offset = 0
         self._partial = ""
         self.startup_diagnostics = ""
+        selected = tuple(dict.fromkeys(hooks))
+        if not selected:
+            raise ValueError("Mindestens ein Traffic-Hook muss ausgewählt sein.")
+        unknown = [hook for hook in selected if hook not in HOOKS]
+        if unknown:
+            raise ValueError("Unbekannte Traffic-Hook-ID: " + ", ".join(unknown))
+        if mode != "metadata_only":
+            raise ValueError("Derzeit ist ausschließlich metadata_only freigegeben.")
         helper_bytes = self.helper.read_bytes()
         if b"\r\n" in helper_bytes:
             raise ValueError("traffic-trace helper contains CRLF line endings")
@@ -201,7 +248,8 @@ class TrafficTracer:
         self.adb.shell(f"chmod 700 {REMOTE_HELPER}.new && mv {REMOTE_HELPER}.new {REMOTE_HELPER}")
         # A failed helper start is deliberately non-fatal here: status and both
         # debugger logs must be collected before any caller can consider cleanup.
-        self.adb.shell(f"{REMOTE_HELPER} start", check=False)
+        arguments = " ".join(f"--hook {hook}" for hook in selected)
+        self.adb.shell(f"{REMOTE_HELPER} start {arguments} --mode {mode}", check=False)
         status = self.status()
         if status != "active":
             self.startup_diagnostics = self._read_startup_diagnostics()
@@ -209,7 +257,7 @@ class TrafficTracer:
 
     def _read_startup_diagnostics(self) -> str:
         sections = []
-        for name in ("gdbserver.log", "gdb.log"):
+        for name in ("helper.log", "gdbserver.log", "gdb.log", "raw.log"):
             remote = f"{REMOTE_STATE}/{name}"
             try:
                 content = self.adb.read_file(remote).decode("utf-8", errors="replace")
