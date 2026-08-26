@@ -190,6 +190,11 @@ class TrafficTracer:
         self._offset = 0
         self._partial = ""
         self.startup_diagnostics = ""
+        helper_bytes = self.helper.read_bytes()
+        if b"\r\n" in helper_bytes:
+            raise ValueError("traffic-trace helper contains CRLF line endings")
+        if helper_bytes.splitlines()[:1] != [b"#!/system/bin/sh"]:
+            raise ValueError("traffic-trace helper has an invalid shebang")
         # ADB shell/cat is not binary-transparent on all legacy modems. The
         # helper therefore performs every build and process check on-device.
         self.adb.push(self.helper, REMOTE_HELPER + ".new")

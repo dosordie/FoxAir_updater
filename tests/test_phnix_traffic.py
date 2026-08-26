@@ -6,8 +6,15 @@ from updater.common.phnix_traffic import (
     EventRing, TrafficTracer, export_events, mask_secret, parse_gdb_trace, sanitize_fields,
 )
 
+HELPER = Path("tools/phnix_traffic/foxair_traffic_trace")
+
 
 class TrafficTest(unittest.TestCase):
+    def test_helper_uses_android_shebang_and_unix_line_endings(self):
+        helper = HELPER.read_bytes()
+        self.assertNotIn(b"\r\n", helper)
+        self.assertEqual(helper.split(b"\n", 1)[0], b"#!/system/bin/sh")
+
     def test_secret_masking_contract(self):
         self.assertEqual(mask_secret(""), "nicht gesetzt")
         self.assertEqual(mask_secret("abcd"), "****")
@@ -116,10 +123,23 @@ class TrafficTest(unittest.TestCase):
                 raise AssertionError(f"unexpected diagnostic read: {remote}")
 
         adb = FakeAdb()
-        self.assertEqual(TrafficTracer(adb, "helper").enable(), "active")
+        self.assertEqual(TrafficTracer(adb, HELPER).enable(), "active")
         self.assertTrue(adb.pushed)
         self.assertNotIn("read_file", repr(adb.commands))
         self.assertTrue(any("foxair_traffic_trace start" in repr(call) for call in adb.commands))
+
+    def test_enable_rejects_crlf_helper_before_push(self):
+        class FakeAdb:
+            def push(self, *_args):
+                raise AssertionError("CRLF helper must not be pushed")
+
+        helper = Path(self.id() + ".tmp")
+        try:
+            helper.write_bytes(b"#!/system/bin/sh\r\necho broken\r\n")
+            with self.assertRaisesRegex(ValueError, "CRLF"):
+                TrafficTracer(FakeAdb(), helper).enable()
+        finally:
+            helper.unlink(missing_ok=True)
 
     def test_remote_helper_needs_no_elf_utilities_and_rechecks_before_attach(self):
         hook = Path("tools/phnix_traffic/foxair_traffic_trace").read_text(encoding="utf-8")
@@ -154,7 +174,7 @@ class TrafficTest(unittest.TestCase):
                 return ("failure from " + remote).encode()
 
         adb = FakeAdb()
-        tracer = TrafficTracer(adb, "helper")
+        tracer = TrafficTracer(adb, HELPER)
         self.assertEqual(tracer.enable(), "inactive")
         self.assertIn("failure from /data/local/tmp/foxair-traffic/gdbserver.log",
                       tracer.startup_diagnostics)
