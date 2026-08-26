@@ -1,0 +1,190 @@
+#!/system/bin/sh
+# Ephemeral, passive tracer for the one verified non-PIE ARM32 build.
+set -u
+STATE=/data/local/tmp/foxair-traffic
+BIN=/data/phnixIot4G
+EXPECTED_SHA256=
+
+pid_of_service() { pidof phnixIot4G 2>/dev/null | awk '{print $1}'; }
+unsupported() {
+  echo "Nicht unterstützte phnixIot4G-Version – Runtime-Trace deaktiviert" >&2
+  exit 3
+}
+
+verify_running_binary() {
+  CHECK_PID=${1:-}
+  test -n "$CHECK_PID" || unsupported
+  kill -0 "$CHECK_PID" 2>/dev/null || unsupported
+  test -r "/proc/$CHECK_PID/maps" || unsupported
+  test "$(readlink "/proc/$CHECK_PID/exe" 2>/dev/null)" = "$BIN" || unsupported
+  ACTUAL_SHA256=$(/bin/sha256sum "$BIN" 2>/dev/null | awk '{print $1}')
+  test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || unsupported
+}
+
+stop_trace() {
+  test -r "$STATE/gdb.pid" && kill "$(cat "$STATE/gdb.pid")" 2>/dev/null || true
+  test -r "$STATE/gdbserver.pid" && kill "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || true
+  rm -f "$STATE/gdb.pid" "$STATE/gdbserver.pid" "$STATE/active"
+  test "${1:-}" = --purge && rm -rf "$STATE"
+}
+
+start_trace() {
+  test "${1:-}" = --sha256 || unsupported
+  EXPECTED_SHA256=${2:-}
+  test "${#EXPECTED_SHA256}" -eq 64 || unsupported
+  command -v gdb >/dev/null && command -v gdbserver >/dev/null || { echo "gdb/gdbserver missing" >&2; exit 4; }
+  PID=$(pid_of_service); test -n "$PID" || { echo "phnixIot4G inactive" >&2; exit 5; }
+  verify_running_binary "$PID"
+  stop_trace; mkdir -p "$STATE"; : > "$STATE/events.jsonl"
+  # This first implementation intentionally makes no claim that arbitrary
+  # pointers are map-validated.  Every variable buffer is length-capped and a
+  # failed debugger read only terminates the tracer. No process-memory write or
+  # injected code is used.
+  cat > "$STATE/trace.gdb" <<'EOF'
+set pagination off
+set confirm off
+set logging file /data/local/tmp/foxair-traffic/raw.log
+set logging overwrite off
+set logging redirect on
+set logging on
+target remote 127.0.0.1:12346
+break *0x1F6FC
+commands
+ silent
+ if $r1 >= 0 && $r1 <= 65536 && $r0 > 0x1000
+  printf "FOX|mqtt|tx|user/update|%u|0x%x|",$r1,$r0
+  set $i=0
+  while $i<$r1
+   printf "%02x ",*(unsigned char*)($r0+$i)
+   set $i=$i+1
+  end
+  printf "\n"
+ end
+ continue
+end
+break *0x1EED0
+commands
+ silent
+ if $r2 > 0x1000 && *(unsigned int*)($r2+4) > 0x1000
+  set $m=*(unsigned int*)($r2+4)
+  if *(unsigned int*)($m+8) <= 65536 && *(unsigned int*)($m+16) > 0x1000
+   set $n=*(unsigned int*)($m+8)
+   set $p=*(unsigned int*)($m+16)
+   printf "FOX|mqtt|rx|user/get|%u|0x%x|",$n,$p
+   set $i=0
+   while $i<$n
+    printf "%02x ",*(unsigned char*)($p+$i)
+    set $i=$i+1
+   end
+   printf "\n"
+  end
+ end
+ continue
+end
+break *0x1ED98
+commands
+ silent
+ if $r2 > 0x1000 && *(unsigned int*)($r2+4) > 0x1000
+  set $m=*(unsigned int*)($r2+4)
+  if *(unsigned int*)($m+8) <= 65536 && *(unsigned int*)($m+16) > 0x1000
+   set $n=*(unsigned int*)($m+8)
+   set $p=*(unsigned int*)($m+16)
+   printf "FOX|mqtt|rx|ota|%u|0x%x|",$n,$p
+   set $i=0
+   while $i<$n
+    printf "%02x ",*(unsigned char*)($p+$i)
+    set $i=$i+1
+   end
+   printf "\n"
+  end
+ end
+ continue
+end
+break *0x19A54
+commands
+ silent
+ if $r1 <= 65536 && $r2 <= 65536 && $r1*$r2 <= 65536 && $r0 > 0x1000
+  printf "FOX|http|rx|ota_chunk|%u|0x%x|\n",$r1*$r2,$r0
+ end
+ continue
+end
+break *0x1F9B0
+commands
+ silent
+ if $r1 >= 0 && $r1 <= 65536 && $r0 > 0x1000
+  printf "FOX|mqtt|tx|ota_update|%u|0x%x|",$r1,$r0
+  set $i=0
+  while $i<$r1
+   printf "%02x ",*(unsigned char*)($r0+$i)
+   set $i=$i+1
+  end
+  printf "\n"
+ end
+ continue
+end
+break *0x19E70
+commands
+ silent
+ printf "META|ota_start|mainboard|/cache/phnixIot_device_OTA|%.1024s\n",(char*)0x933E1
+ continue
+end
+break *0x19C18
+commands
+ silent
+ printf "META|ota_start|dtu|/data/phnixIot4G_OTA|%.1024s\n",(char*)0x931A9
+ continue
+end
+# Provisioning payload bodies deliberately never enter raw.log: response
+# buffers can contain credentials. These hooks only record safe metadata.
+break *0x16960
+commands
+ silent
+ printf "META|provision|linked_go_queryiotdevice|http|%u\n",$r1*$r2
+ continue
+end
+break *0x15C58
+commands
+ silent
+ printf "META|provision|legacy_queryiotdevice|http|%u\n",$r1*$r2
+ continue
+end
+break *0x164AC
+commands
+ silent
+ printf "META|provision|linked_go_create_device_by_sign|http|0\n"
+ continue
+end
+break *0x22FF4
+commands
+ silent
+ printf "META|provision|aliyun_dynamic_register|https|0\n"
+ continue
+end
+break *0x22B9C
+commands
+ silent
+ printf "META|provision|aliyun_dynamic_register_response|https|0\n"
+ continue
+end
+continue
+EOF
+  # Close the verification/attach race: the same PID, executable link, hash,
+  # liveness and maps readability must still hold immediately before attach.
+  test "$PID" = "$(pid_of_service)" || unsupported
+  verify_running_binary "$PID"
+  gdbserver --attach 127.0.0.1:12346 "$PID" >"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
+  sleep 1
+  gdb -q -batch -x "$STATE/trace.gdb" >"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  echo "$PID" > "$STATE/service.pid"; touch "$STATE/active"; echo active
+}
+
+status_trace() {
+  if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then echo active; else echo inactive; fi
+}
+
+case "${1:-}" in
+ start) shift; start_trace "$@" ;;
+ stop) shift; stop_trace "${1:-}" ;;
+ status) status_trace ;;
+ *) echo "usage: $0 {start --sha256 SHA256|stop [--purge]|status}" >&2; exit 2 ;;
+esac

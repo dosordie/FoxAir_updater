@@ -16,13 +16,14 @@ from PySide6.QtWidgets import (
 )
 
 import foxair_updater_operator_display as operator
+import foxair_updater_traffic as traffic
 from updater.common.phnix_modem_info import PhnixModemInfo
 
 
 CONFIRM_TOKEN = "PHNIX-STATISTICS-WRITE"
 
 
-class MainWindow(operator.MainWindow):
+class MainWindow(traffic.MainWindow):
     """Thin experimental frontend for the shared statistics maintenance core."""
 
     def __init__(self):
