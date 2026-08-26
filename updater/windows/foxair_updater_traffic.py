@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtWidgets import (QCheckBox, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
@@ -45,24 +45,19 @@ class MainWindow(operator.MainWindow):
                       "kein RS485-Zugriff und keine Änderung an <code>/data/phnixIot4G</code>. "
                       "Der flüchtige GDB-Hook wird nur für die exakt geprüfte Build-ID aktiviert.")
         note.setWordWrap(True); layout.addWidget(note)
-        hooks_box = QGroupBox("Zu verwendende Hooks"); hooks_layout = QVBoxLayout(hooks_box)
+        hooks_box = QGroupBox("Zu verwendende Hooks"); hooks_layout = QGridLayout(hooks_box)
+        hooks_layout.setContentsMargins(6, 4, 6, 4); hooks_layout.setHorizontalSpacing(6)
         self.traffic_hooks = {}
-        for group in ("MQTT", "HTTP / OTA", "Provisionierung"):
+        for column, group in enumerate(("MQTT", "HTTP / OTA", "Provisionierung")):
             group_box = QGroupBox(group); group_layout = QVBoxLayout(group_box)
+            group_layout.setContentsMargins(5, 3, 5, 3); group_layout.setSpacing(1)
             for hook_id, (hook_group, label) in HOOKS.items():
                 if hook_group != group: continue
                 checkbox = QCheckBox(label); checkbox.setChecked(hook_id in DEFAULT_HOOKS)
+                checkbox.setStyleSheet("QCheckBox { font-size: 10px; }")
                 self.traffic_hooks[hook_id] = checkbox; group_layout.addWidget(checkbox)
-            hooks_layout.addWidget(group_box)
-        preset_row = QHBoxLayout()
-        mqtt_tx = QPushButton("Nur MQTT TX"); mqtt_tx.clicked.connect(
-            lambda _checked=False: self._select_traffic_hooks(("mqtt_tx_update", "mqtt_tx_ota")))
-        mqtt_rx = QPushButton("Nur MQTT RX"); mqtt_rx.clicked.connect(
-            lambda _checked=False: self._select_traffic_hooks(("mqtt_rx_get", "mqtt_rx_ota")))
-        none = QPushButton("Alle abwählen"); none.clicked.connect(
-            lambda _checked=False: self._select_traffic_hooks(()))
-        for button in (mqtt_tx, mqtt_rx, none): preset_row.addWidget(button)
-        hooks_layout.addLayout(preset_row); layout.addWidget(hooks_box)
+            hooks_layout.addWidget(group_box, 0, column)
+        layout.addWidget(hooks_box)
         row = QHBoxLayout()
         self.traffic_enable = QCheckBox("Diagnose aktivieren")
         self.traffic_enable.toggled.connect(self._traffic_toggle); row.addWidget(self.traffic_enable)
@@ -84,10 +79,6 @@ class MainWindow(operator.MainWindow):
     def _summary(layout, title):
         box = QGroupBox(title); inner = QVBoxLayout(box); label = QLabel("Noch kein Ereignis.")
         label.setWordWrap(True); inner.addWidget(label); layout.addWidget(box); return label
-
-    def _select_traffic_hooks(self, selected):
-        selected = set(selected)
-        for hook_id, checkbox in self.traffic_hooks.items(): checkbox.setChecked(hook_id in selected)
 
     def _selected_traffic_hooks(self):
         return tuple(hook_id for hook_id, checkbox in self.traffic_hooks.items() if checkbox.isChecked())
@@ -139,9 +130,9 @@ class MainWindow(operator.MainWindow):
             try:
                 if action == "enable":
                     status = tracer.enable(hooks, mode="metadata_only")
-                    data = tracer.events() if status == "active" else tracer.startup_diagnostics
+                    data = tracer.events() if status.startswith("active") else tracer.startup_diagnostics
                 elif action == "disable": tracer.disable(delete_data=delete_data); status = "inactive"; data = ""
-                else: status = tracer.status(); data = tracer.events() if status == "active" else ""
+                else: status = tracer.status(); data = tracer.events() if status.startswith("active") else ""
                 self._traffic_signals.result.emit(action, status, data)
             except Exception as error: self._traffic_signals.error.emit(str(error))
         threading.Thread(target=work, daemon=True).start()
@@ -159,7 +150,7 @@ class MainWindow(operator.MainWindow):
             else:
                 message = "Debugger wurde unerwartet beendet; aktive Hooks: " + fields.get("hooks", "unbekannt")
             self._log("[Modem Diagnose / Traffic] KRITISCH:\n" + message)
-        if status != "active":
+        if not status.startswith("active"):
             self._traffic_timer.stop(); self.traffic_status.setText("Inaktiv (Prozess/Hook beendet)")
             if self.traffic_enable.isChecked():
                 self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)

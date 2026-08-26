@@ -213,7 +213,7 @@ class TrafficTest(unittest.TestCase):
         self.assertIn('kill -STOP "$wd"', hook)
         self.assertIn('kill -CONT "$wd"', hook)
         self.assertIn("trap emergency_cleanup EXIT INT TERM", hook)
-        self.assertLess(hook.index("freeze_watchdogs\n  gdbserver --attach"),
+        self.assertLess(hook.index("freeze_watchdogs\n"),
                         hook.index("gdbserver --attach"))
         self.assertIn("resume_watchdogs\n  trap - EXIT INT TERM", hook)
 
@@ -226,8 +226,22 @@ class TrafficTest(unittest.TestCase):
             "set logging file /data/local/tmp/foxair-traffic/raw.log",
         ))
         self.assertIn(initialization, hook)
-        self.assertLess(hook.index("delete breakpoints"), hook.index("detach\nquit"))
+        self.assertLess(hook.index("delete breakpoints"), hook.index("detach\n"))
+        self.assertLess(hook.index("detach\n"), hook.rindex('FOX|detached|run_id='))
         self.assertIn('test "$SAME_PID" != "$OLD_PID"', hook)
+
+    def test_each_run_isolated_and_cleanup_requires_confirmed_detach(self):
+        hook = HELPER.read_text(encoding="utf-8")
+        self.assertIn("set logging overwrite on", hook)
+        self.assertNotIn("set logging overwrite off", hook)
+        self.assertIn('ARCHIVE="$STATE/archive/$OLD_RUN_ID"', hook)
+        self.assertIn('RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"', hook)
+        self.assertIn('active|run_id=', hook)
+        self.assertIn('critical|%s|run_id=%s|', hook)
+        self.assertIn('FOX|target_stopped|run_id=', hook)
+        self.assertIn('FOX|detached|run_id=', hook)
+        self.assertIn('GDB und gdbserver bleiben unangetastet', hook)
+        self.assertNotIn('kill -TERM "$GDB_PID"', hook)
 
     def test_sigsegv_and_pid_change_are_critical_and_not_ignored(self):
         hook = HELPER.read_text(encoding="utf-8")

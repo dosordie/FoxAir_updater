@@ -251,7 +251,7 @@ class TrafficTracer:
         arguments = " ".join(f"--hook {hook}" for hook in selected)
         self.adb.shell(f"{REMOTE_HELPER} start {arguments} --mode {mode}", check=False)
         status = self.status()
-        if status != "active":
+        if not status.startswith("active"):
             self.startup_diagnostics = self._read_startup_diagnostics()
         return status
 
