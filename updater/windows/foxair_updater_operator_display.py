@@ -78,7 +78,11 @@ class MainWindow(lte.MainWindow):
             layout.takeAt(progress_index)
             row = QHBoxLayout()
             row.addWidget(self.progress, 1)
-            self.ota_elapsed_label = QLabel("MQTT weg: --:--")
+            self.ota_elapsed_label = QLabel("Verstrichen: --:--")
+            elapsed_font = self.ota_elapsed_label.font()
+            elapsed_font.setPointSize(max(12, elapsed_font.pointSize() + 2))
+            elapsed_font.setBold(True)
+            self.ota_elapsed_label.setFont(elapsed_font)
             self.ota_elapsed_label.setToolTip(
                 "Reine Count-up-Anzeige ab dem ersten sicher nach der lokalen MQTT-Sperre "
                 "beobachteten OTA-Zustand. Keine automatische Bewertung oder Abbruchlogik."
@@ -102,18 +106,18 @@ class MainWindow(lte.MainWindow):
         if not hasattr(self, "ota_elapsed_label"):
             return
         if self._ota_elapsed_started_at is None:
-            self.ota_elapsed_label.setText("MQTT weg: --:--")
+            self.ota_elapsed_label.setText("Verstrichen: --:--")
             return
         elapsed = max(0, int(time.monotonic() - self._ota_elapsed_started_at))
         minutes, seconds = divmod(elapsed, 60)
-        self.ota_elapsed_label.setText(f"MQTT weg: {minutes:02d}:{seconds:02d}")
+        self.ota_elapsed_label.setText(f"Verstrichen: {minutes:02d}:{seconds:02d}")
 
     def _reset_flow(self, title: str, *, transfer_expected: bool = False):
         if hasattr(self, "_ota_elapsed_timer"):
             self._ota_elapsed_timer.stop()
         self._ota_elapsed_started_at = None
         if hasattr(self, "ota_elapsed_label"):
-            self.ota_elapsed_label.setText("MQTT weg: --:--")
+            self.ota_elapsed_label.setText("Verstrichen: --:--")
         super()._reset_flow(title, transfer_expected=transfer_expected)
 
     def _handle_phase(self, phase: str):

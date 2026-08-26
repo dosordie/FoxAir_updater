@@ -45,7 +45,7 @@ class Issue9ModemMetadataUiTests(unittest.TestCase):
         self.assertIn("Cloud-/MQTT-Fehlerstatus", self.ui)
 
     def test_ota_count_up_is_display_only_and_starts_after_cloud_guard(self):
-        self.assertIn("MQTT weg: --:--", self.ui)
+        self.assertIn("Verstrichen: --:--", self.ui)
         self.assertIn("minutes, seconds = divmod(elapsed, 60)", self.ui)
         self.assertIn('"c350-probe-attaching"', self.ui)
         self.assertIn("Keine automatische Bewertung oder Abbruchlogik", self.ui)

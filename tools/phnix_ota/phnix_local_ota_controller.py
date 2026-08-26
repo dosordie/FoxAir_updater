@@ -476,6 +476,11 @@ def restore_original_runtime(adb: AdbClient, local_helper: Path) -> dict:
     return after
 
 
+def mqtt_tcp_established(netstat_output: str) -> bool:
+    """Return whether filtered TCP/1883 netstat output contains an active connection."""
+    return any("ESTABLISHED" in line for line in netstat_output.splitlines())
+
+
 def preflight(adb: AdbClient, firmware: Path, require_helper: bool,
               manifest: FirmwareManifest) -> dict:
     checks: dict[str, object] = {}
@@ -522,6 +527,7 @@ def preflight(adb: AdbClient, firmware: Path, require_helper: bool,
     checks["mqtt_connection"] = adb.shell(
         "netstat -nt 2>/dev/null | awk '$4 ~ /:1883$/ || $5 ~ /:1883$/ {print}'"
     )
+    checks["mqtt_established"] = mqtt_tcp_established(str(checks["mqtt_connection"]))
     checks["storage"] = adb.shell("df -k /cache /data 2>/dev/null || true")
     checks["info_writable"] = adb.shell(f"test -r {REMOTE_INFO} && test -w {REMOTE_INFO}; echo $?") == "0"
     checks["statistics_writable"] = adb.shell(
@@ -538,6 +544,11 @@ def preflight(adb: AdbClient, firmware: Path, require_helper: bool,
         failures.append("firmware size/MD5 mismatch")
     if checks["adb_state"] != "device":
         failures.append("ADB device is not ready")
+    if not checks["mqtt_established"]:
+        failures.append(
+            "Cloud/MQTT ist nicht verbunden. Das Firmwareupdate wird wegen des "
+            "30-Minuten-Rebootmechanismus nicht gestartet."
+        )
     if not checks["service_pid"]:
         failures.append("original phnixIot4G service is not running")
     if checks["service_path"] != REMOTE_SERVICE:

@@ -43,17 +43,24 @@ class MainWindow(app.MainWindow):
 
     def _ui(self):
         super()._ui()
-        # Connection, Backup, Update, Status, then diagnostics.  Keeping the
-        # page before Manifest/Advanced leaves room for more read-only modem
-        # information as reverse engineering progresses.
+        # Diagnostics are opt-in and sit immediately before Advanced.
         self.modem_tab_index = self.tabs.insertTab(
-            4, self._modem_info_page(), "Modem Info / LTE Diagnose"
+            5, self._modem_info_page(), "Modem Info / LTE Diagnose"
         )
+        self.tabs.setTabVisible(self.modem_tab_index, self.show_modem_diagnostics.isChecked())
 
     def _advanced(self):
         widget = super()._advanced()
         layout = widget.layout()
         insert_at = max(0, layout.count() - 1)
+
+        self.show_modem_diagnostics = QCheckBox("Modem-Diagnose / Traffic anzeigen")
+        self.show_modem_diagnostics.setChecked(
+            str(self.settings.value("show_modem_diagnostics", "false")).lower() in {"1", "true", "yes"}
+        )
+        self.show_modem_diagnostics.toggled.connect(self._toggle_modem_diagnostics)
+        layout.insertWidget(insert_at, self.show_modem_diagnostics)
+        insert_at += 1
 
         separator = QLabel("<hr><b>Lokalen Windows-Blockzustand zurücksetzen</b>")
         layout.insertWidget(insert_at, separator)
@@ -84,6 +91,13 @@ class MainWindow(app.MainWindow):
         self.block_reset_btn.clicked.connect(self._reset_block_pending)
         layout.insertWidget(insert_at, self.block_reset_btn)
         return widget
+
+    def _toggle_modem_diagnostics(self, visible: bool) -> None:
+        self.settings.setValue("show_modem_diagnostics", visible)
+        self.settings.sync()
+        for name in ("modem_tab_index", "traffic_tab_index"):
+            if hasattr(self, name):
+                self.tabs.setTabVisible(getattr(self, name), visible)
 
     def _modem_info_page(self):
         widget = QWidget()
@@ -359,6 +373,7 @@ class MainWindow(app.MainWindow):
                 not self.busy and not self._modem_info_running and self._adb_ready()
             )
         if hasattr(self, "block_reset_btn"):
+            self.allow_block_reset.setEnabled(not self.busy)
             self.block_reset_btn.setEnabled(
                 not self.busy
                 and self.allow_block_reset.isChecked()

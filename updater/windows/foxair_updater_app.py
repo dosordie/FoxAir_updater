@@ -26,7 +26,6 @@ import release_check
 
 
 APP_VERSION = "0.2.99"
-MODEM_DRIVER_URL = "https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip"
 REMOTE_CACHE_FIRMWARE = "/cache/phnixIot_device_OTA"
 REMOTE_CACHE_STAGE = "/cache/.phnixIot_device_OTA.manual-upload"
 
@@ -60,7 +59,6 @@ class MainWindow(base.MainWindow):
         # last directories used by firmware/manifest dialogs.
         self.backup_path.editingFinished.connect(self._persist_settings)
         self.update_manifest.editingFinished.connect(self._persist_settings)
-        self.same_manifest.editingFinished.connect(self._persist_settings)
         self.firmware.editingFinished.connect(self._persist_settings)
         if hasattr(self, "cache_firmware"):
             self.cache_firmware.editingFinished.connect(self._persist_settings)
@@ -116,17 +114,6 @@ class MainWindow(base.MainWindow):
         widget = super()._connection()
         layout = widget.layout()
 
-        driver_row = QHBoxLayout()
-        driver = QPushButton("SIMCom USB-Treiber herunterladen")
-        driver.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(MODEM_DRIVER_URL)))
-        driver_row.addWidget(driver)
-        driver_note = QLabel("Für die direkte USB-Verbindung unter Windows zuerst den Modem-Treiber installieren.")
-        driver_note.setWordWrap(True)
-        driver_row.addWidget(driver_note, 1)
-        # The existing Platform-Tools download row is item 1 in the base GUI.
-        # Insert the modem driver directly before it, as prerequisite step 1.
-        layout.insertLayout(1, driver_row)
-
         update_heading = QLabel("<b>Programmupdate</b>")
         self.release_status = QLabel(f"Installiert: v{APP_VERSION} – GitHub-Prüfung noch nicht ausgeführt.")
         self.release_status.setWordWrap(True)
@@ -167,10 +154,10 @@ class MainWindow(base.MainWindow):
         self.cache_firmware = QLineEdit()
         self.cache_firmware.setPlaceholderText("Firmwaredatei auswählen")
         self.cache_firmware.textChanged.connect(self._buttons)
-        choose = QPushButton("Firmware…")
-        choose.clicked.connect(self._pick_cache_firmware)
+        self.cache_choose_btn = QPushButton("Firmware…")
+        self.cache_choose_btn.clicked.connect(self._pick_cache_firmware)
         row.addWidget(self.cache_firmware, 1)
-        row.addWidget(choose)
+        row.addWidget(self.cache_choose_btn)
         layout.insertLayout(insert_at, row)
         insert_at += 1
 
@@ -240,7 +227,6 @@ class MainWindow(base.MainWindow):
         self.settings.setValue("remote_host", self.remote_host.text().strip())
         self.settings.setValue("remote_port", self.remote_port.value())
         self._remember_parent("manifest_dir", self.update_manifest.text())
-        self._remember_parent("manifest_dir", self.same_manifest.text())
         self._remember_parent("firmware_dir", self.firmware.text())
         if hasattr(self, "cache_firmware"):
             self._remember_parent("firmware_dir", self.cache_firmware.text())
@@ -515,6 +501,16 @@ class MainWindow(base.MainWindow):
                 "Geprüfter PHNIX-Originaldienst ist aktiv und unverändert."
                 if service_ok
                 else "PHNIX-Originaldienst stimmt nicht mit dem geprüften Build überein.",
+            )
+        if "mqtt_established" in record:
+            mqtt_ok = record.get("mqtt_established") is True
+            self._set_step(
+                "preflight-mqtt",
+                "ok" if mqtt_ok else "error",
+                "Cloud/MQTT ist unmittelbar vor dem OTA per TCP verbunden."
+                if mqtt_ok
+                else "Cloud/MQTT ist nicht verbunden. Das Firmwareupdate wird wegen des "
+                "30-Minuten-Rebootmechanismus nicht gestartet.",
             )
         watchdog_ok = bool(str(record.get("watchdog_pids", "")).strip())
         if "watchdog_pids" in record:
@@ -1081,6 +1077,7 @@ class MainWindow(base.MainWindow):
         if hasattr(self, "cache_copy_btn"):
             firmware_ready = Path(self.cache_firmware.text().strip().strip('"')).is_file()
             self.cache_copy_btn.setEnabled(not self.busy and self._adb_ready() and firmware_ready)
+            self.cache_choose_btn.setEnabled(not self.busy)
 
     def closeEvent(self, event):
         self._persist_settings()

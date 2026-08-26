@@ -50,7 +50,7 @@ class MainWindow(traffic.MainWindow):
         insert_at = max(0, layout.count() - 1)
 
         heading = QLabel(
-            "<hr><b>Experimentelle Wartung – Mainboard OTA-Vorgänge</b>"
+            "<hr><b>Wartung – Mainboard OTA-Vorgänge</b>"
         )
         layout.insertWidget(insert_at, heading)
         insert_at += 1
@@ -89,7 +89,7 @@ class MainWindow(traffic.MainWindow):
         insert_at += 1
 
         self.allow_statistics_write = QCheckBox(
-            "Experimentelles Ändern des persistenten Statistikzustands erlauben"
+            "Ändern des persistenten Statistikzustands erlauben"
         )
         self.allow_statistics_write.toggled.connect(self._buttons)
         layout.insertWidget(insert_at, self.allow_statistics_write)
@@ -178,7 +178,7 @@ class MainWindow(traffic.MainWindow):
         if (
             QMessageBox.warning(
                 self,
-                "Mainboard OTA-Vorgänge experimentell ändern?",
+                "Mainboard OTA-Vorgänge ändern?",
                 "Der bestehende OTA-Controller bleibt unberührt. Der separate "
                 "Maintenance-Core wird den Originaldienst für wenige Sekunden "
                 "kontrolliert stoppen und anschließend wieder starten.\n\n"
@@ -283,7 +283,7 @@ class MainWindow(traffic.MainWindow):
         )
         QMessageBox.critical(
             self,
-            "Experimentelle Wartung fehlgeschlagen",
+            "Wartung fehlgeschlagen",
             message + "\n\nDetails stehen im Protokoll.",
         )
 
@@ -300,6 +300,8 @@ class MainWindow(traffic.MainWindow):
     def _buttons(self):
         super()._buttons()
         if hasattr(self, "statistics_show_btn"):
+            self.allow_statistics_write.setEnabled(not self.busy)
+            self.statistics_target.setEnabled(not self.busy)
             self.statistics_show_btn.setEnabled(
                 not self.busy and self._adb_ready()
             )
