@@ -100,14 +100,14 @@ class TrafficTest(unittest.TestCase):
         self.assertIn("skip=0", adb.calls[0][1])
         self.assertIn("skip=32", adb.calls[1][1])
 
-    def test_enable_hashes_exec_out_bytes_before_installing_helper(self):
+    def test_enable_hashes_bytes_from_adb_client_before_installing_helper(self):
         class FakeAdb:
             def __init__(self):
                 self.pushed = False
                 self.commands = []
 
-            def run(self, *args, **kwargs):
-                self.commands.append((args, kwargs))
+            def read_file(self, remote):
+                self.commands.append(("read_file", remote))
                 return b"verified binary"
 
             def push(self, *args):
@@ -121,14 +121,13 @@ class TrafficTest(unittest.TestCase):
         adb = FakeAdb()
         with patch("updater.common.phnix_traffic.EXPECTED_SERVICE_SHA256", expected):
             self.assertEqual(TrafficTracer(adb, "helper").enable(), "active")
-        self.assertEqual(adb.commands[0][0], ("exec-out", "cat", "/data/phnixIot4G"))
-        self.assertTrue(adb.commands[0][1]["binary"])
+        self.assertEqual(adb.commands[0], ("read_file", "/data/phnixIot4G"))
         self.assertTrue(adb.pushed)
         self.assertIn("start --sha256 " + expected, adb.commands[1][0][0])
 
     def test_unknown_binary_is_rejected_before_helper_push(self):
         class FakeAdb:
-            def run(self, *args, **kwargs): return b"unknown"
+            def read_file(self, remote): return b"unknown"
             def push(self, *args): raise AssertionError("helper must not be pushed")
 
         with self.assertRaisesRegex(RuntimeError, "Nicht unterstützte phnixIot4G-Version"):

@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         self.state_dir.mkdir(parents=True, exist_ok=True)
 
         self.setWindowTitle(f"FoxAir Updater {APP_VERSION} – EXPERIMENTELL")
-        self.resize(950, 780)
+        self.resize(1100, 780)
         icon = root_dir() / "app_icon.ico"
         if icon.is_file():
             self.setWindowIcon(QIcon(str(icon)))

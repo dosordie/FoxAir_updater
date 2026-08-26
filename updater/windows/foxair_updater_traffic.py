@@ -15,7 +15,7 @@ from updater.common.phnix_traffic import EventRing, TrafficTracer
 
 
 class TrafficSignals(QObject):
-    result = Signal(str, str)
+    result = Signal(str, str, str)
     error = Signal(str)
 
 
@@ -49,7 +49,7 @@ class MainWindow(operator.MainWindow):
         self.traffic_enable.toggled.connect(self._traffic_toggle); row.addWidget(self.traffic_enable)
         self.traffic_delete = QCheckBox("Daten beim Deaktivieren löschen"); self.traffic_delete.setChecked(True)
         row.addWidget(self.traffic_delete)
-        refresh = QPushButton("Jetzt aktualisieren"); refresh.clicked.connect(self._traffic_poll); row.addWidget(refresh)
+        refresh = QPushButton("Jetzt aktualisieren"); refresh.clicked.connect(lambda _checked=False: self._traffic_poll(manual=True)); row.addWidget(refresh)
         self.traffic_status = QLabel("Inaktiv"); row.addWidget(self.traffic_status, 1); layout.addLayout(row)
         self.traffic_mqtt = self._summary(layout, "MQTT")
         self.traffic_http = self._summary(layout, "HTTP / OTA")
@@ -83,25 +83,32 @@ class MainWindow(operator.MainWindow):
             self._traffic_ring.clear()
         self._traffic_work("enable" if checked else "disable", tracer)
 
-    def _traffic_poll(self):
+    def _traffic_poll(self, manual=False):
         if not self.traffic_enable.isChecked() or self._traffic_running: return
         tracer = self._tracer()
-        if tracer: self._traffic_work("poll", tracer)
+        if tracer: self._traffic_work("refresh" if manual else "poll", tracer)
 
     def _traffic_work(self, action, tracer):
         if self._traffic_running: return
         self._traffic_running = True; self.traffic_status.setText("Bitte warten …")
+        descriptions = {
+            "enable": "Diagnose wird aktiviert und die phnixIot4G-Version geprüft.",
+            "disable": "Diagnose wird deaktiviert; der temporäre Hook wird entfernt.",
+            "refresh": "Traffic-Daten werden jetzt manuell aktualisiert.",
+        }
+        if action in descriptions:
+            self._log("[Modem Diagnose / Traffic] " + descriptions[action])
         delete_data = self.traffic_delete.isChecked()
         def work():
             try:
                 if action == "enable": status = tracer.enable(); data = tracer.events()
                 elif action == "disable": tracer.disable(delete_data=delete_data); status = "inactive"; data = ""
                 else: status = tracer.status(); data = tracer.events() if status == "active" else ""
-                self._traffic_signals.result.emit(status, data)
+                self._traffic_signals.result.emit(action, status, data)
             except Exception as error: self._traffic_signals.error.emit(str(error))
         threading.Thread(target=work, daemon=True).start()
 
-    def _traffic_result(self, status, data):
+    def _traffic_result(self, action, status, data):
         self._traffic_running = False
         if status != "active":
             self._traffic_timer.stop(); self.traffic_status.setText("Inaktiv (Prozess/Hook beendet)")
@@ -109,14 +116,22 @@ class MainWindow(operator.MainWindow):
                 self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
             if self.traffic_delete.isChecked(): self._traffic_ring.clear()
             self._traffic_tracer = None
+            self._log("[Modem Diagnose / Traffic] Diagnose ist inaktiv; temporärer Hook wurde entfernt.")
         else:
             self.traffic_status.setText("Aktiv – passiv angehängt"); self._traffic_timer.start()
-            self._traffic_ring.add_json_lines(data)
+            added = self._traffic_ring.add_json_lines(data)
+            if action == "enable":
+                self._log("[Modem Diagnose / Traffic] Diagnose ist aktiv und passiv angehängt.")
+            elif action == "refresh":
+                self._log(f"[Modem Diagnose / Traffic] Aktualisierung abgeschlossen: {added} neue Ereignisse.")
+            elif added:
+                self._log(f"[Modem Diagnose / Traffic] {added} neue Ereignisse empfangen.")
         self._render_traffic()
 
     def _traffic_error(self, message):
         self._traffic_running = False; self._traffic_timer.stop(); self.traffic_status.setText("Fehler: " + message)
         self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
+        self._log("[Modem Diagnose / Traffic] Fehler: " + message)
 
     def _render_traffic(self):
         events = self._traffic_ring.snapshot(); self.traffic_table.setRowCount(len(events))

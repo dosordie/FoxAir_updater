@@ -195,7 +195,7 @@ class TrafficTracer:
         # Verify the exact bytes on the trusted host first. No ELF utility is
         # required on the old modem and the fixed addresses are never enabled
         # for an unknown executable.
-        raw = self.adb.run("exec-out", "cat", "/data/phnixIot4G", binary=True)
+        raw = self.adb.read_file("/data/phnixIot4G")
         actual_sha256 = hashlib.sha256(raw).hexdigest()
         if actual_sha256 != EXPECTED_SERVICE_SHA256:
             raise RuntimeError(

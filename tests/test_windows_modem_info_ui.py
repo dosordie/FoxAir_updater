@@ -29,6 +29,12 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         cls.transport = Path("updater/common/adb_transport.py").read_text(
             encoding="utf-8"
         )
+        cls.base_ui = Path("updater/windows/foxair_updater_gui.py").read_text(
+            encoding="utf-8"
+        )
+        cls.traffic_ui = Path(
+            "updater/windows/foxair_updater_traffic.py"
+        ).read_text(encoding="utf-8")
         cls.build = Path("updater/windows/build_windows_portable.bat").read_text(
             encoding="utf-8"
         )
@@ -54,6 +60,13 @@ class WindowsModemInfoUiTests(unittest.TestCase):
     def test_windows_adb_processes_do_not_flash_console_windows(self):
         self.assertIn("CREATE_NO_WINDOW", self.transport)
         self.assertIn("creationflags=self._creationflags()", self.transport)
+
+    def test_main_window_is_wider_and_traffic_actions_reach_program_log(self):
+        self.assertIn("self.resize(1100, 780)", self.base_ui)
+        self.assertIn('self._log("[Modem Diagnose / Traffic] "', self.traffic_ui)
+        self.assertIn("Diagnose ist aktiv und passiv angehängt", self.traffic_ui)
+        self.assertIn("Aktualisierung abgeschlossen", self.traffic_ui)
+        self.assertIn('self._log("[Modem Diagnose / Traffic] Fehler: "', self.traffic_ui)
 
     def test_live_confirmed_lte_addresses_are_encoded(self):
         expected = [
