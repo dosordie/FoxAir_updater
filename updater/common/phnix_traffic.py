@@ -79,13 +79,36 @@ class TrafficEvent:
 
     @property
     def summary(self) -> str:
+        """Return a compact, redacted representation suitable for the GUI."""
+        def shorten(value: str, limit: int = 180) -> str:
+            value = value.replace("\r", "\\r").replace("\n", "\\n")
+            return value if len(value) <= limit else value[:limit - 3] + "..."
+
         if self.payload_type == "phnix":
-            return (f"0x{self.fields['slave']:02X} FC{self.fields['function']:02X} "
-                    f"Reg {self.fields.get('address_hex', '–')} ×{self.fields.get('quantity', 0)}")
+            slave = f"0x{self.fields['slave']:02X}"
+            function = f"0x{self.fields['function']:02X}"
+            address = self.fields.get("address_hex", "–")
+            quantity = self.fields.get("quantity", 0)
+            result = f"Slave {slave} · FC {function} · Reg {address} · {quantity} Register"
+            values = self.fields.get("values") or []
+            if values:
+                named = [f"{item['address_hex']}" + (f" ({item['name']})" if item.get("name") else "")
+                         + f" = {item['value']}" for item in values]
+                result += " · " + " · ".join(named)
+            return shorten(result)
         if self.payload_type == "json":
-            command = self.fields.get("command") or self.fields.get("cmd") or self.fields.get("code")
-            return f"JSON {command}" if command is not None else "JSON " + str(self.fields)[:64]
-        return self.payload_hex[:80] if self.payload_hex else ("Chunk" if self.payload_type == "chunk" else "")
+            return shorten(json.dumps(sanitize_fields(self.fields), ensure_ascii=False,
+                                      separators=(",", ":")))
+        if self.payload_text:
+            return shorten(self.payload_text)
+        if self.payload_hex:
+            return shorten(self.payload_hex)
+        if self.fields:
+            pointer = self.fields.get("pointer")
+            if pointer:
+                return f"Pointer {pointer}"
+            return shorten(" · ".join(f"{key}: {value}" for key, value in self.fields.items()))
+        return "Chunk" if self.payload_type == "chunk" else "Keine Payload-Daten"
 
     def details(self) -> str:
         raw = self.payload_hex or "–"
@@ -127,9 +150,10 @@ class TrafficEvent:
 def decode_payload(payload: bytes) -> tuple[str, str | None, dict[str, Any]]:
     """Decode on the host while always returning the unmodified raw hex."""
     raw_hex = payload.hex(" ").upper() or None
+    decoded_text = None
     try:
-        text = payload.decode("utf-8")
-        value = json.loads(text)
+        decoded_text = payload.decode("utf-8")
+        value = json.loads(decoded_text)
         safe = sanitize_fields(value)
         return "json", json.dumps(safe, ensure_ascii=False, indent=2), safe if isinstance(safe, dict) else {"value": safe}
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -149,6 +173,10 @@ def decode_payload(payload: bytes) -> tuple[str, str | None, dict[str, Any]]:
                 if item["address"] in REGISTER_NAMES:
                     item["name"] = REGISTER_NAMES[item["address"]]
         return "phnix", None, decoded
+    if decoded_text is not None and decoded_text and all(
+        character.isprintable() or character in "\r\n\t" for character in decoded_text
+    ):
+        return "text", decoded_text, {}
     return "binary", None, {}
 
 

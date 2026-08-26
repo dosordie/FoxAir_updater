@@ -5,9 +5,9 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QCheckBox, QGridLayout, QGroupBox, QHeaderView, QHBoxLayout, QLabel,
                                QPushButton, QTableWidget, QTableWidgetItem,
-                               QTextEdit, QVBoxLayout, QWidget)
+                               QVBoxLayout, QWidget)
 
 import foxair_updater_operator_display as operator
 from updater.common.adb_transport import AdbClient
@@ -17,7 +17,7 @@ from updater.common.phnix_traffic import DEFAULT_HOOKS, HOOKS
 
 class TrafficSignals(QObject):
     result = Signal(str, str, str)
-    error = Signal(str)
+    error = Signal(str, str)
 
 
 class MainWindow(operator.MainWindow):
@@ -72,10 +72,12 @@ class MainWindow(operator.MainWindow):
         self.traffic_provision = self._summary(layout, "Provisionierung")
         raw = QGroupBox("Rohereignisse (Ringbuffer: 500)"); raw_layout = QVBoxLayout(raw)
         self.traffic_table = QTableWidget(0, 6)
-        self.traffic_table.setHorizontalHeaderLabels(["Zeit", "Richtung", "Protokoll", "Kanal", "Länge", "Kurzinhalt"])
-        self.traffic_table.doubleClicked.connect(self._traffic_details)
-        self.traffic_table.horizontalHeader().setStretchLastSection(True); raw_layout.addWidget(self.traffic_table)
-        details = QPushButton("Details"); details.clicked.connect(self._traffic_details); raw_layout.addWidget(details)
+        self.traffic_table.setHorizontalHeaderLabels(["Zeit", "Richtung", "Protokoll", "Kanal", "Länge", "Inhalt"])
+        header = self.traffic_table.horizontalHeader()
+        for column in range(5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        raw_layout.addWidget(self.traffic_table)
         layout.addWidget(raw, 1)
         return page
 
@@ -107,7 +109,6 @@ class MainWindow(operator.MainWindow):
         if tracer is None:
             self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False); return
         if checked:
-            self._traffic_ring.clear()
             self._log("[Modem Diagnose / Traffic] Aktivierte Hooks:\n" +
                       "\n".join(f"- {hook}" for hook in hooks))
         self._traffic_work("enable" if checked else "disable", tracer, hooks=hooks)
@@ -133,12 +134,12 @@ class MainWindow(operator.MainWindow):
         def work():
             try:
                 if action == "enable":
-                    status = tracer.enable(hooks, mode="metadata_only")
+                    status = tracer.enable(hooks, mode="full")
                     data = tracer.events() if status.startswith("active") else tracer.startup_diagnostics
                 elif action == "disable": tracer.disable(delete_data=delete_data); status = "inactive"; data = ""
                 else: status = tracer.status(); data = tracer.events() if status.startswith("active") else ""
                 self._traffic_signals.result.emit(action, status, data)
-            except Exception as error: self._traffic_signals.error.emit(str(error))
+            except Exception as error: self._traffic_signals.error.emit(action, str(error))
         threading.Thread(target=work, daemon=True).start()
 
     def _traffic_result(self, action, status, data):
@@ -154,18 +155,25 @@ class MainWindow(operator.MainWindow):
             else:
                 message = "Debugger wurde unerwartet beendet; aktive Hooks: " + fields.get("hooks", "unbekannt")
             self._log("[Modem Diagnose / Traffic] KRITISCH:\n" + message)
+            self._log("[Modem Diagnose / Traffic] Aufgezeichnete Ereignisse bleiben zur Analyse erhalten.")
         if not status.startswith("active"):
             self._traffic_timer.stop(); self.traffic_status.setText("Inaktiv (Prozess/Hook beendet)")
             if self.traffic_enable.isChecked():
                 self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
-            if self.traffic_delete.isChecked(): self._traffic_ring.clear()
+            delete_data = action == "disable" and self.traffic_delete.isChecked()
+            if delete_data:
+                self._traffic_ring.clear()
             self._traffic_tracer = None
             if action == "enable":
                 self._log("[Modem Diagnose / Traffic] Start fehlgeschlagen; Debug-Dateien bleiben "
                           "auf dem Modem erhalten. Debugger-Ausgaben:\n" + (data or "<keine Ausgabe>"))
-            else:
-                self._log("[Modem Diagnose / Traffic] Diagnose ist inaktiv; es wurde kein automatisches "
-                          "Purge ausgeführt.")
+            elif action == "disable" and delete_data:
+                self._log("[Modem Diagnose / Traffic] Diagnose deaktiviert; Trace-Daten wurden gelöscht.")
+            elif action == "disable":
+                self._log("[Modem Diagnose / Traffic] Diagnose deaktiviert; Trace-Daten bleiben erhalten.")
+            elif not status.startswith("critical|"):
+                self._log("[Modem Diagnose / Traffic] Diagnose wurde beendet; aufgezeichnete Ereignisse "
+                          "bleiben zur Analyse erhalten.")
         else:
             self.traffic_status.setText("Aktiv – passiv angehängt"); self._traffic_timer.start()
             added = self._traffic_ring.add_json_lines(data)
@@ -178,10 +186,16 @@ class MainWindow(operator.MainWindow):
                 self._log(f"[Modem Diagnose / Traffic] {added} neue Ereignisse empfangen.")
         self._render_traffic()
 
-    def _traffic_error(self, message):
+    def _traffic_error(self, action, message):
         self._traffic_running = False; self._traffic_timer.stop(); self.traffic_status.setText("Fehler: " + message)
         self.traffic_enable.blockSignals(True); self.traffic_enable.setChecked(False); self.traffic_enable.blockSignals(False)
         self._log("[Modem Diagnose / Traffic] Fehler: " + message)
+        if action in ("poll", "refresh", "disable"):
+            self._log("[Modem Diagnose / Traffic] Verbindung zum Trace verloren; bereits aufgezeichnete "
+                      "Ereignisse bleiben erhalten.")
+        else:
+            self._log("[Modem Diagnose / Traffic] Start fehlgeschlagen; bereits aufgezeichnete Ereignisse "
+                      "bleiben erhalten.")
 
     def _render_traffic(self):
         events = self._traffic_ring.snapshot(); self.traffic_table.setRowCount(len(events))
@@ -190,7 +204,9 @@ class MainWindow(operator.MainWindow):
                       f"{event.length} B", event.summary]
             for col, value in enumerate(values): self.traffic_table.setItem(row, col, QTableWidgetItem(value))
         mqtt = [e for e in events if e.protocol == "mqtt"]
-        self.traffic_mqtt.setText("<br>".join(f"{e.direction.upper()} {e.channel}: {e.length} B – {(e.payload_hex or '')[:48]}" for e in mqtt[-3:]) or "Noch kein Ereignis.")
+        self.traffic_mqtt.setText("<br>".join(
+            f"{e.direction.upper()} {e.channel}: {e.length} B – {e.summary}" for e in mqtt[-3:]
+        ) or "Noch kein Ereignis.")
         starts = [e for e in events if e.channel == "ota_download_start"]
         if starts:
             start = starts[-1]; fields = start.fields
@@ -205,13 +221,3 @@ class MainWindow(operator.MainWindow):
         else: self.traffic_http.setText("Noch kein Ereignis.")
         prov = [e for e in events if "register" in e.channel or "queryiotdevice" in e.channel]
         self.traffic_provision.setText(prov[-1].channel if prov else "Noch kein Ereignis.")
-
-    def _traffic_details(self, _checked=False):
-        row = self.traffic_table.currentRow()
-        events = self._traffic_ring.snapshot()
-        if row < 0 or row >= len(events): return
-        dialog = QDialog(self); dialog.setWindowTitle("Traffic-Details"); dialog.resize(760, 520)
-        layout = QVBoxLayout(dialog); text = QTextEdit(); text.setReadOnly(True)
-        text.setPlainText(events[row].details()); layout.addWidget(text)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close); buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons); dialog.exec()
