@@ -10,6 +10,12 @@ from updater.common.phnix_traffic import (
 HELPER = Path("tools/phnix_traffic/foxair_traffic_trace")
 
 
+class FakeGuardian:
+    def poll(self): return None
+    def wait(self, timeout=None): return 0
+    def terminate(self): pass
+
+
 class TrafficTest(unittest.TestCase):
     def test_helper_uses_android_shebang_and_unix_line_endings(self):
         helper = HELPER.read_bytes()
@@ -135,11 +141,15 @@ class TrafficTest(unittest.TestCase):
             def read_file(self, remote):
                 raise AssertionError(f"unexpected diagnostic read: {remote}")
 
+            def popen_shell(self, command):
+                self.commands.append(("popen_shell", command))
+                return FakeGuardian()
+
         adb = FakeAdb()
         self.assertEqual(TrafficTracer(adb, HELPER).enable(), "active")
         self.assertTrue(adb.pushed)
         self.assertNotIn("read_file", repr(adb.commands))
-        self.assertTrue(any("foxair_traffic_trace start" in repr(call) for call in adb.commands))
+        self.assertTrue(any("foxair_traffic_trace serve" in repr(call) for call in adb.commands))
 
     def test_enable_rejects_crlf_helper_before_push(self):
         class FakeAdb:
@@ -186,6 +196,10 @@ class TrafficTest(unittest.TestCase):
                 self.commands.append(("read_file", remote))
                 return ("failure from " + remote).encode()
 
+            def popen_shell(self, command):
+                self.commands.append(("popen_shell", command))
+                return FakeGuardian()
+
         adb = FakeAdb()
         tracer = TrafficTracer(adb, HELPER)
         self.assertEqual(tracer.enable(), "inactive")
@@ -202,7 +216,7 @@ class TrafficTest(unittest.TestCase):
         self.assertIn(server_check, hook)
         self.assertIn(gdb_check, hook)
         self.assertGreaterEqual(hook.count("sleep 1"), 2)
-        self.assertLess(hook.index(server_check), hook.index("gdb -q -batch"))
+        self.assertLess(hook.index(server_check), hook.index("gdb -q -x"))
         self.assertLess(hook.index(gdb_check), hook.index('touch "$STATE/active"'))
         self.assertIn('startup_failed "gdbserver beendet"', hook)
         self.assertIn('startup_failed "gdb beendet"', hook)
@@ -215,19 +229,29 @@ class TrafficTest(unittest.TestCase):
         self.assertIn("trap emergency_cleanup EXIT INT TERM", hook)
         self.assertLess(hook.index("freeze_watchdogs\n"),
                         hook.index("gdbserver --attach"))
-        self.assertIn("resume_watchdogs\n  trap - EXIT INT TERM", hook)
+        self.assertNotIn("resume_watchdogs\n  trap - EXIT INT TERM", hook)
+        self.assertIn('watchdogs=guarded', hook)
+        self.assertIn('MAX_TRACE_SECONDS=120', hook)
+        self.assertIn('start|serve) shift; serve_trace "$@"', hook)
+        self.assertIn('trap emergency_cleanup HUP INT TERM', hook)
+        self.assertIn('test "$MAX_TRACE_SECONDS" -ge 15', hook)
+        self.assertLess(hook.index('wait_service_running "$OLD_PID"'),
+                        hook.index("resume_watchdogs\n  if test \"$STOP_OK\""))
 
     def test_gdb_lifecycle_matches_runtime_hook_initialization_and_detaches(self):
         hook = HELPER.read_text(encoding="utf-8")
         initialization = "\n".join((
-            "set architecture arm", "set pagination off", "set confirm off",
+            "set architecture arm", "set target-async on", "set pagination off", "set confirm off",
             "set print thread-events off", "set auto-load safe-path /",
             "set libthread-db-search-path /lib", "file /data/phnixIot4G",
             "set logging file /data/local/tmp/foxair-traffic/raw.log",
         ))
         self.assertIn(initialization, hook)
-        self.assertLess(hook.index("delete breakpoints"), hook.index("detach\n"))
-        self.assertLess(hook.index("detach\n"), hook.rindex('FOX|detached|run_id='))
+        self.assertIn('kill -TERM "$GDB_PID"', hook)
+        self.assertIn('kill -TERM "$GDBSERVER_PID"', hook)
+        self.assertIn('TRACER_PID=$(awk', hook)
+        self.assertIn("set target-async on", hook)
+        self.assertIn("printf 'continue&\\n' >&3", hook)
         self.assertIn('test "$SAME_PID" != "$OLD_PID"', hook)
 
     def test_each_run_isolated_and_cleanup_requires_confirmed_detach(self):
@@ -238,10 +262,9 @@ class TrafficTest(unittest.TestCase):
         self.assertIn('RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"', hook)
         self.assertIn('active|run_id=', hook)
         self.assertIn('critical|%s|run_id=%s|', hook)
-        self.assertIn('FOX|target_stopped|run_id=', hook)
         self.assertIn('FOX|detached|run_id=', hook)
         self.assertIn('GDB und gdbserver bleiben unangetastet', hook)
-        self.assertNotIn('kill -TERM "$GDB_PID"', hook)
+        self.assertIn('kill -TERM "$GDB_PID"', hook)
 
     def test_sigsegv_and_pid_change_are_critical_and_not_ignored(self):
         hook = HELPER.read_text(encoding="utf-8")
@@ -255,7 +278,8 @@ class TrafficTest(unittest.TestCase):
         self.assertLess(hook.index('test -n "$HOOKS"'), hook.index("gdbserver --attach"))
         self.assertLess(hook.index('for ID in $HOOKS'), hook.index("gdbserver --attach"))
         self.assertIn("Unbekannte Hook-ID", hook)
-        self.assertIn('rm -f "$STATE/active" "$STATE/gdb.pid" "$STATE/gdbserver.pid"', hook)
+        self.assertIn('rm -f "$STATE/active" "$STATE/stopping" "$STATE/stop.request" "$STATE/guardian.pid"', hook)
+        self.assertIn('"$STATE/gdb.pid" "$STATE/gdbserver.pid"', hook)
         self.assertNotIn('rm -f "$STATE/gdb.log"', hook)
 
     def test_enable_passes_only_selected_hook_ids(self):
@@ -265,10 +289,13 @@ class TrafficTest(unittest.TestCase):
             def shell(self, command, check=True):
                 self.commands.append(command)
                 return "active"
+            def popen_shell(self, command):
+                self.commands.append(command)
+                return FakeGuardian()
         adb = FakeAdb()
         tracer = TrafficTracer(adb, HELPER)
         tracer.enable(("mqtt_rx_get", "http_ota_chunk"))
-        start = next(command for command in adb.commands if " start " in command)
+        start = next(command for command in adb.commands if " serve " in command)
         self.assertIn("--hook mqtt_rx_get", start)
         self.assertIn("--hook http_ota_chunk", start)
         self.assertNotIn("--hook mqtt_tx_update", start)

@@ -8,6 +8,7 @@ data.  The on-device helper is removed again when tracing is disabled.
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -224,8 +225,12 @@ class TrafficTracer:
         self._offset = 0
         self._partial = ""
         self.startup_diagnostics = ""
+        self._guardian = None
 
-    def enable(self, hooks: Iterable[str] = DEFAULT_HOOKS, *, mode: str = "metadata_only") -> str:
+    def enable(
+        self, hooks: Iterable[str] = DEFAULT_HOOKS, *, mode: str = "metadata_only",
+        max_seconds: int = 120,
+    ) -> str:
         self._offset = 0
         self._partial = ""
         self.startup_diagnostics = ""
@@ -237,6 +242,8 @@ class TrafficTracer:
             raise ValueError("Unbekannte Traffic-Hook-ID: " + ", ".join(unknown))
         if mode != "metadata_only":
             raise ValueError("Derzeit ist ausschließlich metadata_only freigegeben.")
+        if not 15 <= max_seconds <= 600:
+            raise ValueError("Die maximale Laufzeit muss zwischen 15 und 600 Sekunden liegen.")
         helper_bytes = self.helper.read_bytes()
         if b"\r\n" in helper_bytes:
             raise ValueError("traffic-trace helper contains CRLF line endings")
@@ -249,8 +256,22 @@ class TrafficTracer:
         # A failed helper start is deliberately non-fatal here: status and both
         # debugger logs must be collected before any caller can consider cleanup.
         arguments = " ".join(f"--hook {hook}" for hook in selected)
-        self.adb.shell(f"{REMOTE_HELPER} start {arguments} --mode {mode}", check=False)
-        status = self.status()
+        previous_run = self.adb.shell(f"cat {REMOTE_STATE}/run.id 2>/dev/null || true")
+        self._guardian = self.adb.popen_shell(
+            f"{REMOTE_HELPER} serve {arguments} --mode {mode} --max-seconds {max_seconds}"
+        )
+        status = "inactive"
+        for _attempt in range(20):
+            time.sleep(0.25)
+            status = self.status()
+            if status.startswith("active") or status.startswith("critical|"):
+                break
+            if self._guardian.poll() is not None:
+                break
+        if status.startswith("active|run_id="):
+            current_run = status.split("|", 2)[1].split("=", 1)[1]
+            if previous_run and current_run == previous_run:
+                status = "conflict|existing_run=" + current_run
         if not status.startswith("active"):
             self.startup_diagnostics = self._read_startup_diagnostics()
         return status
@@ -269,6 +290,12 @@ class TrafficTracer:
     def disable(self, *, delete_data: bool = True) -> None:
         cleanup = " --purge" if delete_data else ""
         self.adb.shell(f"if [ -x {REMOTE_HELPER} ]; then {REMOTE_HELPER} stop{cleanup}; fi; rm -f {REMOTE_HELPER} {REMOTE_HELPER}.new")
+        if self._guardian is not None:
+            try:
+                self._guardian.wait(timeout=3)
+            except Exception:
+                self._guardian.terminate()
+            self._guardian = None
 
     def status(self) -> str:
         return self.adb.shell(f"if [ -x {REMOTE_HELPER} ]; then {REMOTE_HELPER} status; else echo inactive; fi")

@@ -7,6 +7,8 @@ EXPECTED_SHA256=7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 WATCHDOG_PIDS=$STATE/watchdogs.pids
 PAYLOAD_MODE=metadata_only
 RUN_ID_FILE=$STATE/run.id
+GDB_INPUT=$STATE/gdb.input
+MAX_TRACE_SECONDS=120
 
 pid_of_service() { pidof phnixIot4G 2>/dev/null | awk '{print $1}'; }
 watchdog_pids() { ps | awk '$4 == "{helloworld}" {print $1}'; }
@@ -35,41 +37,61 @@ verify_running_binary() {
 }
 
 remove_runtime_markers() {
-  rm -f "$STATE/active" "$STATE/gdb.pid" "$STATE/gdbserver.pid" "$STATE/monitor.pid" \
-    "$STATE/service.pid" "$STATE/gdb.input" "$STATE"/*.fifo "$STATE"/*.pipe
+  rm -f "$STATE/active" "$STATE/stopping" "$STATE/stop.request" "$STATE/guardian.pid" \
+    "$STATE/gdb.pid" "$STATE/gdbserver.pid" "$STATE/monitor.pid" \
+    "$STATE/service.pid" "$STATE/deadline" "$STATE/max-seconds" "$STATE/gdb.input" \
+    "$STATE"/*.fifo "$STATE"/*.pipe
 }
 
-# GDB's command file deliberately contains the orderly sequence after continue:
-# interrupt (SIGINT), confirm stop, delete breakpoints, detach, confirm, quit.
+recover_stale_markers() {
+  test -f "$STATE/active" || return 0
+  GDB_PID=$(cat "$STATE/gdb.pid" 2>/dev/null || true)
+  GDBSERVER_PID=$(cat "$STATE/gdbserver.pid" 2>/dev/null || true)
+  if { test -n "$GDB_PID" && kill -0 "$GDB_PID" 2>/dev/null; } \
+    || { test -n "$GDBSERVER_PID" && kill -0 "$GDBSERVER_PID" 2>/dev/null; }; then
+    unsupported "ein Trace ist bereits aktiv oder wartet auf sicheren manuellen Detach"
+  fi
+  PID=$(pid_of_service)
+  test -n "$PID" && kill -0 "$PID" 2>/dev/null \
+    || unsupported "verwaister Trace-Marker, aber phnixIot4G ist nicht aktiv"
+  test -n "$(watchdog_pids)" \
+    || unsupported "verwaister Trace-Marker, aber die Watchdogs laufen nicht"
+  echo "Verwaisten Trace-Marker ohne laufenden Debugger entfernt" >> "$STATE/helper.log"
+  remove_runtime_markers
+}
+
+# Legacy GDB cannot reliably interrupt its asynchronous remote CLI. Teardown
+# terminates GDB and gdbserver, then trusts only the kernel's TracerPid state.
 stop_debuggers() {
   GDB_PID=$(cat "$STATE/gdb.pid" 2>/dev/null || true)
   test -n "$GDB_PID" || return 0
   DETACH_OK=1
-  if test -n "$GDB_PID" && kill -0 "$GDB_PID" 2>/dev/null; then
-    # SIGINT interrupts the inferior.  The command file writes explicit markers
-    # only after GDB has regained control and after detach has succeeded.
-    kill -INT "$GDB_PID" 2>/dev/null || true
-    COUNT=0
-    while ! grep -F "FOX|detached|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)" "$STATE/raw.log" >/dev/null 2>&1 \
-      && kill -0 "$GDB_PID" 2>/dev/null && test "$COUNT" -lt 12; do sleep 1; COUNT=$((COUNT + 1)); done
-  fi
-  if grep -F "FOX|detached|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)" "$STATE/raw.log" >/dev/null 2>&1; then
+  RUN_ID=$(cat "$RUN_ID_FILE" 2>/dev/null)
+  SERVICE_PID=$(cat "$STATE/service.pid" 2>/dev/null || true)
+  kill -TERM "$GDB_PID" 2>/dev/null || true
+  sleep 1
+  GDBSERVER_PID=$(cat "$STATE/gdbserver.pid" 2>/dev/null || true)
+  test -z "$GDBSERVER_PID" || kill -TERM "$GDBSERVER_PID" 2>/dev/null || true
+  COUNT=0
+  while test "$COUNT" -lt 10; do
+    TRACER_PID=$(awk '/^TracerPid:/{print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null || true)
+    test "$TRACER_PID" = 0 && break
+    sleep 1; COUNT=$((COUNT + 1))
+  done
+  if test "$TRACER_PID" = 0 && test "$SERVICE_PID" = "$(pid_of_service)"; then
+    printf 'FOX|detached|run_id=%s\n' "$RUN_ID" >> "$STATE/raw.log"
     DETACH_OK=0
-    GDBSERVER_PID=$(cat "$STATE/gdbserver.pid" 2>/dev/null || true)
-    test -n "$GDBSERVER_PID" && kill -TERM "$GDBSERVER_PID" 2>/dev/null || true
-  else
+  fi
+  if test "$DETACH_OK" -ne 0; then
     echo "run_id=$(cat "$RUN_ID_FILE" 2>/dev/null) KRITISCH: Zielstillstand/Detach nicht bestätigt; GDB und gdbserver bleiben unangetastet" >> "$STATE/helper.log"
   fi
   return "$DETACH_OK"
 }
 
 emergency_cleanup() {
-  if stop_debuggers; then
-    resume_watchdogs
-    remove_runtime_markers
-  else
-    echo "run_id=$(cat "$RUN_ID_FILE" 2>/dev/null) Sicherheitsstopp: Laufzeitmarker und angehaltene Watchdogs bleiben für manuellen Detach erhalten" >> "$STATE/helper.log"
-  fi
+  stop_debuggers || echo "run_id=$(cat "$RUN_ID_FILE" 2>/dev/null) Detach nicht bestätigt; Original-Watchdogs übernehmen die Wiederherstellung" >> "$STATE/helper.log"
+  resume_watchdogs
+  remove_runtime_markers
 }
 
 critical_failure() {
@@ -84,6 +106,10 @@ critical_failure() {
 
 monitor_trace() {
   while test -f "$STATE/active"; do
+    if test -f "$STATE/stop.request"; then
+      stop_trace
+      return
+    fi
     OLD_PID=$(cat "$STATE/service.pid" 2>/dev/null || true)
     NEW_PID=$(pid_of_service)
     if test -z "$OLD_PID" || test "$OLD_PID" != "$NEW_PID" || ! kill -0 "$OLD_PID" 2>/dev/null; then
@@ -99,22 +125,68 @@ monitor_trace() {
       critical_failure debugger_exited
       return
     fi
+    DEADLINE=$(cat "$STATE/deadline" 2>/dev/null || echo 0)
+    if test "$(date +%s)" -ge "$DEADLINE"; then
+      echo "run_id=$(cat "$RUN_ID_FILE") maximale Laufzeit erreicht" >> "$STATE/helper.log"
+      stop_trace
+      return
+    fi
     sleep 1
   done
 }
 
+wait_service_running() {
+  CHECK_PID=$1
+  kill -CONT "$CHECK_PID" 2>/dev/null || true
+  COUNT=0
+  while test "$COUNT" -lt 10; do
+    STATE_CODE=$(awk '/^State:/{print $2}' "/proc/$CHECK_PID/status" 2>/dev/null || true)
+    test -n "$STATE_CODE" && test "$STATE_CODE" != T && test "$STATE_CODE" != Z && return 0
+    sleep 1
+    COUNT=$((COUNT + 1))
+  done
+  return 1
+}
+
 stop_trace() {
+  if test ! -f "$STATE/active" && test ! -f "$STATE/stopping"; then
+    GDB_PID=$(cat "$STATE/gdb.pid" 2>/dev/null || true)
+    GDBSERVER_PID=$(cat "$STATE/gdbserver.pid" 2>/dev/null || true)
+    if { test -z "$GDB_PID" || ! kill -0 "$GDB_PID" 2>/dev/null; } \
+      && { test -z "$GDBSERVER_PID" || ! kill -0 "$GDBSERVER_PID" 2>/dev/null; }; then
+      resume_watchdogs
+      remove_runtime_markers
+      test "${1:-}" = --purge && rm -rf "$STATE"
+      echo stopped
+      return 0
+    fi
+  fi
+  GUARDIAN_PID=$(cat "$STATE/guardian.pid" 2>/dev/null || true)
+  if test -f "$STATE/active" && test -n "$GUARDIAN_PID" && test "$GUARDIAN_PID" != "$$" \
+    && kill -0 "$GUARDIAN_PID" 2>/dev/null; then
+    touch "$STATE/stop.request"
+    COUNT=0
+    while { test -f "$STATE/active" || test -f "$STATE/stopping"; } && test "$COUNT" -lt 45; do
+      sleep 1; COUNT=$((COUNT + 1))
+    done
+    test ! -f "$STATE/active" && test ! -f "$STATE/stopping" \
+      || { echo "Stopfehler: Guardian hat die Stop-Anforderung nicht abgeschlossen" >&2; return 7; }
+    echo stopped
+    return 0
+  fi
   OLD_PID=$(cat "$STATE/service.pid" 2>/dev/null || true)
   mkdir -p "$STATE"
   trap emergency_cleanup EXIT INT TERM
   freeze_watchdogs
+  touch "$STATE/stopping"
   rm -f "$STATE/active"
   STOP_OK=0
   stop_debuggers || STOP_OK=1
   SAME_PID=$(pid_of_service)
   if test -z "$OLD_PID" || test "$SAME_PID" != "$OLD_PID" || ! kill -0 "$OLD_PID" 2>/dev/null; then STOP_OK=1; fi
+  if test "$STOP_OK" -eq 0; then wait_service_running "$OLD_PID" || STOP_OK=1; fi
+  resume_watchdogs
   if test "$STOP_OK" -eq 0; then
-    resume_watchdogs
     remove_runtime_markers
   fi
   trap - EXIT INT TERM
@@ -133,18 +205,18 @@ startup_failed() {
 append_hook() {
   ID=$1
   case "$ID" in
-    mqtt_tx_update) ADDR=0x1F6FC; BODY='printf "FOX|hook_hit|mqtt_tx_update|len=%u|ptr=0x%x\\n",$r1,$r0' ;;
-    mqtt_rx_get) ADDR=0x1EED0; BODY='printf "FOX|hook_hit|mqtt_rx_get|len=0|ptr=0x%x\\n",$r2' ;;
-    mqtt_rx_ota) ADDR=0x1ED98; BODY='printf "FOX|hook_hit|mqtt_rx_ota|len=0|ptr=0x%x\\n",$r2' ;;
-    mqtt_tx_ota) ADDR=0x1F9B0; BODY='printf "FOX|hook_hit|mqtt_tx_ota|len=%u|ptr=0x%x\\n",$r1,$r0' ;;
-    http_ota_chunk) ADDR=0x19A54; BODY='printf "FOX|hook_hit|http_ota_chunk|len=%u|ptr=0x%x\\n",$r1*$r2,$r0' ;;
-    ota_start_mainboard) ADDR=0x19E70; BODY='printf "FOX|hook_hit|ota_start_mainboard|len=0|ptr=0x0\\n"' ;;
-    ota_start_dtu) ADDR=0x19C18; BODY='printf "FOX|hook_hit|ota_start_dtu|len=0|ptr=0x0\\n"' ;;
-    provision_linked_go_query) ADDR=0x16960; BODY='printf "FOX|hook_hit|provision_linked_go_query|len=%u|ptr=0x0\\n",$r1*$r2' ;;
-    provision_legacy_query) ADDR=0x15C58; BODY='printf "FOX|hook_hit|provision_legacy_query|len=%u|ptr=0x0\\n",$r1*$r2' ;;
-    provision_create_by_sign) ADDR=0x164AC; BODY='printf "FOX|hook_hit|provision_create_by_sign|len=0|ptr=0x0\\n"' ;;
-    provision_aliyun_register) ADDR=0x22FF4; BODY='printf "FOX|hook_hit|provision_aliyun_register|len=0|ptr=0x0\\n"' ;;
-    provision_aliyun_register_response) ADDR=0x22B9C; BODY='printf "FOX|hook_hit|provision_aliyun_register_response|len=0|ptr=0x0\\n"' ;;
+    mqtt_tx_update) ADDR=0x1F6FC; BODY='printf "FOX|hook_hit|mqtt_tx_update|len=%u|ptr=0x%x\n",$r1,$r0' ;;
+    mqtt_rx_get) ADDR=0x1EED0; BODY='printf "FOX|hook_hit|mqtt_rx_get|len=0|ptr=0x%x\n",$r2' ;;
+    mqtt_rx_ota) ADDR=0x1ED98; BODY='printf "FOX|hook_hit|mqtt_rx_ota|len=0|ptr=0x%x\n",$r2' ;;
+    mqtt_tx_ota) ADDR=0x1F9B0; BODY='printf "FOX|hook_hit|mqtt_tx_ota|len=%u|ptr=0x%x\n",$r1,$r0' ;;
+    http_ota_chunk) ADDR=0x19A54; BODY='printf "FOX|hook_hit|http_ota_chunk|len=%u|ptr=0x%x\n",$r1*$r2,$r0' ;;
+    ota_start_mainboard) ADDR=0x19E70; BODY='printf "FOX|hook_hit|ota_start_mainboard|len=0|ptr=0x0\n"' ;;
+    ota_start_dtu) ADDR=0x19C18; BODY='printf "FOX|hook_hit|ota_start_dtu|len=0|ptr=0x0\n"' ;;
+    provision_linked_go_query) ADDR=0x16960; BODY='printf "FOX|hook_hit|provision_linked_go_query|len=%u|ptr=0x0\n",$r1*$r2' ;;
+    provision_legacy_query) ADDR=0x15C58; BODY='printf "FOX|hook_hit|provision_legacy_query|len=%u|ptr=0x0\n",$r1*$r2' ;;
+    provision_create_by_sign) ADDR=0x164AC; BODY='printf "FOX|hook_hit|provision_create_by_sign|len=0|ptr=0x0\n"' ;;
+    provision_aliyun_register) ADDR=0x22FF4; BODY='printf "FOX|hook_hit|provision_aliyun_register|len=0|ptr=0x0\n"' ;;
+    provision_aliyun_register_response) ADDR=0x22B9C; BODY='printf "FOX|hook_hit|provision_aliyun_register_response|len=0|ptr=0x0\n"' ;;
     *) echo "Unbekannte Hook-ID: $ID" >&2; return 2 ;;
   esac
   test -z "${SEEN:-}" || case ",$SEEN," in *,$ID,*) return 0;; esac
@@ -167,13 +239,17 @@ start_trace() {
       --hook) test "$#" -ge 2 || unsupported "--hook benötigt eine ID"; HOOKS="$HOOKS $2"; shift 2 ;;
       --hooks) test "$#" -ge 2 || unsupported "--hooks benötigt IDs"; HOOKS="$HOOKS $(echo "$2" | tr ',' ' ')"; shift 2 ;;
       --mode) test "$#" -ge 2 || unsupported "--mode benötigt einen Wert"; PAYLOAD_MODE=$2; shift 2 ;;
+      --max-seconds) test "$#" -ge 2 || unsupported "--max-seconds benötigt einen Wert"; MAX_TRACE_SECONDS=$2; shift 2 ;;
       *) unsupported "unerwarteter Startparameter: $1" ;;
     esac
   done
   test "$PAYLOAD_MODE" = metadata_only || unsupported "nur metadata_only ist derzeit freigegeben"
+  case "$MAX_TRACE_SECONDS" in *[!0-9]*|'') unsupported "ungültige maximale Laufzeit" ;; esac
+  test "$MAX_TRACE_SECONDS" -ge 15 && test "$MAX_TRACE_SECONDS" -le 600 \
+    || unsupported "maximale Laufzeit muss zwischen 15 und 600 Sekunden liegen"
   test -n "$HOOKS" || unsupported "kein Hook ausgewählt"
   mkdir -p "$STATE"
-  test ! -f "$STATE/active" || unsupported "ein Trace ist bereits aktiv oder wartet auf sicheren manuellen Detach"
+  recover_stale_markers
   remove_runtime_markers
   OLD_RUN_ID=$(cat "$RUN_ID_FILE" 2>/dev/null || true)
   if test -n "$OLD_RUN_ID"; then
@@ -198,6 +274,7 @@ start_trace() {
   # append_hook output survived cleanup because cleanup intentionally retains diagnostics.
   cat > "$STATE/header.gdb" <<'EOF'
 set architecture arm
+set target-async on
 set pagination off
 set confirm off
 set print thread-events off
@@ -213,12 +290,6 @@ EOF
   cat "$STATE/trace.gdb" >> "$STATE/header.gdb"
   cat >> "$STATE/header.gdb" <<EOF
 printf "FOX|run_started|run_id=$RUN_ID\\n"
-continue
-printf "FOX|target_stopped|run_id=$RUN_ID\\n"
-delete breakpoints
-detach
-printf "FOX|detached|run_id=$RUN_ID\\n"
-quit
 EOF
   mv "$STATE/header.gdb" "$STATE/trace.gdb"
   test "$PID" = "$(pid_of_service)" || unsupported "phnixIot4G-PID hat sich vor Attach geändert"
@@ -226,36 +297,49 @@ EOF
   trap emergency_cleanup EXIT INT TERM
   freeze_watchdogs
   printf 'run_id=%s\n' "$RUN_ID" > "$STATE/gdbserver.log"
-  gdbserver --attach 127.0.0.1:12346 "$PID" >>"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
+  nohup gdbserver --attach 127.0.0.1:12346 "$PID" </dev/null >>"$STATE/gdbserver.log" 2>&1 & echo $! > "$STATE/gdbserver.pid"
   sleep 1
   kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null || startup_failed "gdbserver beendet"
   printf 'run_id=%s\n' "$RUN_ID" > "$STATE/gdb.log"
-  gdb -q -batch -x "$STATE/trace.gdb" >>"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  rm -f "$GDB_INPUT"; mkfifo "$GDB_INPUT"
+  nohup gdb -q -x "$STATE/trace.gdb" <"$GDB_INPUT" >>"$STATE/gdb.log" 2>&1 & echo $! > "$STATE/gdb.pid"
+  exec 3>"$GDB_INPUT"
+  printf 'continue&\n' >&3
   sleep 1
   kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null || startup_failed "gdb beendet"
   test "$PID" = "$(pid_of_service)" && kill -0 "$PID" 2>/dev/null || startup_failed "PID nach Breakpoint-Installation geändert"
   echo "$PID" > "$STATE/service.pid"
+  echo "$MAX_TRACE_SECONDS" > "$STATE/max-seconds"
+  echo $(( $(date +%s) + MAX_TRACE_SECONDS )) > "$STATE/deadline"
   touch "$STATE/active"
   test "$PID" = "$(pid_of_service)" && kill -0 "$PID" 2>/dev/null || startup_failed "PID nach continue geändert"
-  resume_watchdogs
   trap - EXIT INT TERM
-  monitor_trace >/dev/null 2>&1 & echo $! > "$STATE/monitor.pid"
-  echo active
+  echo "active|run_id=$RUN_ID|watchdogs=guarded|max_seconds=$MAX_TRACE_SECONDS"
+}
+
+serve_trace() {
+  start_trace "$@" || return $?
+  echo $$ > "$STATE/guardian.pid"
+  trap emergency_cleanup HUP INT TERM
+  monitor_trace
+  trap - HUP INT TERM
 }
 
 status_trace() {
   if test -r "$STATE/failure"; then cat "$STATE/failure"; return; fi
+  if test -r "$STATE/stopping"; then echo "stopping|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)"; return; fi
   if test -r "$STATE/active" && test "$(cat "$STATE/service.pid" 2>/dev/null)" = "$(pid_of_service)" \
     && kill -0 "$(cat "$STATE/gdbserver.pid")" 2>/dev/null && kill -0 "$(cat "$STATE/gdb.pid")" 2>/dev/null; then
-    echo "active|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)"
+    echo "active|run_id=$(cat "$RUN_ID_FILE" 2>/dev/null)|watchdogs=guarded|max_seconds=$(cat "$STATE/max-seconds" 2>/dev/null || echo "$MAX_TRACE_SECONDS")"
   else
     echo inactive
   fi
 }
 
 case "${1:-}" in
-  start) shift; start_trace "$@" ;;
+  start|serve) shift; serve_trace "$@" ;;
+  monitor) monitor_trace ;;
   stop) shift; stop_trace "$@" ;;
   status) status_trace ;;
-  *) echo "usage: $0 {start --hook ID [--hook ID ...] [--mode metadata_only]|stop [--purge]|status}" >&2; exit 2 ;;
+  *) echo "usage: $0 {start --hook ID [--hook ID ...] [--mode metadata_only] [--max-seconds 15..600]|stop [--purge]|status}" >&2; exit 2 ;;
 esac
