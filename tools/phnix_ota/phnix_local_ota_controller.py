@@ -646,7 +646,14 @@ def remote_status(adb: AdbClient, *, allow_transient_info: bool = False) -> dict
         info = {"transient": True, "length_bytes": len(raw_info), "crc_ok": False}
     else:
         info = asdict(parse_ota_info(raw_info))
-    return {"hook": hook, "ota_info": info}
+    return {
+        "hook": hook,
+        "ota_info": info,
+        "run_active": adb.shell(f"test -f {REMOTE_RUN_ACTIVE}; echo $?") == "0",
+        "transfer_started": adb.shell(f"test -f {REMOTE_TRANSFER_STARTED}; echo $?") == "0",
+        "service_pid": adb.shell("pidof phnixIot4G || true"),
+        "debugger_pids": adb.shell("pidof gdbserver gdb || true"),
+    }
 
 
 def cancel_probe_plan(adb: AdbClient) -> dict:
@@ -953,6 +960,7 @@ def run_update(args, adb: AdbClient) -> None:
     last_offset = -1
     safe_terminal = False
     guarded_hold = False
+    transfer_started = False
     helper_exit_seen_at = None
     try:
         while True:
@@ -968,6 +976,8 @@ def run_update(args, adb: AdbClient) -> None:
                 last_offset = observed_offset
 
             phase = hook.get("phase", "unknown")
+            if phase in {"c5a8", "success-report", "success"} or status.get("transfer_started") is True:
+                transfer_started = True
             if phase != previous_phase:
                 previous_phase = phase
                 phase_started = time.monotonic()
@@ -1016,12 +1026,17 @@ def run_update(args, adb: AdbClient) -> None:
                 raise OtaError(f"phase watchdog expired in {phase}")
             time.sleep(args.poll_interval)
     except BaseException:
-        if not safe_terminal:
+        if not safe_terminal and not transfer_started:
             adb.shell(f"{REMOTE_HELPER} hold --status {REMOTE_STATUS}", check=False)
             guarded_hold = True
             print_event(
                 "guarded-hold",
                 message="Active OTA was frozen fail-closed; cloud and watchdog guards remain active",
+            )
+        elif not safe_terminal:
+            print_event(
+                "monitoring-connection-lost",
+                message="ADB monitoring was lost after C5A8; original service remains authoritative",
             )
         raise
     finally:

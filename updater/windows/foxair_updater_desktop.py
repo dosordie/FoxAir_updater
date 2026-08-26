@@ -47,7 +47,7 @@ class MainWindow(app.MainWindow):
         self.modem_tab_index = self.tabs.insertTab(
             5, self._modem_info_page(), "Modem Info / LTE Diagnose"
         )
-        self.tabs.setTabVisible(self.modem_tab_index, self.show_modem_diagnostics.isChecked())
+        self.tabs.setTabVisible(self.modem_tab_index, True)
 
     def _advanced(self):
         widget = super()._advanced()
@@ -95,9 +95,8 @@ class MainWindow(app.MainWindow):
     def _toggle_modem_diagnostics(self, visible: bool) -> None:
         self.settings.setValue("show_modem_diagnostics", visible)
         self.settings.sync()
-        for name in ("modem_tab_index", "traffic_tab_index"):
-            if hasattr(self, name):
-                self.tabs.setTabVisible(getattr(self, name), visible)
+        if hasattr(self, "traffic_tab_index"):
+            self.tabs.setTabVisible(self.traffic_tab_index, visible)
 
     def _modem_info_page(self):
         widget = QWidget()

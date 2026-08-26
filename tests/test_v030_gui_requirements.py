@@ -17,11 +17,27 @@ class V030GuiRequirementsTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertIn('insertTab(\n            5, self._modem_info_page()', self.desktop)
 
-    def test_diagnostics_are_hidden_and_persistently_toggleable(self):
+    def test_only_traffic_diagnostics_are_persistently_toggleable(self):
         self.assertIn('value("show_modem_diagnostics", "false")', self.desktop)
         self.assertIn('setValue("show_modem_diagnostics", visible)', self.desktop)
-        self.assertIn("setTabVisible(self.modem_tab_index", self.desktop)
+        self.assertIn("setTabVisible(self.modem_tab_index, True)", self.desktop)
+        toggle = self.desktop.split("def _toggle_modem_diagnostics", 1)[1].split("def ", 1)[0]
+        self.assertNotIn("modem_tab_index", toggle)
+        self.assertIn("traffic_tab_index", toggle)
         self.assertIn("setTabVisible(self.traffic_tab_index", self.traffic)
+
+    def test_reattach_is_read_only_and_does_not_start_an_ota(self):
+        reattach = self.base.split("def _reattach_ota", 1)[1].split("def ", 1)[0]
+        self.assertIn('"status"', reattach)
+        for forbidden in ("--execute", "PHNIX-FULL-UPDATE", "--manifest", "restore"):
+            self.assertNotIn(forbidden, reattach)
+        self.assertIn("Keine automatische Aktion ausgeführt", self.base)
+
+    def test_requested_help_and_visual_separation_are_present(self):
+        self.assertIn("Was ist das Manifest?", self.base)
+        self.assertIn("Das Manifest verändert die Firmwaredatei NICHT", self.base)
+        self.assertIn('setObjectName("remoteAdbHelp")', self.base)
+        self.assertIn("border:1px solid #d0d5dd", self.base)
 
     def test_modem_and_maintenance_actions_follow_busy_state(self):
         combined = self.desktop + self.app + self.maintenance + self.traffic
