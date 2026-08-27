@@ -2,7 +2,7 @@
 
 Stand: 27. August 2026
 
-Dieses Dokument beschreibt die in der Mainboard-Firmware `82400644 / V3.3` rekonstruierte Regelung der Haupt-Umwälzpumpe. Schwerpunkt sind die Parameter `H31`, `P10`, `P11`, `P12`, die Statusregister `2077`, `2106`, `2115`, `2116`, die automatische Delta-T-Regelung sowie die aus der Pumpen-PWM-Rückmeldung berechnete Wasserdurchflussrate.
+Dieses Dokument beschreibt die in der Mainboard-Firmware `82400644 / V3.3` rekonstruierte Regelung der Haupt-Umwälzpumpe. Schwerpunkt sind `H30`, `H31`, `P10`, `P11`, `P12`, `A40`, `D22`, die Statusregister `2077`, `2106`, `2115`, `2116`, die automatische Delta-T-Regelung, die lokale Durchflussberechnung aus Pumpen-PWM sowie der externe Durchflusspfad über das Hydraulikmodul Unit `0x61`.
 
 Die Firmware wird ausschließlich analysiert und nicht verändert.
 
@@ -10,699 +10,767 @@ Die Firmware wird ausschließlich analysiert und nicht verändert.
 
 - **bestätigt** – direkt im untersuchten V3.3-Binary nachgewiesen
 - **live bestätigt** – zusätzlich am realen Gerät beobachtet
-- **sehr wahrscheinlich** – Datenfluss weitgehend geschlossen, einzelne letzte Verknüpfung noch nicht bewiesen
+- **sehr wahrscheinlich** – Datenfluss weitgehend geschlossen, einzelne Herstellerbezeichnung fehlt noch
 - **offen** – Bedeutung oder Kopplung noch nicht vollständig geschlossen
 
 ---
 
-# 1. Relevante öffentliche Register
+# 1. Kurzfazit
 
-| Register | Parameter / Status | Bedeutung | Bewertung |
-|---:|---|---|---|
-| `1041` | `H31` | Typ der Zirkulationswasserpumpe / Kennlinienauswahl für Durchflussberechnung | bestätigt |
-| `1205` | `P10` | Pumpendrehzahl; `0` = automatische PWM-Regelung, `>0` = feste Soll-PWM in % | bestätigt |
-| `1432` | `P11` | Ziel-Temperaturdifferenz für Pumpendrehzahlregelung, x0,1 K | bestätigt |
-| `1433` | `P12` | PWM-Anpassung je Regelereignis / Schrittweite in Prozentpunkten | bestätigt |
-| `2077` | `T39` | berechnete Wasserdurchflussrate, raw/100 m³/h | bestätigt |
-| `2106` | – | zyklisches Pumpenregel-/PWM-Regelfenster, starker Kandidat | live beobachtet, Kopplung noch nicht final bewiesen |
-| `2115` | – | aktuell von der Mainboardregelung vorgegebene Pumpen-PWM in % | bestätigt |
-| `2116` | – | gemessene PWM-Rückmeldung der Pumpe in % | bestätigt |
-
-Die Parameter liegen in unterschiedlichen Live-Strukturen:
+Die V3.3 besitzt zwei grundsätzlich verschiedene Quellen für den Wasserdurchfluss:
 
 ```text
-0x20016C6C
-  +0x0C -> MAIN:1205 / P10
+lokaler Pumpenpfad
+    Pumpen-PWM-Feedback -> H31-Kennlinie -> Durchfluss
 
-0x20016278
-  +0x00 byte -> MAIN:1432 / P11
-  +0x01 byte -> MAIN:1433 / P12
+oder bei H30 == 3:
+    Hydraulikmodul Unit 0x61 -> Remote-Reg. 2047/2048 -> Durchfluss
 ```
 
-`1041 / H31` gehört zum H-/Grundkonfigurationsblock `0x20016774`.
+Wichtige Ergebnisse:
+
+1. `P10=0` aktiviert die automatische Pumpen-PWM-Regelung; `P10>0` ist eine feste Soll-PWM.
+2. `P11` ist die Ziel-Wasserspreizung, `P12` die Änderung der PWM je Regelperiode.
+3. Die Pumpen-Regelroutine läuft **alle 0,5 s**.
+4. `P12` wird im normalen Auto-Pfad **einmal pro 60 s** angewendet.
+5. Vor Freigabe der Auto-Regelung existiert eine **10-minütige Durchfluss-Qualifikation**.
+6. Der für die Regelung verwendete Durchfluss wird in **5-s-Fenstern** gemittelt.
+7. `2115` ist die logische Soll-PWM; `2116` ist die gemessene PWM-Rückmeldung.
+8. `2077` ist der wirksame, nach Kennlinie bzw. externem Eingang und Korrektur bestimmte Wasserdurchfluss, `raw/100 m³/h`.
+9. `MAIN:1022` ist **kein Reservefeld**, sondern ein **signed Durchfluss-Korrekturoffset** in derselben Einheit wie `2077`.
+10. Bei `H30=3` kann ein externes Hydraulikmodul auf dem internen Boardbus einen echten Durchfluss liefern:
+    - `HYD61:2047` = Gültigkeits-/Vorhandenflag
+    - `HYD61:2048` = Durchfluss, `raw/100 m³/h`
+11. Damit ist eine externe Durchflusseinspeisung technisch möglich, aber **nicht über MAIN:2077** und nicht über ein bisher gefundenes normales MAIN-/ENG-Register. Der firmware-native Weg ist die Emulation von Unit `0x61`.
+12. Die frühere Hypothese `MAIN:2106 = P12-/Pumpen-Regelzyklus` ist **verworfen**. Die beobachtete 5-Minuten-Pulsfolge bleibt real, gehört aber nicht zur jetzt bytegenau rekonstruierten 60-s-P12-Periode.
 
 ---
 
-# 2. P10 / MAIN:1205 – feste oder automatische Pumpendrehzahl
+# 2. Relevante Register
 
-`P10` entscheidet, ob die Hauptumwälzpumpe mit einer festen PWM-Vorgabe oder durch die interne Delta-T-Regelung gefahren wird.
+| Register | Parameter / Status | Bedeutung | Bewertung |
+|---:|---|---|---|
+| `1022` | bisher Reserve | signed Durchfluss-Korrekturoffset, `0,01 m³/h` pro raw | bestätigt |
+| `1036` | `H30` | Hydraulikmodul-/Pumpenarchitektur; Wert `3` aktiviert Unit-`0x61`-Pfad | bestätigt |
+| `1041` | `H31` | Pumpentyp / Kennlinienauswahl für lokale Durchflussberechnung | bestätigt |
+| `1127` | `D22` | Wasserdurchfluss beim Abtauen; wird auch als Mindestdurchflussgrenze benutzt | bestätigt |
+| `1205` | `P10` | `0` = Auto-PWM; `>0` = feste Pumpen-PWM | bestätigt |
+| `1344` | `A40` | Nenn-Wasserdurchfluss, `raw/100 m³/h` | bestätigt |
+| `1432` | `P11` | Ziel-Wasserspreizung, `raw/10 K` | bestätigt |
+| `1433` | `P12` | PWM-Anpassung je Regelperiode, Prozentpunkte | bestätigt |
+| `2077` | `T39` | wirksamer Wasserdurchfluss, `raw/100 m³/h` | bestätigt |
+| `2106` | – | ungeklärtes Kommunikations-/Runtimefeld; 5-min-Puls live beobachtet | offen |
+| `2115` | – | aktuell wirksame logische Pumpen-Soll-PWM in % | bestätigt |
+| `2116` | – | gemessene Pumpen-PWM-Rückmeldung in % | bestätigt |
 
-## 2.1 P10 > 0 – feste PWM
+Wichtige Live-Strukturen:
 
-Für Werte größer 0 wird P10 im normalen Pumpenbetrieb direkt als logische Pumpenvorgabe verwendet:
+```text
+0x20016C6C +0x0C -> MAIN:1205 / P10
+0x20016278 +0x00 -> MAIN:1432 / P11
+0x20016278 +0x01 -> MAIN:1433 / P12
+0x20016C7C +0x0C -> MAIN:1022 / Durchfluss-Korrektur
+0x20016774 +0x1C -> MAIN:1036 / H30
+0x20016774 +0x1E -> MAIN:1041 / H31
+0x20016C9C +0x0A -> MAIN:1344 / A40
+0x20016F14       -> wirksamer Durchfluss-Runtimewert
+```
+
+---
+
+# 3. P10 – feste oder automatische Pumpendrehzahl
+
+## 3.1 P10 > 0
+
+Im normalen Pumpenbetrieb wird P10 als feste logische PWM-Vorgabe verwendet.
 
 ```text
 P10 = 45
-    -> normale Soll-PWM ungefähr 45 %
-    -> MAIN:2115 ungefähr 45
+-> normale Soll-PWM ungefähr 45 %
+-> MAIN:2115 ungefähr 45
 ```
 
-Werte oberhalb 100 werden auf 100 % begrenzt.
+Werte oberhalb 100 werden begrenzt. Betriebs-, Start-, Schutz-, Frostschutz- oder Abtaupfade können die feste Vorgabe übersteuern.
 
-Wichtig: `2115` muss nicht immer identisch mit `P10` sein. Start-, Schutz-, Abtau-, Frostschutz- oder andere Zwangszustände können die Pumpenvorgabe übersteuern.
+## 3.2 P10 = 0
 
-## 2.2 P10 = 0 – automatische PWM-Regelung
-
-Bei `P10 = 0` wird die automatische Pumpendrehzahlregelung aktiviert.
-
-Beim Eintritt in den Auto-Pfad kann die Pumpenvorgabe zunächst auf 100 % gesetzt werden. Die eigentliche Delta-T-Regelung reduziert bzw. erhöht sie anschließend schrittweise.
-
-Die zentrale Regelroutine liegt im untersuchten Build ungefähr bei:
+`P10=0` aktiviert den automatischen Pumpenregler. Die zentrale Routine liegt ungefähr bei:
 
 ```text
 VA 0x08084474
 ```
 
-Die Routine berücksichtigt mindestens:
+Sie verarbeitet mindestens:
 
-- aktuelle Wasserspreizung,
-- `P11` Zielspreizung,
-- `P12` Schrittweite,
-- aktuelle/letzte Kompressor-Sollfrequenz,
-- Mindestdurchflussbedingungen,
-- aktuelle Pumpen-PWM.
+- Ist-Wasserspreizung,
+- P11,
+- P12,
+- Kompressor-Sollfrequenz,
+- aktuellen/gemittelten Wasserdurchfluss,
+- Mindestdurchflussgrenzen,
+- Freigabe-/Qualifikationszustände,
+- mehrere Schutz-/Overrideflags.
+
+Beim Eintritt bzw. bei gesperrter Auto-Regelung kann die Pumpe mit 100 % gefahren werden.
+
+---
+
+# 4. Exakte Taskperiode: 0,5 s
+
+Die zeitliche Kette wurde vom Taktbaum bis zum Pumpentask rekonstruiert.
+
+```text
+HSE = 8 MHz
+PLL = x14
+SYSCLK = 112 MHz
+APB1 = SYSCLK / 2
+APB1-Timerclock = 112 MHz
+```
+
+TIM6:
+
+```text
+PSC = 111
+ARR = 499
+```
+
+Damit entsteht ein TIM6-IRQ alle:
+
+```text
+0,5 ms
+```
+
+Über die nachfolgenden Teiler-/Schedulerstufen:
+
+```text
+TIM6
+ -> 4er-Teiler
+ -> 5er-Subdispatcher
+ -> 50er-Slotring
+ -> Pumpenroutine 0x08084474
+```
+
+wird der Pumpen-Regeltask exakt alle:
+
+```text
+0,5 s
+```
+
+aufgerufen.
+
+Damit können interne Zähler direkt zeitlich interpretiert werden:
+
+```text
+10 Zyklen   = 5 s
+120 Zyklen  = 60 s
+1200 Zyklen = 10 min
+```
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 3. P11 / MAIN:1432 – Zielspreizung
+# 5. P12-Regelperiode = 60 Sekunden
 
-`P11` ist die Ziel-Temperaturdifferenz für die automatische Pumpendrehzahlregelung.
+Die Firmware besitzt im Auto-PWM-Pfad einen 120er-Zähler. Da der Pumpentask alle 0,5 s läuft:
 
-Skalierung:
+```text
+120 x 0,5 s = 60 s
+```
+
+Damit bedeutet die Herstellerbeschreibung von P12:
+
+> `Pump Speed Adjust Range for Each Period`
+
+in diesem Build konkret:
+
+> **Änderung der Pumpen-PWM je 60-s-Regelperiode.**
+
+Die frühere Vermutung, P12 würde nur etwa alle fünf Minuten angewendet, ist damit widerlegt.
+
+---
+
+# 6. P11/P12 – Delta-T-Regelgesetz
+
+P11 ist die Ziel-Wasserspreizung:
 
 ```text
 P11 raw / 10 = K
 ```
 
-Beispiel:
+P12 ist die PWM-Schrittweite in Prozentpunkten.
 
-```text
-P11 = 44
--> 4,4 K Zielspreizung
-```
-
-Die Firmware verwendet eine betriebsrichtungsabhängig positiv orientierte Wasserspreizung. Die beiden Wasser-Temperaturkanäle werden je nach Betriebsart so ausgewertet, dass die für die Regelung relevante Differenz mit konsistentem Vorzeichen vorliegt.
-
-Daher sollte P11 in der Dokumentation als **Ziel-Wasserspreizung** und nicht als starr definierte mathematische Reihenfolge eines einzelnen Sensorpaares beschrieben werden.
-
-**Bewertung: bestätigt.**
-
----
-
-# 4. P12 / MAIN:1433 – Anpassung je Regelereignis
-
-`P12` ist die Schrittweite, mit der die automatische Regelung die logische Pumpen-PWM verändert.
-
-Beispiel:
-
-```text
-P12 = 2
--> normaler Korrekturschritt = 2 Prozentpunkte
--> großer Korrekturschritt   = 4 Prozentpunkte
-```
-
-Die Firmware benutzt dabei nicht nur eine einfache Ein/Aus-Schwelle, sondern mehrere Delta-T-Bereiche.
-
----
-
-# 5. Delta-T-Regelgesetz
-
-Sinngemäß wird gebildet:
+Sinngemäß:
 
 ```text
 Fehler = Ist-Spreizung - P11
 ```
 
-Die Regelung arbeitet ungefähr mit folgenden Schwellen:
+Die Firmware staffelt die Korrektur:
 
 | Ist-Spreizung relativ zu P11 | PWM-Korrektur |
 |---|---:|
-| `>= P11 + 3,0 K` | `+ 2 × P12` |
+| `>= P11 + 3,0 K` | `+ 2 x P12` |
 | `>= P11 + 1,0 K` | `+ P12` |
 | ungefähr innerhalb `±1 K` | keine Delta-T-Korrektur |
 | `<= P11 - 1,0 K` | `- P12` |
-| `<= P11 - 3,0 K` | `- 2 × P12` |
+| `<= P11 - 3,0 K` | `- 2 x P12` |
 
-Hydraulische Bedeutung:
+Hydraulisch:
 
 ```text
-Ist-Delta-T zu groß
--> Wassermenge zu klein
--> Pumpen-PWM erhöhen
-
-Ist-Delta-T zu klein
--> Wassermenge zu groß
--> Pumpen-PWM reduzieren
+Delta-T zu groß -> Volumenstrom erhöhen -> PWM erhöhen
+Delta-T zu klein -> Volumenstrom reduzieren -> PWM reduzieren
 ```
 
-Beispiel mit:
+Beispiel:
 
 ```text
 P11 = 44 -> 4,4 K
 P12 = 2
-```
 
-ungefähr:
-
-```text
-Ist-Delta-T >= 7,4 K -> +4 %-Punkte
-Ist-Delta-T >= 5,4 K -> +2 %-Punkte
-
-ca. 3,5 ... 5,3 K    -> keine Delta-T-Korrektur
-
-Ist-Delta-T <= 3,4 K -> -2 %-Punkte
-Ist-Delta-T <= 1,4 K -> -4 %-Punkte
-```
-
-**Bewertung: bestätigt für Schwellenstruktur und P12-Schritte.**
-
----
-
-# 6. Feed-Forward über die Kompressor-Sollfrequenz
-
-Die automatische Pumpenregelung reagiert zusätzlich auf Änderungen der Kompressor-Sollfrequenz.
-
-Die Sollfrequenz ist dieselbe Regelgröße, die öffentlich als `MAIN:2071` veröffentlicht und an das Inverterboard übertragen wird.
-
-Wenn sich die Sollfrequenz gegenüber dem gespeicherten Vergleichswert ungefähr um mindestens 6 Hz verändert, wird zusätzlich ein P12-Schritt auf die Pumpen-PWM gegeben:
-
-```text
-Kompressor-Sollfrequenz steigt um ca. >= 6 Hz
--> zusätzlich +P12 Pumpen-PWM
-
-Kompressor-Sollfrequenz fällt um ca. >= 6 Hz
--> zusätzlich -P12 Pumpen-PWM
-```
-
-Damit besitzt die Pumpenregelung neben dem eigentlichen Delta-T-Regler eine Vorsteuerung auf Leistungsänderungen des Verdichters.
-
-Zweck:
-
-```text
-Verdichterleistung steigt
--> erwarteter Wärmestrom steigt
--> Pumpenleistung wird vorsorglich angehoben
--> Delta-T muss nicht erst deutlich weglaufen
+>= 7,4 K -> +4 %-Punkte
+>= 5,4 K -> +2 %-Punkte
+ca. 3,5...5,3 K -> keine Delta-T-Korrektur
+<= 3,4 K -> -2 %-Punkte
+<= 1,4 K -> -4 %-Punkte
 ```
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 7. Mindestdurchfluss-Schutz innerhalb der Auto-Regelung
+# 7. Feed-Forward über Kompressor-Sollfrequenz
 
-Die automatische Regelung berücksichtigt einen Mindest-/Soll-Durchfluss.
+Zusätzlich zum Delta-T-Regler reagiert die Pumpenregelung auf Änderungen der Kompressor-Sollfrequenz, also derselben Regelgröße, die öffentlich als MAIN:2071 erscheint.
 
-Wenn der aktuelle bzw. intern geglättete Wasserdurchfluss am unteren Grenzwert liegt, wird eine weitere Reduzierung der Pumpen-PWM unterdrückt.
-
-Sinngemäß:
+Bei einer Änderung von ungefähr mindestens 6 Hz:
 
 ```text
-wenn Ist-Durchfluss <= Mindestdurchfluss:
-    positive PWM-Korrektur erlaubt
-    negative PWM-Korrektur gesperrt
+Kompressor-Soll steigt >= ca. 6 Hz -> zusätzlich +P12
+Kompressor-Soll fällt  >= ca. 6 Hz -> zusätzlich -P12
 ```
 
-Damit kann der Delta-T-Regler nicht nur zur Einhaltung der Zielspreizung immer weiter herunterregeln und dabei den für die Wärmepumpe erforderlichen Mindestvolumenstrom unterschreiten.
-
-Im Gesamtsystem stehen hierzu insbesondere die bekannten Durchflussparameter wie `A40` Nenn-Wasserdurchfluss und weitere Betriebs-/Abtaugrenzen zur Verfügung. Die genaue vollständige Prioritätskette aller Durchflussgrenzen ist separat zu betrachten.
-
-**Bewertung: bestätigt für die Sperrlogik; vollständige Herkunft jedes Grenzwertes noch nicht vollständig dokumentiert.**
-
----
-
-# 8. Grenzen des normalen Auto-Reglers
-
-Im normalen automatischen Regelpfad wird die resultierende Pumpenvorgabe auf ungefähr folgenden Bereich begrenzt:
-
-```text
-Minimum: 16 %
-Maximum: 92 %
-```
-
-Sinngemäß:
-
-```text
-PWM_auto = clamp(PWM_auto + Korrektur, 16, 92)
-```
-
-Diese Grenzen gelten für den normalen Auto-Regelpfad.
-
-Andere Zustände können die Pumpe außerhalb dieses Bereiches ansteuern, insbesondere bis 100 %.
-
-Daher darf aus einem beobachteten `MAIN:2115 = 100` nicht geschlossen werden, dass die Auto-Regelung selbst ein Soll von 100 % berechnet hat.
+Damit besitzt die Pumpenregelung eine Vorsteuerung auf Leistungsänderungen des Verdichters.
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 9. MAIN:2115 – aktuelle Pumpen-PWM-Vorgabe
+# 8. 5-s-Durchflussmittel
 
-`MAIN:2115` stammt aus der Runtime-Pumpenstruktur und repräsentiert die aktuell wirksame **logische** Pumpen-Sollvorgabe in Prozent.
+Der Pumpenregler sammelt 10 Durchflusswerte. Bei 0,5-s-Taskperiode ergibt sich:
 
-Datenfluss:
+```text
+10 x 0,5 s = 5 s
+```
+
+Der Auto-Regler arbeitet damit nicht nur mit einem einzelnen Momentanwert, sondern mit einem intern über etwa fünf Sekunden gebildeten Durchflusswert.
+
+**Bewertung: bestätigt.**
+
+---
+
+# 9. 10-minütige Auto-PWM-Qualifikation
+
+Vor Freigabe der eigentlichen automatischen Drehzahlabsenkung/-regelung existiert ein 1200er-Zähler:
+
+```text
+1200 x 0,5 s = 600 s = 10 min
+```
+
+Die Qualifikation läuft nur weiter, solange ein ausreichend hoher Durchfluss vorliegt. Die Schwelle wird aus A40 gebildet und entspricht ungefähr:
+
+```text
+Ist-Durchfluss >= 1,2 x A40
+```
+
+Erst nach dieser etwa zehnminütigen stabilen Phase darf der normale Auto-PWM-Pfad vollständig arbeiten.
+
+Das passt zur bereits beobachteten Anlagenlogik, dass die variable Pumpenregelung nicht unmittelbar nach Verdichterstart aktiv wird.
+
+**Bewertung: bestätigt für Zähler, Zeitbasis und A40-Faktor.**
+
+---
+
+# 10. Mindestdurchflussgrenze: D22 oder 0,8 x A40
+
+Für die Sperre gegen weiteres Herunterregeln benutzt die Firmware folgende Priorität:
+
+```text
+wenn D22 != 0:
+    Mindestdurchfluss = D22
+sonst:
+    Mindestdurchfluss ~= 0,8 x A40
+```
+
+Wenn der aktuelle bzw. gemittelte Durchfluss diese Grenze erreicht oder unterschreitet:
+
+```text
+positive PWM-Korrektur -> weiterhin erlaubt
+negative PWM-Korrektur -> gesperrt
+```
+
+Dadurch kann der Delta-T-Regler den Volumenstrom nicht beliebig weit reduzieren.
+
+`MAIN:1127 / D22` ist somit nicht nur für Abtauung relevant, sondern wird in V3.3 auch als explizite Durchfluss-Untergrenze im Pumpenregler genutzt.
+
+**Bewertung: bestätigt.**
+
+---
+
+# 11. Weitere Auto-Regel-Gates und 100-%-Overrides
+
+Die Auto-Regelung besitzt mehrere zusätzliche Freigaben und Schutzpfade.
+
+## 11.1 Temperatur-Richtungsprüfung
+
+Die Firmware überwacht über ungefähr 30 s, ob die Wasserspreizung zur jeweiligen Betriebsart in der erwarteten Richtung liegt. Bleibt die Temperaturdifferenz unplausibel, wird die normale Auto-PWM-Regelung gesperrt bzw. die Pumpe auf 100 % gezwungen.
+
+## 11.2 Außentemperatur-Hysterese
+
+Ein weiterer Betriebszweig verwendet T04/Außentemperatur mit einer Hysterese um:
+
+```text
+20 °C / 22 °C
+```
+
+In diesem spezifischen Runtime-Zustand kann das Hysterese-Flag den Auto-PWM-Pfad sperren und 100 % erzwingen.
+
+## 11.3 Weitere Flags
+
+Zusätzlich existieren weitere Betriebs-/Schutzflags, die eine normale Auto-Regelung verhindern und 100 % Pumpenleistung erzwingen können. Der Datenfluss ist sichtbar; die Herstellersemantik aller beteiligten Flags ist noch nicht vollständig benannt.
+
+Daher gilt diagnostisch:
+
+```text
+P10 = 0
+und MAIN:2115 = 100
+```
+
+ist kein Widerspruch. Es bedeutet, dass die Auto-Regelung momentan noch nicht freigegeben oder durch einen Override übersteuert ist.
+
+---
+
+# 12. Grenzen des normalen Auto-Reglers
+
+Wenn der normale Auto-Regelpfad freigegeben ist, wird die berechnete PWM ungefähr auf folgenden Bereich begrenzt:
+
+```text
+Minimum = 16 %
+Maximum = 92 %
+```
+
+100 % stammt damit normalerweise aus Start-/Qualifikations-/Schutz-/Overridepfaden und nicht aus dem normalen Endclamp des Delta-T-Reglers.
+
+**Bewertung: bestätigt.**
+
+---
+
+# 13. MAIN:2115 – Soll-PWM
+
+MAIN:2115 repräsentiert die aktuell wirksame **logische Pumpen-Sollvorgabe in Prozent**.
 
 ```text
 P10 fest
 oder
-Auto-Regler P10=0
+Auto-Regler
 oder
-Override / Schutzfunktion
-        |
-        v
-Runtime Pumpen-Soll-PWM
-        |
-        v
-MAIN:2115
-        |
-        v
-Hardware-PWM-Ausgabe
+Override
+    -> Runtime Soll-PWM
+    -> MAIN:2115
+    -> Hardware-PWM
 ```
 
-Damit ist 2115 der wichtigste öffentliche Diagnosewert, um die tatsächliche Pumpenansteuerung durch das Mainboard zu beobachten.
+Vor Ausgabe auf den Timer wird die logische Pumpenleistung invertiert:
+
+```text
+Hardware_PWM = (100 - logische_Pumpenleistung) x 10
+```
+
+MAIN:2115 ist also bewusst die für Bedienung/Diagnose sinnvolle Pumpenleistung und nicht das rohe elektrische Duty-Cycle-Register.
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 10. Invertierung zwischen logischer Pumpenleistung und Hardware-PWM
+# 14. MAIN:2116 – Pumpen-PWM-Rückmeldung
 
-Vor der Ausgabe auf die Hardware wird die logische Prozentvorgabe invertiert.
-
-Sinngemäß:
-
-```text
-Hardware_PWM = (100 - logische_Pumpenleistung) * 10
-```
-
-Damit ist `MAIN:2115` bewusst die für Diagnose und Bedienung sinnvolle Pumpenleistung in Prozent und **nicht** das rohe Timer-Compare-/Duty-Cycle-Register des Mikrocontrollers.
-
-Dies erklärt, warum ein hoher logischer Pumpenwert elektrisch als kleinerer bzw. invertierter PWM-Duty-Cycle erscheinen kann.
-
-**Bewertung: bestätigt.**
-
----
-
-# 11. MAIN:2116 – echte Pumpen-PWM-Rückmeldung
-
-`MAIN:2116` ist keine zweite Sollvorgabe und keine direkte Drehzahl in rpm.
-
-Die Firmware misst die Rückmeldeleitung der Pumpe per Timer Input Capture. Aus zwei Capture-Werten wird das Tastverhältnis bestimmt und auf Prozent skaliert.
+Die Firmware misst die Pumpen-Rückmeldeleitung per Timer Input Capture und bildet aus zwei Capture-Werten ein Tastverhältnis.
 
 Sinngemäß:
 
 ```text
-Feedback_ratio = Capture_A / Capture_B
-MAIN:2116      = int(Feedback_ratio * 100)
-```
-
-Die relevante Capture-/Auswerteroutine liegt im untersuchten Build ungefähr bei:
-
-```text
-VA 0x08061790
+feedback = Capture_A / Capture_B
+MAIN:2116 = int(feedback x 100)
 ```
 
 Damit gilt:
 
-> `MAIN:2116` = gemessenes PWM-Tastverhältnis der Pumpen-Rückmeldeleitung in Prozent.
-
-Dieses Signal wird anschließend zur Berechnung des Wasserdurchflusses verwendet.
+> MAIN:2116 ist die gemessene PWM-Rückmeldung der Pumpe in %, nicht rpm und nicht die Soll-PWM.
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 12. H31 / MAIN:1041 – Pumpentyp und Kennlinienauswahl
+# 15. Feedback >= 85 % – für Durchfluss ungültig
 
-Die Firmware kennt folgende H31-Werte:
+Die Firmware prüft die gemessene PWM-Rückmeldung vor der lokalen Durchflussberechnung.
 
-| H31 | Pumpentyp |
-|---:|---|
-| `0` | keine Durchflusserkennung |
-| `1` | Grundfos 25-75 |
-| `2` | Grundfos 25-105 |
-| `3` | Grundfos 25-125 |
-| `4` | Shimge APM25 9-130 |
-| `5` | Shimge APM25 12-130 |
-
-H31 beeinflusst nicht nur eine Anzeige, sondern wählt die Kennlinie aus, mit der `MAIN:2116` in einen berechneten Wasserdurchfluss umgesetzt wird.
-
-**Bewertung: bestätigt.**
-
----
-
-# 13. Durchflussberechnung aus PWM-Feedback
-
-Der rekonstruierte Datenfluss lautet:
+Bei:
 
 ```text
-Pumpen-Rückmeldeleitung
-        |
-        v
-Timer Input Capture
-        |
-        v
-PWM-Rückmeldung in %
-        |
-        +-----> MAIN:2116
-        |
-        v
-H31-Pumpenkennlinie
-        |
-        v
-berechneter Wasserdurchfluss
-        |
-        v
-MAIN:2077 / T39
+2116 >= 85 %
 ```
 
-`MAIN:2077` ist als Wasserdurchflussrate mit folgender Skalierung veröffentlicht:
+wird die Rückmeldung für die Durchflusskennlinie als ungültig behandelt und der lokal daraus berechnete Durchfluss auf 0 gesetzt.
 
-```text
-2077 raw / 100 = m³/h
-```
+Wichtig:
+
+- MAIN:2116 kann den gemessenen hohen Wert weiterhin anzeigen.
+- Nur die daraus abgeleitete Durchflussberechnung wird verworfen.
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 14. H31-Kennlinien und Maximalwerte
+# 16. H31 – lokale Pumpenkennlinien
 
-Im V3.3-Binary sind pumpentypspezifische Koeffizienten und Maximalwerte hinterlegt.
-
-## 14.1 Übersicht
-
-| H31 | Typ | Kennlinienkoeffizient | max. berechneter Durchfluss |
+| H31 | Typ | Kennlinienfaktor | max. lokaler Durchfluss |
 |---:|---|---:|---:|
 | 0 | keine Durchflusserkennung | 0 | 0 |
-| 1 | Grundfos 25-75 | 0,0300 | 2,10 m³/h |
-| 2 | Grundfos 25-105 | 0,0570 | 4,00 m³/h |
-| 3 | Grundfos 25-125 | 0,0570 | 4,00 m³/h |
-| 4 | Shimge APM25 9-130 | 0,0646 plus Offset/Sonderpfad | 4,50 m³/h |
-| 5 | Shimge APM25 12-130 | 0,0570 | 4,00 m³/h |
+| 1 | Grundfos 25-75 | ca. `0,0300` | 2,10 m³/h |
+| 2 | Grundfos 25-105 | ca. `0,0570` | 4,00 m³/h |
+| 3 | Grundfos 25-125 | ca. `0,0570` | 4,00 m³/h |
+| 4 | Shimge APM25 9-130 | ca. `0,0646`, Sonderkennlinie | 4,50 m³/h |
+| 5 | Shimge APM25 12-130 | ca. `0,0570` | 4,00 m³/h |
 
-**Bewertung: bestätigt für die im untersuchten Build verwendeten Konstanten und Auswahlpfade.**
-
-## 14.2 Grundfos 25-75
-
-Für H31=1 gilt näherungsweise:
+Für H31 1/2/3/5 gilt im Wesentlichen:
 
 ```text
-Q[m³/h] = 0,0300 * PWM_Feedback[%]
+Q[m³/h] ~= Faktor x Feedback[%]
+```
+
+Für H31=4 existiert ein Sonderpfad mit ungefähr 5-%-Offset:
+
+```text
+Feedback <= ca. 5 % -> Q = 0
+Q[m³/h] ~= 0,0646 x (Feedback[%] - 5)
+```
+
+Danach greift im lokalen Pfad der pumpenspezifische Maximalwert.
+
+---
+
+# 17. MAIN:1022 – signed Durchfluss-Korrekturoffset
+
+MAIN:1022 war in älteren Registerdaten als Reserve geführt. V3.3 benutzt es jedoch direkt in der Durchflussberechnung.
+
+Live-RAM:
+
+```text
+MAIN:1022 -> 0x20016C7C + 0x0C
+```
+
+Die Firmware liest es als **signed 16 bit** und addiert es auf den bereits vorhandenen Basisdurchfluss.
+
+Sinngemäß:
+
+```text
+wenn base_flow == 0:
+    effective_flow = 0
+sonst:
+    tmp = base_flow + signed(MAIN:1022)
+    wenn tmp < 1:
+        effective_flow = 0
+    sonst:
+        effective_flow = tmp
+```
+
+Die Einheit ist dieselbe wie MAIN:2077:
+
+```text
+1 raw = 0,01 m³/h
+```
+
+Beispiele:
+
+```text
+1022 = +10  -> +0,10 m³/h
+1022 = -10  -> -0,10 m³/h
+1022 = +100 -> +1,00 m³/h
+```
+
+Der Offset wird sowohl beim lokalen H31/PWM-Pfad als auch beim externen H30=3-Pfad angewendet.
+
+Besonderheiten:
+
+- Bei Basisdurchfluss 0 wird der Offset nicht verwendet; 1022 kann alleine keinen Durchfluss erzeugen.
+- Im lokalen H31-Pfad erfolgt danach weiterhin die pumpenspezifische Maximalbegrenzung.
+- Im externen H30=3-Pfad wird nicht durch die lokale H31-Qmax-Tabelle begrenzt.
+
+MAIN:1022 liegt im normalen öffentlichen Parameterbereich und ist über den direkten Mainboard-Modbus per FC06/FC10 beschreibbar. Es ist damit praktisch als Kalibrierparameter nutzbar.
+
+**Nicht als schnelle Telemetrieeinspeisung verwenden:** Das Persistenz-/Write-Endurance-Verhalten häufiger 1022-Writes ist noch nicht endgültig geschlossen. Außerdem ist 1022 nur ein Offset auf einen bereits gültigen Basisdurchfluss.
+
+**Bewertung: Funktion und Rechenweg bestätigt; NVRAM-Persistenz bei häufigen Writes offen.**
+
+---
+
+# 18. Externer Durchfluss bei H30 = 3
+
+Die Durchflussroutine besitzt einen echten alternativen Datenpfad.
+
+Entscheidung ungefähr bei VA `0x08061820`:
+
+```text
+wenn H30 == 3
+und external_valid != 0:
+    base_flow = external_flow
+sonst:
+    base_flow = lokale H31/PWM-Berechnung
+```
+
+Runtimefelder:
+
+```text
+0x20015C68 + 0x108 -> external_valid
+0x20015C68 + 0x10C -> external_flow
+```
+
+Der externe Wert wird anschließend als Basis für MAIN:2077 verwendet und erhält ebenfalls die MAIN:1022-Korrektur.
+
+**Bewertung: bestätigt.**
+
+---
+
+# 19. Quelle des externen Werts: Hydraulikmodul Unit 0x61
+
+Die beiden Felder werden nicht von einem normalen MAIN-/ENG-Register geschrieben. Ihr Writer ist der RX-Parser des internen Hydraulikmodul-Dialogs.
+
+Bei H30=3 pollt das Mainboard auf dem internen USART3-Boardbus:
+
+```text
+Slave: 0x61
+FC:    03
+Start: 2001
+Qty:   90
+```
+
+Der Modbus-Payload beginnt im internen RX-Abbild nach einem Header. Unter Berücksichtigung dieses Headers ergibt die bytegenaue Zuordnung:
+
+```text
+HYD61:2047 -> 0x20015C68+0x108 -> external_valid
+HYD61:2048 -> 0x20015C68+0x10C -> external_flow
+```
+
+Damit:
+
+| Namespace | Register | Funktion | Skalierung |
+|---|---:|---|---|
+| `HYD61` | `2047` | Gültigkeits-/Vorhandenflag für externen Durchfluss | `0` ungültig, `!=0` gültig |
+| `HYD61` | `2048` | externer Wasserdurchfluss | `raw/100 m³/h` |
+
+Die offizielle Herstellerbezeichnung von HYD61:2047 ist noch unbekannt; seine Wirkung als Gate des externen Durchflusswerts ist jedoch direkt im Binary bestätigt.
+
+---
+
+# 20. Kann man einen extern gemessenen Durchfluss einspeisen?
+
+## 20.1 Firmware-native Antwort: ja
+
+Technisch kann ein externer Teilnehmer den Durchfluss liefern, wenn er das von der Firmware erwartete Hydraulikmodul emuliert.
+
+Minimal für den eigentlichen Durchflussdatenpfad:
+
+```text
+H30 = 3
+
+Mainboard -> Slave 0x61:
+FC03 2001 qty90
+
+Antwort:
+HYD61:2047 != 0
+HYD61:2048 = gewünschter_Durchfluss_m3h x 100
 ```
 
 Beispiel:
 
 ```text
-2116 = 50 %
-Q = 0,0300 * 50
-Q = 1,50 m³/h
+externer Sensor = 0,64 m³/h
+HYD61:2048 = 64
 ```
 
-Anschließend wird auf maximal etwa 2,10 m³/h begrenzt.
+Dann verwendet die Mainboard-Durchflussroutine diesen Wert anstelle der lokalen H31/PWM-Kennlinie.
 
-## 14.3 Grundfos 25-105 / 25-125 und Shimge APM25 12-130
+## 20.2 Aber: H30=3 ist kein reiner „External Flow“-Schalter
 
-Für H31=2, H31=3 und H31=5 verwendet dieser V3.3-Build für die Durchflussabschätzung denselben Koeffizienten:
+H30=3 schaltet die gesamte Hydraulikmodularchitektur um. Der interne Scheduler verwendet dann Unit `0x61` statt des normalen lokalen/anderen Hydraulikpfads:
 
 ```text
-Q[m³/h] = 0,0570 * PWM_Feedback[%]
+RX: Slave 0x61 / FC03 / 2001 / 90 Wörter
+TX: Slave 0x61 / FC10 / 1001 / 90 Wörter
 ```
 
-Beispiel:
+Zahlreiche weitere Runtime-/Sensor-/I/O-Helper lesen bei H30=3 Werte aus derselben externen Struktur `0x20015C68`, unter anderem Felder bei:
 
 ```text
-2116 = 50 %
-Q = 0,0570 * 50
-Q = 2,85 m³/h
++0x1C
++0x24
++0x28
++0x6A
++0x70
++0x76
++0x7C
++0x82
++0x88
+...
 ```
 
-Maximalwert ungefähr 4,00 m³/h.
+Daher wäre es riskant, auf einer realen Anlage einfach H30=3 zu setzen und nur HYD61:2047/2048 zu beantworten. Andere erwartete Hydraulikwerte könnten sonst fehlen oder 0 werden.
 
-Damit werden diese drei Pumpentypen zumindest in dieser konkreten Durchflussberechnung identisch behandelt, obwohl die Pumpenbezeichnungen unterschiedlich sind.
+Für eine saubere externe Durchflussquelle müsste ein Emulator den **minimal erforderlichen Unit-0x61-Datensatz für die konkrete Anlagenkonfiguration** vollständig bereitstellen.
 
-## 14.4 Shimge APM25 9-130
+## 20.3 Kein direkter MAIN:2077-Write
 
-H31=4 besitzt einen eigenen Sonderpfad.
+MAIN:2077 ist ein Statuswert. Im normalen Mainboard-Modbus ist kein Schreibpfad gefunden, der einen externen Messwert direkt in den autoritativen Runtimewert `0x20016F14` setzt.
 
-Unter ungefähr 5 % Rückmelde-PWM wird kein Durchfluss angesetzt:
+Ebenfalls wurde bisher kein ENG:CTRL-/ENG:A-Register gefunden, dessen Laufzeitverbraucher direkt `0x20015C68+0x10C` beschreibt.
 
-```text
-PWM_Feedback < ca. 5 %
--> Q = 0
-```
-
-Darüber gilt näherungsweise:
+Aktueller Stand:
 
 ```text
-Q[m³/h] = 0,0646 * (PWM_Feedback[%] - 5)
-```
-
-Beispiel:
-
-```text
-2116 = 50 %
-Q = 0,0646 * (50 - 5)
-Q ~= 2,91 m³/h
-```
-
-Maximalwert ungefähr 4,50 m³/h.
-
-**Bewertung: bestätigt für den separaten H31=4-Pfad und die Konstanten.**
-
----
-
-# 15. Hoher PWM-Feedbackbereich wird nicht als normaler Durchfluss interpretiert
-
-Die Firmware prüft die gemessene Pumpen-PWM-Rückmeldung vor der Durchflussberechnung.
-
-Ab ungefähr:
-
-```text
-Feedback >= 85 %
-```
-
-wird das Signal für die normale Durchflussberechnung als ungültig bzw. nicht verwertbar behandelt.
-
-Das bedeutet:
-
-```text
-2116 kann ein hohes PWM-Feedback anzeigen,
-aber 2077 muss daraus nicht proportional weiter ansteigen.
-```
-
-Dieser Bereich darf nicht mit der Soll-PWM `2115` verwechselt werden.
-
-```text
-2115 = Mainboard -> Pumpe, logische Soll-PWM
-2116 = Pumpe -> Mainboard, Rückmelde-PWM
-```
-
-Die unterschiedliche Semantik ist wesentlich.
-
-**Bewertung: bestätigt für die Grenzprüfung; die genaue Herstellerbedeutung des hohen Feedbackbereichs ist noch offen.**
-
----
-
-# 16. Regeltakt / P12-Periode
-
-Im Auto-Regler existiert ein interner Zähler, der bis ungefähr 120 läuft, bevor ein neuer Pumpenregelentscheid ausgeführt wird.
-
-Damit ist strukturell bestätigt:
-
-```text
-1 P12-Regelentscheidung nach 120 Aufrufen des betreffenden Pumpenregeltasks
-```
-
-Die absolute Zeit ergibt sich erst aus der Aufrufperiode dieses Tasks.
-
-## 16.1 Live-Beobachtung MAIN:2106
-
-Am realen Gerät wurde im Kühlbetrieb am 15. Juli 2026 beobachtet:
-
-```text
-MAIN:2106 pulst ungefähr alle 5 Minuten von 0 auf 1
-und nach etwa 9...11 Sekunden wieder auf 0.
-```
-
-Beobachtete Pulse lagen unter anderem ungefähr bei:
-
-```text
-13:30
-13:35
-13:40
-13:45
-13:50
-13:55
-14:00
-14:05
-```
-
-Währenddessen blieb `MAIN:2115` in der damaligen Beobachtung stabil bei 50 %.
-
-Daher ist `2106` ein sehr starker Kandidat für ein Pumpenregel-/PWM-Regelfenster bzw. für einen P12-Regelzyklus.
-
-Noch **nicht** final bewiesen ist jedoch:
-
-```text
-MAIN:2106 == exakt derselbe interne 120er-Regelzähler
-```
-
-Bis dieser letzte Datenfluss geschlossen ist, soll 2106 weiterhin als **starker Kandidat** und nicht als endgültig bestätigtes Regelzyklusflag dokumentiert werden.
-
----
-
-# 17. Gesamtregelung als Datenfluss
-
-```text
-                             MAIN:1205 / P10
-                                   |
-                    +--------------+--------------+
-                    |                             |
-                 P10 > 0                        P10 = 0
-                    |                             |
-                    v                             v
-             feste PWM-Vorgabe              Auto-Regler
-                    |                             |
-                    |                      Ist-Delta-T - P11
-                    |                             |
-                    |                    +/-P12 / +/-2*P12
-                    |                             |
-                    |                 Kompressor-Feed-Forward
-                    |                       +/-P12 bei ~6 Hz
-                    |                             |
-                    |                  Mindestdurchfluss-Schutz
-                    |                             |
-                    |                      Clamp ca. 16...92 %
-                    |                             |
-                    +--------------+--------------+
-                                   |
-                                   v
-                         Runtime Pumpen-Soll-PWM
-                                   |
-                                   v
-                              MAIN:2115
-                                   |
-                                   v
-                         invertierte HW-PWM-Ausgabe
-                                   |
-                                   v
-                                 Pumpe
-                                   |
-                     PWM-Rückmeldeleitung
-                                   |
-                                   v
-                          Timer Input Capture
-                                   |
-                                   v
-                              MAIN:2116
-                                   |
-                                   v
-                           H31-Kennlinie
-                                   |
-                                   v
-                         Wasserdurchfluss T39
-                                   |
-                                   v
-                              MAIN:2077
+normaler MAIN-Modbus -> kein echter externer Durchfluss-Setpoint gefunden
+ENG/CTRL             -> kein echter externer Durchfluss-Setpoint gefunden
+interner HYD61-Bus   -> echter externer Durchflussweg bestätigt
 ```
 
 ---
 
-# 18. Diagnose- und Live-Testempfehlung
+# 21. MAIN:1022 als theoretischer Workaround
 
-Für einen vollständigen Live-Test der automatischen Pumpenregelung sollten mindestens folgende Register gleichzeitig mitgeloggt werden:
-
-```text
-1041  H31 Pumpentyp
-1205  P10 Pumpendrehzahl / Auto=0
-1432  P11 Zielspreizung
-1433  P12 Schrittweite
-
-relevante Wasser-Ein-/Auslasstemperaturen
-2071  Kompressor-Sollfrequenz
-2072  Kompressor-Istfrequenz
-2077  Wasserdurchfluss
-2106  vermutetes Pumpen-Regelfenster
-2115  Pumpen-Soll-PWM
-2116  Pumpen-Feedback-PWM
-```
-
-Ein besonders aussagekräftiger Test ist:
-
-1. `P10=0` aktivieren.
-2. P11/P12 notieren.
-3. Bei stabil laufendem Verdichter die Wasser-Spreizung, 2071, 2077, 2106, 2115 und 2116 mit hoher zeitlicher Auflösung loggen.
-4. Auf Änderungen von 2115 relativ zu Delta-T-Abweichung und Änderungen von 2071 achten.
-5. Prüfen, ob 2115-Schritte genau `P12` bzw. `2*P12` entsprechen.
-6. 2106 zeitlich mit diesen Regelentscheidungen korrelieren.
-
-Damit lässt sich insbesondere die noch offene direkte Kopplung von `2106` zum internen 120er-Regelzähler live schließen.
-
----
-
-# 19. Kurzfassung für Registermapping
+Da MAIN:1022 normal beschreibbar ist, könnte man theoretisch dynamisch rechnen:
 
 ```text
-1041 / H31
-Zirkulationswasserpumpentyp / Durchflusskennlinie
-0 = keine Durchflusserkennung
-1 = Grundfos 25-75
-2 = Grundfos 25-105
-3 = Grundfos 25-125
-4 = Shimge APM25 9-130
-5 = Shimge APM25 12-130
+1022 = gewünschter_Durchfluss - lokaler_Basisdurchfluss
+```
 
-1205 / P10
-Pumpendrehzahl
-0 = automatische Delta-T-PWM-Regelung
-1..100 = feste Pumpen-PWM in %
+Das wäre jedoch **kein sauberer virtueller Durchflusseingang**:
 
-1432 / P11
-Ziel-Wasserspreizung, raw/10 K
+- funktioniert nur, wenn der Basisdurchfluss ungleich 0 ist,
+- ist ein globaler Kalibrier-/Korrekturwert,
+- beeinflusst alle nachgelagerten Funktionen, die den effektiven Durchfluss verwenden,
+- unterliegt im lokalen Pfad der H31-Qmax-Begrenzung,
+- Persistenz und EEPROM-/Flash-Schreibbelastung häufiger Writes sind noch nicht abschließend geklärt.
 
-1433 / P12
-PWM-Anpassung je Regelereignis in Prozentpunkten
+Daher ist HYD61-Emulation der technisch saubere Firmwareweg für eine echte externe Messwertquelle.
 
-2077 / T39
-berechneter Wasserdurchfluss, raw/100 m³/h
-Quelle: PWM-Rückmeldung 2116 + H31-Kennlinie
+---
 
-2106
-zyklisches Pumpenregel-/PWM-Regelfenster, sehr starker Kandidat
-Live ca. 5-minütig beobachtet; exakte Kopplung zum internen 120er-Zähler noch offen
+# 22. MAIN:2106 – Korrektur der früheren Hypothese
 
-2115
-aktuelle logische Pumpen-Soll-PWM in %
+Live wurde am 15.07.2026 im Kühlbetrieb beobachtet:
 
-2116
-gemessene PWM-Rückmeldung der Pumpe in %
-Grundlage der firmwareinternen Durchflussberechnung
+```text
+MAIN:2106 pulst ungefähr alle 5 min von 0 auf 1
+und fällt nach etwa 9...11 s wieder auf 0.
+MAIN:2115 blieb dabei stabil.
+```
+
+Die tiefere Binaryanalyse zeigt jedoch:
+
+1. Der zentrale Mainboard-Statusbuilder erzeugt 2106 und 2107 nicht wie die benachbarten Statuswerte.
+2. DWIN nutzt `0x083B = MAIN:2107` explizit als Kommunikations-/Handshakevariable `0x5AA5`.
+3. Für `0x083A = MAIN:2106` wurde im DWIN-Code kein direkter Pumpenregelverbraucher gefunden.
+4. Die echte P12-Regelperiode ist durch Scheduler und 120er-Zähler auf **60 s** geschlossen.
+
+Damit ist die frühere Bezeichnung:
+
+```text
+2106 = Pumpenregel-/PWM-Regelzyklusflag
+```
+
+nicht haltbar.
+
+Aktuelle Klassifikation:
+
+> **MAIN:2106 = ungeklärtes Kommunikations-/Runtimefeld. Die ca. 5-minütige Pulsfolge ist live bestätigt, ihre Ursache aber noch offen. Nicht als P12-Regelperiode verwenden.**
+
+---
+
+# 23. Gesamtdatenfluss
+
+```text
+                          H30
+                           |
+             +-------------+-------------+
+             |                           |
+          H30 != 3                    H30 == 3
+             |                           |
+             v                           v
+       PWM Feedback                  HYD61:2047
+             |                       valid != 0 ?
+             v                           |
+          2116 [%]                       v
+             |                       HYD61:2048
+             v                       raw/100 m³/h
+       H31 Kennlinie                     |
+             |                           |
+             +-------------+-------------+
+                           |
+                           v
+                    Basisdurchfluss
+                           |
+                           v
+                  + signed MAIN:1022
+                           |
+                           v
+                  wirksamer Durchfluss
+                           |
+                           +----> MAIN:2077
+                           |
+                           +----> 5-s-Mittel
+                                   |
+                                   +--> 10-min-Qualifikation
+                                   +--> Mindestdurchfluss-Gates
+                                   +--> Auto-PWM-Regler
+                                            |
+                                   P11/P12 + Frequenz-Feedforward
+                                            |
+                                            v
+                                      MAIN:2115
+                                            |
+                                            v
+                                      Pumpen-PWM
 ```
 
 ---
 
-# 20. Noch offene Punkte
+# 24. Sicherheits- und Testhinweise
 
-1. Direkte Xref-Kette `MAIN:2106` zum internen 120er Pumpenregelzähler vollständig schließen.
-2. Alle Override-Pfade katalogisieren, die `2115` unabhängig von P10/Auto-Regler auf einen festen Wert bzw. 100 % setzen.
-3. Vollständige Prioritätskette aller Mindestdurchflussbedingungen dokumentieren.
-4. Herstellersemantik des Pumpen-Feedbackbereichs ab ungefähr 85 % klären.
-5. H31-Kennlinien mit realen Pumpenmessungen gegen `MAIN:2077` korrelieren.
-6. Prüfen, ob die Koeffizienten bei anderen Firmwarefamilien identisch sind oder firmware-/pumpenfamilienabhängig variieren.
+Für spätere Live-Tests sind die Varianten unterschiedlich zu bewerten:
+
+### MAIN:1022 statisch ändern
+
+Technisch einfach und über normalen Modbus möglich. Sinnvoll für eine vorsichtige Kalibrierprüfung. Vorher aktuellen Wert sichern und nur kleine Offsets verwenden. Nicht als schnelle Telemetriequelle benutzen, solange die Persistenz nicht geschlossen ist.
+
+### H30=3 ohne Unit-0x61-Emulator
+
+Nicht empfohlen. Die Firmware erwartet dann ein komplettes Hydraulikmodul und bezieht mehrere weitere Werte aus dessen Struktur.
+
+### H30=3 mit vollständigem Unit-0x61-Emulator
+
+Technisch der korrekte Firmwareweg, um einen extern gemessenen Wasserdurchfluss einzuspeisen. Vor einem Test muss zuerst der für die konkrete FoxAir-Konfiguration notwendige Mindestumfang der 90 RX-/TX-Wörter kartiert werden.
 
 ---
 
-# 21. Fazit
+# 25. Offene Restpunkte
 
-Die V3.3 besitzt eine deutlich umfangreichere Pumpenregelung als eine einfache feste PWM-Ausgabe.
+1. Offizielle Herstellerbezeichnung von `HYD61:2047`.
+2. Vollständige Semantik aller für H30=3 benötigten HYD61-Wörter.
+3. Minimaler sicherer Antwortdatensatz für einen Unit-0x61-Emulator.
+4. NVRAM-/EEPROM-Persistenz und Schreibendurance von häufigen MAIN:1022-Änderungen.
+5. Tatsächliche Semantik von MAIN:2106.
+6. Herstellerbezeichnungen einiger 100-%-Overrideflags im Auto-PWM-Pfad.
 
-Bei `P10=0` wird die Pumpendrehzahl automatisch aus der Wasser-Spreizung geregelt. P11 definiert die Zielspreizung, P12 die Schrittweite. Zusätzlich reagiert die Regelung vorauseilend auf Änderungen der Kompressor-Sollfrequenz und verhindert ein weiteres Herunterregeln bei zu geringem Wasserdurchfluss.
-
-`MAIN:2115` ist die aktuelle Soll-PWM des Mainboards. `MAIN:2116` ist dagegen eine echte, per Timer gemessene PWM-Rückmeldung der Pumpe. Über die durch `H31` ausgewählte Pumpenkennlinie wird daraus der öffentliche Wasserdurchfluss `MAIN:2077 / T39` berechnet.
-
-Damit ist insbesondere die bisherige Vermutung bestätigt:
-
-> **2116 ist die Pumpen-PWM-Rückmeldung und wird in der Firmware tatsächlich zur Berechnung des Wasserdurchflusses verwendet.**
+Die zentralen Fragen `P12-Periode`, `MAIN:1022`, `H30=3`, `HYD61:2047/2048` und der echte externe Durchflussdatenpfad sind dagegen in V3.3 strukturell geschlossen.
