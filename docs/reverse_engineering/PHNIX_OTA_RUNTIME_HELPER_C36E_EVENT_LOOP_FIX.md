@@ -7,6 +7,17 @@ mit C36E-Status `1`. Unmittelbar danach endete die GDB-Sitzung mit Exit-Code `0`
 C357 und C5A8 wurden nicht erreicht. Der Updater wechselte deshalb korrekt in den
 Guarded Hold; es wurden keine Firmwaredaten übertragen.
 
+Der passive RS485-Mitschnitt bestätigt den Ablauf bytegenau:
+
+- `23:54:07.228`: C350-Angebot für Softwarecode `82400644`, Version `0034`,
+  anschließend C350-ACK.
+- `23:54:07.728`: C36E mit SSID `0063` und Status `1`, Antwortzeit 500 ms.
+- In der gesamten Rohdatei: kein C357, kein C5A8 und kein C371-Block-ACK.
+
+Damit war das Mainboard bereit für das Update, erhielt aber weder die
+Transfermetadaten noch einen Firmwareblock. Spätere C37B-Frames mit Status `7`
+gehören zur Geräteinformations-Bestätigung und nicht zum OTA-Datentransfer.
+
 ## Ursache
 
 Die GDB-Batchdatei endete nach einem einzelnen `continue`. Spätere Breakpoints
