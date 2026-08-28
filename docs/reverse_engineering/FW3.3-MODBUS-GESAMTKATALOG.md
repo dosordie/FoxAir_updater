@@ -1,6 +1,6 @@
 # Mainboard-Firmware V3.3 – Modbus-Gesamtkatalog und Namespace-Index
 
-Stand: 24. August 2026
+Stand: 28. August 2026
 
 Diese Datei ist der **zentrale Einstiegspunkt für alle Modbus-Register der untersuchten FoxAir-/PHNIX-Mainboard-Firmware V3.3**.
 
@@ -111,6 +111,28 @@ Dieser Wert aktiviert den virtuellen SG-Ready-Pfad über `ENG:CTRL:8801`.
 
 Die Funktion ist inzwischen **Binary + live bestätigt**.
 
+## Sensor-/Messwert-Offsets
+
+V3.3 besitzt sieben bestätigte öffentliche additive Kalibrierparameter:
+
+| MAIN:P | Messwert | Typ / Skalierung |
+|---:|---|---|
+| **1022** | Wasserdurchfluss | signed16, `0,01 m³/h` pro raw |
+| **1212** | T01 Einlasswassertemperatur | signed8, `0,1 K` pro raw |
+| **1213** | T02 Auslasswassertemperatur | signed8, `0,1 K` pro raw |
+| **1214** | T08 Warmwasserspeicher | signed8, `0,1 K` pro raw |
+| **1353** | Zone-1-Raumtemperatur | signed8, `0,1 K` pro raw |
+| **1354** | Zone-2-Raumtemperatur | signed8, `0,1 K` pro raw |
+| **1355** | T04 Außentemperatur | signed8, `0,1 K` pro raw |
+
+Die sechs Temperaturwerte werden als signed Offset auf den jeweiligen Sensorwert addiert. `1022` wird als signed Durchflusskorrektur auf einen bereits gültigen Basisdurchfluss angewendet.
+
+Der systematische Audit der weiteren signed-Additionspfade ergab **keinen zusätzlichen öffentlichen additiven Modbus-Offset** für T03/T05/T06/T07/T10/T11/T12, Zone-2-Mischwassertemperatur, Hoch-/Niederdruck, AC-Strom oder IPM-Temperatur.
+
+Details und Live-RAM-Adressen:
+
+[`FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md`](FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md)
+
 ---
 
 # 4. MAIN:S – öffentliche Statusregister 2001–2180
@@ -146,10 +168,16 @@ Besonders wichtige geschlossene Register:
 | 2081 | Inverter-/Driver Fault Word 1 |
 | 2082 | Inverter-/Driver Fault Word 2 |
 | **2133** | **tatsächlich aktiver SG-Ready-Modus 0..4** |
-| 2136 | zweiter T04-/Außentemperaturpfad |
+| 2136 | zweiter T04-/Außentemperaturpfad; `MAIN:1355` wirkt bereits |
 | 2137 | reine WP-/Inverter-Eingangsleistung vor Zusatzanteil |
 | 2138 | reine thermische WP-Leistung vor Zusatzanteil |
 | 2146 | Capability-/Statusbitfeld |
+| **2160** | **Zone-1-Raumtemperatur; Offset MAIN:1353** |
+| 2161 | Zone-2-Mischwassertemperatur |
+| **2162** | **Zone-2-Raumtemperatur; Offset MAIN:1354** |
+| 2163 | Mischventil-/Mischkreiswert 0…100 % |
+| 2164 | Zone-1-Auslauftemperatur nach AT-Kompensation |
+| 2165 | Zone-2-Auslauftemperatur nach AT-Kompensation |
 
 V3.3 baut und broadcastet tatsächlich bis **2180**.
 
@@ -549,6 +577,7 @@ Nach den Audits und Live-Tests sind für V3.3 geschlossen:
 - Paketkopf-Ausnahmen
 - zentrale RAM-Spiegel
 - wichtige Live-Strukturen
+- **öffentliche Sensor-/Messwertkalibrierungen einschließlich 1353/1354/1355**
 - interne Boardbus-Adressen
 - Inverter-/Fan-Transport
 - Service-/Engineering-Fenster
