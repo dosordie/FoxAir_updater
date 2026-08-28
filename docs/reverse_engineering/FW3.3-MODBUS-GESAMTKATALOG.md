@@ -163,7 +163,7 @@ Sensorstatus 0x20015FA8+0x8E
 
 Er entspricht logischem Temperaturkanal 23 des 24-Kanal-Sensoreingangsscanners. Die offizielle PHNIX-Bezeichnung und die konkrete PCB-/Klemmenbezeichnung sind noch offen.
 
-**Wichtig:** `1463` wirkt auf den ausgewählten/aufbereiteten Außentemperaturpfad `MAIN:2048`, nicht auf den direkten lokalen T04-Wert `MAIN:2136`.
+**Wichtig:** `1463` wirkt auf den ausgewählten/aufbereiteten Außentemperaturpfad `MAIN:2048`, nicht auf den direkten lokalen T04-Wert `MAIN:2136`. Bei `1463=1` wird der direkte alternative Sensorwert zusätzlich als `MAIN:2033` veröffentlicht.
 
 ---
 
@@ -179,6 +179,8 @@ Besonders wichtige geschlossene Register:
 |---:|---|
 | 2019 Bit0 | tatsächlicher Verdichterlauf aus Inverter-Istfrequenz |
 | 2019 Bit2 | mindestens ein Lüfter meldet tatsächliche Aktivität |
+| **2032** | **Verdichter-Betriebsstunden; einzelner uint16-Stundenzähler** |
+| **2033** | **direkter optionaler zweiter lokaler Außentemperaturfühler; bei MAIN:1463=1, raw/10 °C; kein High-Word von 2032** |
 | 2042 | Kompressor-Phasenstrom |
 | 2043 | DC-Bus-Spannung |
 | 2044 | IPM-Temperatur |
@@ -211,19 +213,42 @@ Besonders wichtige geschlossene Register:
 | 2164 | Zone-1-Auslauftemperatur nach AT-Kompensation |
 | 2165 | Zone-2-Auslauftemperatur nach AT-Kompensation |
 
-### Außentemperatur: 2048 ist nicht gleich 2136
+### MAIN:2032 / 2033 sind kein 32-Bit-Paar
 
-Die beiden Register besitzen unterschiedliche Datenpfade:
+Die Firmware führt `2032` als eigenständigen Betriebsstundenzähler:
 
 ```text
-lokaler T04
-  + MAIN:1355
-      ↓
-MAIN:2136
-(direkter aktueller lokaler T04)
+0x20016E88+0x00 = laufende Sekunden innerhalb der Stunde
+0x20016E88+0x02 = Verdichter-Betriebsstunden
+                    ↓
+                 MAIN:2032
 ```
 
-Für `2048` läuft dagegen zuerst eine Quellenauswahl und anschließend eine langsame Aufbereitung:
+Bei `3600` Sekunden wird der Stundenwert um 1 erhöht. `2033` stammt aus einem vollständig getrennten Sensorpfad und ist daher ausdrücklich **kein High-Word**.
+
+Für `2033` gilt:
+
+```text
+MAIN:1463 != 1 -> MAIN:2033 = 0
+MAIN:1463 == 1 -> MAIN:2033 = signed16(0x20015FA8+0x8A)
+```
+
+Der Messwert ist der direkte optionale zweite lokale Außentemperaturfühler, skaliert mit `raw/10 °C`.
+
+### Außentemperatur: 2033, 2048 und 2136 haben unterschiedliche Rollen
+
+```text
+MAIN:2136
+= direkter lokaler Standard-T04 inkl. MAIN:1355 Offset
+
+MAIN:2033
+= direkter zweiter lokaler AT-Sensor bei aktivem MAIN:1463=1
+
+MAIN:2048
+= ausgewählte + gültigkeitsgeprüfte + zeitlich aufbereitete wirksame Außentemperatur
+```
+
+Für `2048` läuft zuerst eine Quellenauswahl und anschließend eine langsame Aufbereitung:
 
 ```text
 MAIN:1463
@@ -241,7 +266,7 @@ MAIN:2048
 
 Zusätzlich bildet die Firmware aus sechs langsamen Samples einen noch stärker beruhigten internen Außentemperaturwert bei `0x20016DA8+0x06`, der in Regel-/Grenzwertlogik eingeht. Während Defrost wird dieser langsame Samplingpfad zurückgesetzt bzw. nicht normal weitergeführt.
 
-Damit können `2048` und `2136` auch bei demselben lokalen T04 sichtbar unterschiedlich reagieren. Bei `MAIN:1463=1` können sie zusätzlich dauerhaft aus unterschiedlichen physischen Temperaturquellen stammen.
+Damit können `2048` und `2136` auch bei demselben lokalen T04 sichtbar unterschiedlich reagieren. Bei `MAIN:1463=1` können `2033`/`2048` zusätzlich aus dem zweiten physischen Temperaturfühler stammen.
 
 V3.3 baut und broadcastet tatsächlich bis **2180**.
 
@@ -641,8 +666,10 @@ Nach den Audits und Live-Tests sind für V3.3 geschlossen:
 - Paketkopf-Ausnahmen
 - zentrale RAM-Spiegel
 - wichtige Live-Strukturen
+- **MAIN:2032 als einzelner 16-Bit-Verdichter-Betriebsstundenzähler**
+- **MAIN:2033 als direkter optionaler zweiter Außentemperaturfühler; kein High-Word zu 2032**
 - **öffentliche Sensor-/Messwertkalibrierungen einschließlich 1353/1354/1355**
-- **T04-Pfade getrennt: 2136 direkter lokaler T04, 2048 ausgewählte/zeitlich aufbereitete wirksame Außentemperatur**
+- **T04-Pfade getrennt: 2136 direkter lokaler T04, 2033 direkter optionaler zweiter AT-Sensor, 2048 ausgewählte/zeitlich aufbereitete wirksame Außentemperatur**
 - **MAIN:1463 als Selector des optionalen zweiten lokalen Außentemperaturfühlers mit T04-Fallback**
 - interne Boardbus-Adressen
 - Inverter-/Fan-Transport
