@@ -133,6 +133,38 @@ Details und Live-RAM-Adressen:
 
 [`FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md`](FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md)
 
+## MAIN:1463 – Auswahl optionaler zweiter Außentemperaturfühler
+
+`MAIN:1463` ist **kein Offset**, sondern ein Quellenselektor für den aufbereiteten Außentemperaturpfad.
+
+```text
+1463 != 1
+→ lokaler T04
+
+1463 == 1 und zweiter AT-Sensor gültig
+→ zweiter lokaler Außentemperatur-Thermistor
+
+1463 == 1 und zweiter AT-Sensor ungültig
+→ Fallback auf lokalen T04
+```
+
+Live-RAM:
+
+```text
+MAIN:1463 -> 0x20016278+0x55
+```
+
+Der zweite Sensor ist ein physischer lokaler Thermistoreingang des Mainboards:
+
+```text
+Temperatur   0x20015FA8+0x8A
+Sensorstatus 0x20015FA8+0x8E
+```
+
+Er entspricht logischem Temperaturkanal 23 des 24-Kanal-Sensoreingangsscanners. Die offizielle PHNIX-Bezeichnung und die konkrete PCB-/Klemmenbezeichnung sind noch offen.
+
+**Wichtig:** `1463` wirkt auf den ausgewählten/aufbereiteten Außentemperaturpfad `MAIN:2048`, nicht auf den direkten lokalen T04-Wert `MAIN:2136`.
+
 ---
 
 # 4. MAIN:S – öffentliche Statusregister 2001–2180
@@ -152,7 +184,7 @@ Besonders wichtige geschlossene Register:
 | 2044 | IPM-Temperatur |
 | 2045 | T01 Einlasswasser |
 | 2046 | T02 Auslasswasser |
-| 2048 | T04 Außentemperatur |
+| **2048** | **ausgewählte und zeitlich aufbereitete wirksame Außentemperatur; Quelle über MAIN:1463** |
 | 2049 | T03 Verdampfertemperatur |
 | 2054 | elektrische Gesamtleistung, raw/10 kW |
 | 2057 | T35 AC Input Current |
@@ -168,7 +200,7 @@ Besonders wichtige geschlossene Register:
 | 2081 | Inverter-/Driver Fault Word 1 |
 | 2082 | Inverter-/Driver Fault Word 2 |
 | **2133** | **tatsächlich aktiver SG-Ready-Modus 0..4** |
-| 2136 | zweiter T04-/Außentemperaturpfad; `MAIN:1355` wirkt bereits |
+| **2136** | **direkter lokaler T04-Außentemperaturwert; korrigiert über MAIN:1355** |
 | 2137 | reine WP-/Inverter-Eingangsleistung vor Zusatzanteil |
 | 2138 | reine thermische WP-Leistung vor Zusatzanteil |
 | 2146 | Capability-/Statusbitfeld |
@@ -178,6 +210,38 @@ Besonders wichtige geschlossene Register:
 | 2163 | Mischventil-/Mischkreiswert 0…100 % |
 | 2164 | Zone-1-Auslauftemperatur nach AT-Kompensation |
 | 2165 | Zone-2-Auslauftemperatur nach AT-Kompensation |
+
+### Außentemperatur: 2048 ist nicht gleich 2136
+
+Die beiden Register besitzen unterschiedliche Datenpfade:
+
+```text
+lokaler T04
+  + MAIN:1355
+      ↓
+MAIN:2136
+(direkter aktueller lokaler T04)
+```
+
+Für `2048` läuft dagegen zuerst eine Quellenauswahl und anschließend eine langsame Aufbereitung:
+
+```text
+MAIN:1463
+   ↓
+lokaler T04 ODER zweiter lokaler AT-Sensor
+   ↓
+Fallback-/Gültigkeitslogik
+   ↓
+zeitliche Sample-/Hold-Aufbereitung
+   ↓
+0x20016DA8+0x0A
+   ↓
+MAIN:2048
+```
+
+Zusätzlich bildet die Firmware aus sechs langsamen Samples einen noch stärker beruhigten internen Außentemperaturwert bei `0x20016DA8+0x06`, der in Regel-/Grenzwertlogik eingeht. Während Defrost wird dieser langsame Samplingpfad zurückgesetzt bzw. nicht normal weitergeführt.
+
+Damit können `2048` und `2136` auch bei demselben lokalen T04 sichtbar unterschiedlich reagieren. Bei `MAIN:1463=1` können sie zusätzlich dauerhaft aus unterschiedlichen physischen Temperaturquellen stammen.
 
 V3.3 baut und broadcastet tatsächlich bis **2180**.
 
@@ -578,6 +642,8 @@ Nach den Audits und Live-Tests sind für V3.3 geschlossen:
 - zentrale RAM-Spiegel
 - wichtige Live-Strukturen
 - **öffentliche Sensor-/Messwertkalibrierungen einschließlich 1353/1354/1355**
+- **T04-Pfade getrennt: 2136 direkter lokaler T04, 2048 ausgewählte/zeitlich aufbereitete wirksame Außentemperatur**
+- **MAIN:1463 als Selector des optionalen zweiten lokalen Außentemperaturfühlers mit T04-Fallback**
 - interne Boardbus-Adressen
 - Inverter-/Fan-Transport
 - Service-/Engineering-Fenster
