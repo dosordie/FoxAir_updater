@@ -38,24 +38,26 @@ Der aktuelle Datenbestand in `FoxAir_Control/data` ist bereits weit fortgeschrit
 
 Wichtigste Ergebnisse:
 
-1. **2057 = T35 / AC Input Current**.
-2. **2054, 2059, 2060** haben bytegenau bestätigte Skalierungen `/10`, `/10`, `/100`.
-3. **2071 = Kompressor-Sollfrequenz**, 2072 tatsächliche Betriebsfrequenz.
-4. **2080 stammt direkt von INV1:2099**.
-5. **2081/2082 = Inverter-/Driver-Fehlerwörter**; 2081 Bit15 wird lokal als Unit-1-Kommunikationsfehler erzeugt.
-6. **2019 Bit0/Bit2 sind Ist-Rückmeldungen**, keine simplen lokalen Ausgangsbefehle.
-7. **2026–2028 sind Unit-1-Diagnosefelder**.
-8. **2117/2119/2121/2123 sind High-Wörter von 32-Bit-Energiezählern**.
-9. **2125/2126 und 2127/2128** bilden zwei weitere 32-Bit-Energiezählerpaare, sehr wahrscheinlich DHW elektrisch/thermisch.
-10. **2133 = tatsächlich aktiver SG-Ready-Modus 0..4** und unterliegt einem **festen 10-Minuten-Hold zwischen akzeptierten Modewechseln**.
-11. **2136 = direkter lokaler T04-Außentemperaturwert**; der T04-Getter enthält `MAIN:1355` als signed Offset.
-12. **2048 = ausgewählte und zeitlich aufbereitete wirksame Außentemperatur**; Quelle ist standardmäßig lokaler T04, bei `MAIN:1463=1` der zweite lokale AT-Thermistor mit automatischem T04-Fallback.
-13. **2137/2138 sind WP-only-Leistungsgrößen**, keine simplen Spiegel von 2054/2059.
-14. **2140–2143 = zwei 32-Bit-Werte**.
-15. **2146 = Capability-/Statusbitfeld**, Basiswert `0x002C`.
-16. **2160 = Zone-1-Raumtemperatur**, korrigiert über `MAIN:1353`.
-17. **2162 = Zone-2-Raumtemperatur**, korrigiert über `MAIN:1354`.
-18. V3.3 baut und broadcastet bis **2180**; 2151–2166 und 2178–2180 haben bestätigte interne Quellen.
+1. **2032 = Verdichter-Betriebsstunden**; eigener 16-Bit-Stundenzähler, kein 32-Bit-Paar.
+2. **2033 = direkter Messwert des optionalen zweiten lokalen Außentemperaturfühlers**; aktiv bei `MAIN:1463=1`, sonst 0.
+3. **2057 = T35 / AC Input Current**.
+4. **2054, 2059, 2060** haben bytegenau bestätigte Skalierungen `/10`, `/10`, `/100`.
+5. **2071 = Kompressor-Sollfrequenz**, 2072 tatsächliche Betriebsfrequenz.
+6. **2080 stammt direkt von INV1:2099**.
+7. **2081/2082 = Inverter-/Driver-Fehlerwörter**; 2081 Bit15 wird lokal als Unit-1-Kommunikationsfehler erzeugt.
+8. **2019 Bit0/Bit2 sind Ist-Rückmeldungen**, keine simplen lokalen Ausgangsbefehle.
+9. **2026–2028 sind Unit-1-Diagnosefelder**.
+10. **2117/2119/2121/2123 sind High-Wörter von 32-Bit-Energiezählern**.
+11. **2125/2126 und 2127/2128** bilden zwei weitere 32-Bit-Energiezählerpaare, sehr wahrscheinlich DHW elektrisch/thermisch.
+12. **2133 = tatsächlich aktiver SG-Ready-Modus 0..4** und unterliegt einem **festen 10-Minuten-Hold zwischen akzeptierten Modewechseln**.
+13. **2136 = direkter lokaler T04-Außentemperaturwert**; der T04-Getter enthält `MAIN:1355` als signed Offset.
+14. **2048 = ausgewählte und zeitlich aufbereitete wirksame Außentemperatur**; Quelle ist standardmäßig lokaler T04, bei `MAIN:1463=1` der zweite lokale AT-Thermistor mit automatischem T04-Fallback.
+15. **2137/2138 sind WP-only-Leistungsgrößen**, keine simplen Spiegel von 2054/2059.
+16. **2140–2143 = zwei 32-Bit-Werte**.
+17. **2146 = Capability-/Statusbitfeld**, Basiswert `0x002C`.
+18. **2160 = Zone-1-Raumtemperatur**, korrigiert über `MAIN:1353`.
+19. **2162 = Zone-2-Raumtemperatur**, korrigiert über `MAIN:1354`.
+20. V3.3 baut und broadcastet bis **2180**; 2151–2166 und 2178–2180 haben bestätigte interne Quellen.
 
 ---
 
@@ -134,6 +136,98 @@ ODER
 Semantik:
 
 > **Mindestens ein Lüfter meldet tatsächliche Aktivität**
+
+---
+
+# 4.1 Register 2032 / 2033 – Verdichterstunden und zweiter Außentemperaturfühler
+
+`MAIN:2032` und `MAIN:2033` sind **keine High-/Low-Wörter eines gemeinsamen 32-Bit-Werts**. Die Firmware erzeugt beide über vollständig getrennte Pfade.
+
+## MAIN:2032 – Verdichter-Betriebsstunden
+
+Der Statusbuilder übernimmt:
+
+```text
+0x20016E88 + 0x02
+→ MAIN:2032
+```
+
+Die zugehörige Laufzeitlogik verwendet:
+
+```text
+0x20016E88 + 0x00 = Sekunden-/Subhour-Zähler
+0x20016E88 + 0x02 = Betriebsstunden
+```
+
+Bei laufendem Verdichter zählt `+0x00` hoch. Bei exakt:
+
+```text
+0x0E10 = 3600
+```
+
+wird:
+
+```text
++0x00 = 0
++0x02 += 1
+```
+
+ausgeführt.
+
+Damit gilt:
+
+```text
+MAIN:2032 = Verdichter-Betriebsstunden
+Typ       = uint16
+Einheit   = h
+```
+
+Es existiert in `2033` **kein High-Word** dazu. Der öffentliche Zähler `2032` ist in dieser V3.3 ein einzelner 16-Bit-Stundenzähler.
+
+**Bewertung: bestätigt.**
+
+## MAIN:2033 – optionaler zweiter lokaler Außentemperaturfühler
+
+Für `2033` ruft der Statusbuilder eine separate Funktion bei:
+
+```text
+VA 0x08088B58
+```
+
+auf. Deren Logik ist:
+
+```text
+wenn MAIN:1463 == 1:
+    return signed16(0x20015FA8 + 0x8A)
+sonst:
+    return 0
+```
+
+`0x20015FA8+0x8A` ist der bereits identifizierte optionale zweite lokale Außentemperatur-Thermistor, logischer Sensor-Kanal 23 des Mainboard-Sensoreingangsscanners.
+
+Damit:
+
+```text
+MAIN:2033 = direkter Messwert zweiter lokaler Außentemperaturfühler
+Skalierung = raw / 10 °C
+```
+
+Wichtig ist die Trennung zum wirksamen Außentemperaturpfad:
+
+```text
+MAIN:2033
+= direkter alternativer Sensorwert bei 1463=1
+
+MAIN:2048
+= ausgewählte + gültigkeitsgeprüfte + zeitlich aufbereitete wirksame AT
+
+MAIN:2136
+= direkter lokaler Standard-T04 inkl. MAIN:1355 Offset
+```
+
+Der Auswahlpfad für `2048` prüft zusätzlich den Sensorstatus `0x20015FA8+0x8E` und fällt bei ungültigem zweiten Sensor automatisch auf lokalen T04 zurück. `2033` selbst ist dagegen die direkte Veröffentlichung des alternativen Sensorkanals bei aktivierter Option.
+
+**Bewertung: bestätigt.**
 
 ---
 
@@ -229,7 +323,7 @@ Temperatur   0x20015FA8+0x8A
 Sensorstatus 0x20015FA8+0x8E
 ```
 
-Das entspricht logischem Sensor-Kanal 23 des 24-Kanal-Temperaturscanners.
+Das entspricht logischem Sensor-Kanal 23 des 24-Kanal-Temperaturscanners. Derselbe direkte Temperaturwert wird bei aktiviertem `MAIN:1463=1` zusätzlich als `MAIN:2033` veröffentlicht.
 
 Während aktivem Defrost wird der langsame Samplingpfad zurückgesetzt bzw. nicht normal weitergeführt. Dadurch wird die langfristige Außentemperaturbewertung nicht durch Abtaueffekte verfälscht.
 
@@ -608,6 +702,8 @@ Zuordnung damit bestätigt.
 2026       → INV1:2113 High-Byte Diagnose
 2027       → INV1:2113 Low-Byte Diagnose
 2028       → INV1:2118 Diagnose
+2032       → Verdichter-Betriebsstunden, uint16 h; 2033 ist kein High-Word
+2033       → optionaler zweiter lokaler Außentemperaturfühler; direkt bei MAIN:1463=1
 2048       → ausgewählte/zeitlich aufbereitete wirksame Außentemperatur; Quelle über MAIN:1463
 2057       → T35 AC Input Current
 2071       → Kompressor-Sollfrequenz
@@ -631,8 +727,9 @@ Zuordnung damit bestätigt.
 Zusätzlich gilt für den AT-Pfad:
 
 ```text
-MAIN:1463 = 1 aktiviert den zweiten lokalen Außentemperaturfühler für den 2048-Regelpfad
-bei ungültigem Alternativsensor erfolgt automatischer Fallback auf lokalen T04
+MAIN:1463 = 1 aktiviert den zweiten lokalen Außentemperaturfühler
+MAIN:2033 veröffentlicht dessen direkten Temperaturwert
+MAIN:2048 verwendet ihn nur bei gültigem Sensorstatus und fällt sonst auf lokalen T04 zurück
 MAIN:2136 bleibt der direkte lokale T04
 ```
 
@@ -716,14 +813,16 @@ MAIN:2133 als effektiver SG-Ready-Modus
 Reset dieses Holds bei Änderung von MAIN:1334
 ```
 
-Zusätzlich sind die zuvor offenen bzw. zu grob bezeichneten Sensorpfade jetzt fachlich getrennt:
+Zusätzlich sind die zuvor offenen bzw. zu grob bezeichneten Sensor-/Laufzeitpfade jetzt fachlich getrennt:
 
 ```text
+MAIN:2032 = Verdichter-Betriebsstunden, einzelner 16-Bit-Zähler
+MAIN:2033 = direkter optionaler zweiter lokaler AT-Sensorwert bei MAIN:1463=1
 MAIN:2160 = Zone-1-Raumtemperatur, korrigiert durch MAIN:1353
 MAIN:2162 = Zone-2-Raumtemperatur, korrigiert durch MAIN:1354
 MAIN:2136 = direkter lokaler T04, korrigiert durch MAIN:1355
 MAIN:2048 = ausgewählte und zeitlich aufbereitete wirksame Außentemperatur
-MAIN:1463 = Auswahl des optionalen zweiten lokalen AT-Fühlers für den 2048-Pfad
+MAIN:1463 = Auswahl des optionalen zweiten lokalen AT-Fühlers für den 2033/2048-Pfad
 ```
 
 ---
