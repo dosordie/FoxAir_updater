@@ -196,7 +196,12 @@ class OtaInfoTests(unittest.TestCase):
         self.assertIn("break *0x1ba04", full)
         self.assertIn("\"phase\":\"same-version\"", full)
         self.assertIn(r"while \$local_ota_active == 1", full)
-        self.assertIn(r"\$ota_event_seq == \$ota_event_before", full)
+        self.assertIn(r"set \$ota_event_handled = 0", full)
+        self.assertIn(r"if \$pc == 0x1cea0", full)
+        self.assertIn(r"if \$pc == 0x1c7cc", full)
+        self.assertNotIn("commands 3", full)
+        self.assertNotIn("commands 4", full)
+        self.assertNotIn("commands 5", full)
         self.assertIn("\"phase\":\"debugger-unexpected-stop\"", full)
 
     def test_full_runtime_hook_rejects_clean_debugger_exit_before_terminal_state(self):
@@ -206,20 +211,20 @@ class OtaInfoTests(unittest.TestCase):
         self.assertIn('grep -q \'"terminal":true\' "$STATUS"', run)
         self.assertIn("\"phase\":\"debugger-ended-before-terminal\"", run)
 
-    def test_cleanup_does_not_stop_original_service_after_c5a8_started(self):
+    def test_cleanup_does_not_stop_original_service_after_ota_acceptance(self):
         hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         cleanup = hook.split("cleanup() {", 1)[1].split("stop_hook() {", 1)[0]
-        post_c5a8 = cleanup.split('if test -f "$TRANSFER_STARTED"; then', 1)[1].split("else", 1)[0]
-        self.assertIn('kill -CONT "$PID"', post_c5a8)
-        self.assertNotIn('kill -STOP "$PID"', post_c5a8)
-        self.assertIn("\"phase\":\"transfer-active-unmonitored\"", post_c5a8)
+        authoritative = cleanup.split('if test -f "$ORIGINAL_SERVICE_OWNS"; then', 1)[1].split("else", 1)[0]
+        self.assertIn('kill -CONT "$PID"', authoritative)
+        self.assertNotIn('kill -STOP "$PID"', authoritative)
+        self.assertIn("\"phase\":\"original-service-active-unmonitored\"", authoritative)
 
     def test_restore_refuses_after_firmware_blocks_started(self):
         adb = Mock()
         adb.shell.return_value = "0"
         with self.assertRaises(OtaError):
             restore_original_runtime(adb, Path("tools/phnix_ota/phnix_ota_runtime_hook"))
-        adb.shell.assert_called_once()
+        self.assertEqual(adb.shell.call_count, 2)
 
     def test_injected_restore_kills_old_service_without_resuming_it(self):
         hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
