@@ -51,6 +51,7 @@ REMOTE_HOOK_STATE = "/tmp/phnix_ota_hook"
 REMOTE_RUN_ACTIVE = f"{REMOTE_HOOK_STATE}/run.active"
 REMOTE_TRANSFER_STARTED = f"{REMOTE_HOOK_STATE}/transfer-started"
 REMOTE_INJECTION_STARTED = f"{REMOTE_HOOK_STATE}/injection-started"
+REMOTE_ORIGINAL_SERVICE_OWNS = f"{REMOTE_HOOK_STATE}/original-service-owns"
 DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
 
 OUTPUT_MODE = "auto"
@@ -300,6 +301,9 @@ def original_runtime_status(adb: AdbClient) -> dict:
         "run_active": adb.shell(f"test -f {REMOTE_RUN_ACTIVE}; echo $?") == "0",
         "transfer_started": adb.shell(f"test -f {REMOTE_TRANSFER_STARTED}; echo $?") == "0",
         "injection_started": adb.shell(f"test -f {REMOTE_INJECTION_STARTED}; echo $?") == "0",
+        "original_service_authoritative": adb.shell(
+            f"test -f {REMOTE_ORIGINAL_SERVICE_OWNS}; echo $?"
+        ) == "0",
         "cloud_guards": adb.shell(
             "iptables -S OUTPUT 2>/dev/null | grep -- '--dport 1883' || true; "
             "iptables -S INPUT 2>/dev/null | grep -- '--sport 1883' || true"
@@ -326,6 +330,7 @@ def original_runtime_status(adb: AdbClient) -> dict:
             not result["run_active"]
             and not result["injection_started"]
             and not result["transfer_started"]
+            and not result["original_service_authoritative"]
         ),
         "no_cloud_guard": not result["cloud_guards"],
         "cloud_connected": "ESTABLISHED" in result["mqtt_connection"],
@@ -389,7 +394,10 @@ def install_runtime_helper(adb: AdbClient, local_helper: Path, *, allow_active: 
     if not allow_active:
         active = any(
             adb.shell(f"test -f {marker}; echo $?") == "0"
-            for marker in (REMOTE_RUN_ACTIVE, REMOTE_INJECTION_STARTED, REMOTE_TRANSFER_STARTED)
+            for marker in (
+                REMOTE_RUN_ACTIVE, REMOTE_INJECTION_STARTED,
+                REMOTE_TRANSFER_STARTED, REMOTE_ORIGINAL_SERVICE_OWNS,
+            )
         )
         if active:
             raise OtaError("a local OTA state is active; refusing to replace its runtime helper")
@@ -433,9 +441,12 @@ def restore_original_runtime(adb: AdbClient, local_helper: Path) -> dict:
     # truncates it before C350 completes, which is exactly when restore is
     # needed after a pre-transfer guarded hold.
     transfer_started = adb.shell(f"test -f {REMOTE_TRANSFER_STARTED}; echo $?") == "0"
-    if transfer_started:
+    original_service_owns = adb.shell(
+        f"test -f {REMOTE_ORIGINAL_SERVICE_OWNS}; echo $?"
+    ) == "0"
+    if transfer_started or original_service_owns:
         raise OtaError(
-            "firmware blocks have started; automatic restore is locked and the original service remains authoritative"
+            "the original service has accepted the OTA; automatic restore is locked and the original service remains authoritative"
         )
     helper_present = adb.shell(f"test -x {REMOTE_HELPER}; echo $?") == "0"
     if not helper_present:
@@ -651,6 +662,9 @@ def remote_status(adb: AdbClient, *, allow_transient_info: bool = False) -> dict
         "ota_info": info,
         "run_active": adb.shell(f"test -f {REMOTE_RUN_ACTIVE}; echo $?") == "0",
         "transfer_started": adb.shell(f"test -f {REMOTE_TRANSFER_STARTED}; echo $?") == "0",
+        "original_service_authoritative": adb.shell(
+            f"test -f {REMOTE_ORIGINAL_SERVICE_OWNS}; echo $?"
+        ) == "0",
         "service_pid": adb.shell("pidof phnixIot4G || true"),
         "debugger_pids": adb.shell("pidof gdbserver gdb || true"),
     }
@@ -961,6 +975,7 @@ def run_update(args, adb: AdbClient) -> None:
     safe_terminal = False
     guarded_hold = False
     transfer_started = False
+    original_service_authoritative = False
     helper_exit_seen_at = None
     try:
         while True:
@@ -978,6 +993,11 @@ def run_update(args, adb: AdbClient) -> None:
             phase = hook.get("phase", "unknown")
             if phase in {"c5a8", "success-report", "success"} or status.get("transfer_started") is True:
                 transfer_started = True
+            if phase in {
+                "accepted", "c357", "c5a8", "success-report", "failure-report",
+                "original-service-active-unmonitored", "success", "failed",
+            } or status.get("original_service_authoritative") is True:
+                original_service_authoritative = True
             if phase != previous_phase:
                 previous_phase = phase
                 phase_started = time.monotonic()
@@ -1012,10 +1032,10 @@ def run_update(args, adb: AdbClient) -> None:
                 raise OtaError(f"runtime helper exited unexpectedly with code {helper.returncode}")
 
             now = time.monotonic()
-            if phase == "c5a8":
-                # From the first firmware block onward the original service is
+            if original_service_authoritative:
+                # From C36E status 1 onward the original service is
                 # authoritative. The controller observes but never times out,
-                # pauses or cancels a transfer based on OTA_INFO progress.
+                # pauses or cancels its OTA based on observation progress.
                 time.sleep(args.poll_interval)
                 continue
             phase_limit = {
@@ -1026,7 +1046,7 @@ def run_update(args, adb: AdbClient) -> None:
                 raise OtaError(f"phase watchdog expired in {phase}")
             time.sleep(args.poll_interval)
     except BaseException:
-        if not safe_terminal and not transfer_started:
+        if not safe_terminal and not original_service_authoritative:
             adb.shell(f"{REMOTE_HELPER} hold --status {REMOTE_STATUS}", check=False)
             guarded_hold = True
             print_event(
@@ -1036,7 +1056,7 @@ def run_update(args, adb: AdbClient) -> None:
         elif not safe_terminal:
             print_event(
                 "monitoring-connection-lost",
-                message="ADB monitoring was lost after C5A8; original service remains authoritative",
+                message="Monitoring was lost after OTA acceptance; original service remains authoritative and was not stopped",
             )
         raise
     finally:

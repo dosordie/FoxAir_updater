@@ -15,6 +15,7 @@ RUN_ACTIVE=$STATE_DIR/run.active
 SAFE_TO_CLEAN=$STATE_DIR/safe-to-clean
 TRANSFER_STARTED=$STATE_DIR/transfer-started
 INJECTION_STARTED=$STATE_DIR/injection-started
+ORIGINAL_SERVICE_OWNS=$STATE_DIR/original-service-owns
 STATE_BACKUP=$STATE_DIR/original-state
 DEFAULT_STATUS=/tmp/phnix_ota_status.json
 
@@ -103,19 +104,19 @@ cleanup_original_state() {
     test -n "$PID" && kill -CONT "$PID" 2>/dev/null || true
     resume_watchdogs
     remove_cloud_guard
-    rm -f "$HELPER_PID" "$GDB_PID" "$GDBSERVER_PID" "$RUN_ACTIVE" "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED"
+    rm -f "$HELPER_PID" "$GDB_PID" "$GDBSERVER_PID" "$RUN_ACTIVE" "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED" "$ORIGINAL_SERVICE_OWNS"
 }
 
 cleanup() {
     if test -f "$RUN_ACTIVE" && ! test -f "$SAFE_TO_CLEAN"; then
         PID=$(service_pid || true)
-        if test -f "$TRANSFER_STARTED"; then
-            # Once C5A8 has started, the original service owns the transfer.
-            # Stopping it as a debugger-failure fallback would be more
+        if test -f "$ORIGINAL_SERVICE_OWNS"; then
+            # From the accepted C36E status 1 onward, the original service owns
+            # the OTA. Stopping it as a debugger-failure fallback would be more
             # dangerous than losing our observation channel.
             test -n "$PID" && kill -CONT "$PID" 2>/dev/null || true
-            printf '{"phase":"transfer-active-unmonitored","terminal":false,"recovery_required":true,"original_service_authoritative":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
-            echo "ACTIVE C5A8 TRANSFER CONTINUES UNDER ORIGINAL SERVICE; CLOUD AND WATCHDOGS REMAIN BLOCKED" >&2
+            printf '{"phase":"original-service-active-unmonitored","terminal":false,"recovery_required":true,"original_service_authoritative":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
+            echo "ACCEPTED OTA CONTINUES UNDER ORIGINAL SERVICE; CLOUD AND WATCHDOGS REMAIN BLOCKED" >&2
         else
             test -n "$PID" && kill -STOP "$PID" 2>/dev/null || true
             printf '{"phase":"guarded-hold","terminal":false,"recovery_required":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
@@ -143,7 +144,7 @@ restore_original_hook() {
     # the original service is authoritative and must not be interrupted by a
     # generic restore command.
     mkdir -p "$STATE_DIR"
-    if test -f "$TRANSFER_STARTED"; then
+    if test -f "$TRANSFER_STARTED" || test -f "$ORIGINAL_SERVICE_OWNS"; then
         fail "firmware transfer has started; refusing automatic restore"
     fi
     ACTIVE=0
@@ -669,110 +670,8 @@ target remote 127.0.0.1:12345
 set \$launcher_armed = 1
 set \$local_ota_active = 0
 set \$terminal_pending = 0
-set \$ota_event_seq = 0
 
 break *0x1fe40
-break *0x1c4bc
-break *0x1ba04
-break *0x1cea0
-break *0x1c7cc
-break *0x1d2f8
-commands 6
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$launcher_armed == 1 && \$r0 == 7
-    set \$r0 = 11
-  end
-  continue
-end
-
-commands 4
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1
-    disable 4
-    shell echo '{"phase":"c357","terminal":false}' > $STATUS
-  end
-  continue
-end
-
-commands 5
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1
-    disable 5
-    shell touch $TRANSFER_STARTED
-    shell echo '{"phase":"c5a8","terminal":false}' > $STATUS
-  end
-  continue
-end
-
-break *0x18d04
-commands 7
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1
-    set \$r0 = 0
-    set \$pc = \$lr
-  end
-  continue
-end
-
-break *0x191c0
-commands 8
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1
-    set \$terminal_pending = 1
-    shell echo '{"phase":"success-report","terminal":false}' > $STATUS
-    set \$r0 = 0
-    set \$pc = \$lr
-  end
-  continue
-end
-
-break *0x19264
-commands 9
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1
-    set \$terminal_pending = 2
-    shell echo '{"phase":"failure-report","terminal":false}' > $STATUS
-    set \$r0 = 0
-    set \$pc = \$lr
-  end
-  continue
-end
-
-break *0x1da3c
-commands 10
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1 && \$terminal_pending == 1 && *(unsigned char *)0x98a94 == 12
-    set \$local_ota_active = 0
-    set \$launcher_armed = 0
-    shell echo '{"phase":"success","terminal":true,"board_ota_step":12}' > $STATUS
-    shell touch $SAFE_TO_CLEAN
-    detach
-    quit
-  end
-  continue
-end
-
-break *0x1d748
-commands 11
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1 && \$terminal_pending == 2 && *(unsigned char *)0x98a94 == 12
-    set \$local_ota_active = 0
-    set \$launcher_armed = 0
-    shell echo '{"phase":"failed","terminal":true,"board_ota_step":12}' > $STATUS
-    shell touch $SAFE_TO_CLEAN
-    detach
-    quit
-  end
-  continue
-end
 
 shell echo '{"phase":"waiting-for-yield-loop","terminal":false}' > $STATUS
 continue
@@ -791,6 +690,7 @@ shell echo '{"phase":"parser-injection","terminal":false,"armed":true,"active":f
 set \$r0 = 0x94ab4
 set \$lr = \$return_pc
 set \$pc = 0x19958
+break *0x1c4bc
 continue
 printf "PHNIX post-parser pc=0x%x\n", \$pc
 if \$pc != 0x1c4bc
@@ -801,6 +701,7 @@ if \$pc != 0x1c4bc
 end
 shell echo '{"phase":"c350","terminal":false}' > $STATUS
 disable 2
+break *0x1ba04
 continue
 printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\n", \$pc, *(unsigned char *)(\$r0+1), *(unsigned char *)(\$r0+3)
 if \$pc != 0x1ba04 || *(unsigned char *)(\$r0+1) != 0x63
@@ -823,19 +724,93 @@ if *(unsigned char *)(\$r0+3) != 1
   quit
 end
 set \$local_ota_active = 1
+shell touch $ORIGINAL_SERVICE_OWNS
 shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c36e_status":1}' > $STATUS
-commands 3
-  silent
-  set \$ota_event_seq = \$ota_event_seq + 1
-  if \$local_ota_active == 1
+break *0x1cea0
+break *0x1c7cc
+break *0x1d2f8
+break *0x18d04
+break *0x191c0
+break *0x19264
+break *0x1da3c
+break *0x1d748
+while \$local_ota_active == 1
+  set \$ota_event_handled = 0
+  continue
+  printf "PHNIX ota-event pc=0x%x step=%u pending=%u\n", \$pc, *(unsigned char *)0x98a94, \$terminal_pending
+  if \$pc == 0x1ba04
+    set \$ota_event_handled = 1
     printf "PHNIX later-c36e status=%u\n", *(unsigned char *)(\$r0+3)
   end
-  continue
-end
-while \$local_ota_active == 1
-  set \$ota_event_before = \$ota_event_seq
-  continue
-  if \$local_ota_active == 1 && \$ota_event_seq == \$ota_event_before
+  if \$pc == 0x1cea0
+    set \$ota_event_handled = 1
+    disable 4
+    shell echo '{"phase":"c357","terminal":false}' > $STATUS
+  end
+  if \$pc == 0x1c7cc
+    set \$ota_event_handled = 1
+    disable 5
+    shell touch $TRANSFER_STARTED
+    shell echo '{"phase":"c5a8","terminal":false}' > $STATUS
+  end
+  if \$pc == 0x1d2f8
+    set \$ota_event_handled = 1
+    if \$launcher_armed == 1 && \$r0 == 7
+      set \$r0 = 11
+    end
+  end
+  if \$pc == 0x18d04
+    set \$ota_event_handled = 1
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x191c0
+    set \$ota_event_handled = 1
+    set \$terminal_pending = 1
+    shell echo '{"phase":"success-report","terminal":false}' > $STATUS
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x19264
+    set \$ota_event_handled = 1
+    set \$terminal_pending = 2
+    shell echo '{"phase":"failure-report","terminal":false}' > $STATUS
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x1da3c
+    set \$ota_event_handled = 1
+    if \$terminal_pending == 1 && *(unsigned char *)0x98a94 == 12
+      set \$local_ota_active = 0
+      set \$launcher_armed = 0
+      shell echo '{"phase":"success","terminal":true,"board_ota_step":12}' > $STATUS
+      shell touch $SAFE_TO_CLEAN
+      detach
+      quit
+    else
+      shell echo '{"phase":"invalid-success-boundary","terminal":false,"recovery_required":true}' > $STATUS
+      shell kill -STOP $PID
+      detach
+      quit
+    end
+  end
+  if \$pc == 0x1d748
+    set \$ota_event_handled = 1
+    if \$terminal_pending == 2 && *(unsigned char *)0x98a94 == 12
+      set \$local_ota_active = 0
+      set \$launcher_armed = 0
+      shell echo '{"phase":"failed","terminal":true,"board_ota_step":12}' > $STATUS
+      shell touch $SAFE_TO_CLEAN
+      detach
+      quit
+    else
+      shell echo '{"phase":"invalid-failure-boundary","terminal":false,"recovery_required":true}' > $STATUS
+      shell kill -STOP $PID
+      detach
+      quit
+    end
+  end
+  if \$ota_event_handled == 0
     shell echo '{"phase":"debugger-unexpected-stop","terminal":false,"recovery_required":true}' > $STATUS
     shell kill -STOP $PID
     detach
@@ -853,7 +828,7 @@ run_hook() {
     command -v iptables >/dev/null 2>&1 || fail "iptables missing; cloud cannot be isolated"
     mkdir -p "$STATE_DIR"
     backup_persistent_state
-    rm -f "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED"
+    rm -f "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED" "$ORIGINAL_SERVICE_OWNS"
     touch "$RUN_ACTIVE"
     echo $$ > "$HELPER_PID"
     trap cleanup EXIT INT TERM
