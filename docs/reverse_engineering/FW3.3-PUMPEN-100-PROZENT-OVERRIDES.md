@@ -7,17 +7,17 @@ Diese Datei dokumentiert die in der Mainboard-Firmware `82400644 / V3.3` rekonst
 Untersuchtes Binary:
 
 ```text
-Softwarecode: 82400644
-Firmware:     V3.3
-Imagebasis:   0x08050000
-Pumpenroutine: 0x08084474
+Softwarecode:   82400644
+Firmware:       V3.3
+Imagebasis:     0x08050000
+Pumpenroutine:  0x08084474
 ```
 
 Bewertung:
 
-- **bestätigt** – Datenpfad und Wirkung direkt im Binary geschlossen
-- **sehr wahrscheinlich** – fachliche Bedeutung aus Writer/Verbrauchern stark ableitbar
-- **offen** – Wirkung bestätigt, Herstellerbezeichnung des Flags noch nicht sicher benannt
+- **bestätigt** – Datenpfad und Wirkung direkt im V3.3-Binary geschlossen
+- **sehr wahrscheinlich** – Writer/Verbraucher und Parameterbezug schließen die fachliche Funktion weitgehend, letzte Herstellerbezeichnung fehlt
+- **offen** – Wirkung bestätigt, fachliche Bedeutung noch nicht ausreichend geschlossen
 
 ---
 
@@ -30,96 +30,291 @@ raw 0x348F2
 VA  0x080848F2
 ```
 
-Wenn eine der vorgeschalteten Bedingungen aktiv wird, setzt V3.3:
+Wenn eine vorgeschaltete Override-Bedingung aktiv wird, setzt V3.3:
 
 ```text
-runtime +0x0A = 120     ; P12-Regelzähler sofort auf fällig
-runtime +0x02 = 100     ; logische Pumpen-Soll-PWM
-runtime +0x09 = 0       ; 10-min-Auto-Qualifikation löschen
+Pumpenruntime +0x0A = 120   ; 60-s-P12-Regelzähler sofort auf fällig
+Pumpenruntime +0x02 = 100   ; logische Pumpen-Soll-PWM
+Pumpenruntime +0x09 = 0     ; 10-min-Auto-Qualifikation löschen
 ```
 
 Damit ist die Wirkung stärker als nur „vorübergehend 100 %“:
 
 > **Ein Override erzwingt 100 % Pumpenleistung und verwirft gleichzeitig die bereits erreichte Auto-PWM-Qualifikation.**
 
-Nach Wegfall des Overrides muss die Auto-PWM-Freigabe erneut aufgebaut werden, sofern die übrigen Bedingungen dies erfordern.
+`Pumpenruntime +0x02` wird anschließend als `MAIN:2115` veröffentlicht.
 
-`runtime +0x02` wird anschließend als `MAIN:2115` veröffentlicht.
+Nach Wegfall eines solchen Overrides kann daher eine erneute Qualifikationsphase erforderlich sein, bevor die normale P11/P12-Auto-Regelung die Pumpe wieder absenken darf.
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 2. Übersicht der direkten Bedingungen vor 0x348F2
+# 2. Übersicht der bekannten 100-%-Auslöser
 
-| Bedingung | Rohquelle | Wirkung | Fachliche Bewertung |
+| Auslöser | Rohquelle / Bezug | Wirkung | Bewertung |
 |---|---|---|---|
-| Betriebs-/Sonderzustand ungleich 0 | `0x2001660C+0x20`, Bits 2..3 | 100 %, Requalifikation | offen |
-| internes Override-/Schutzflag !=0 | `0x20016658+0x0E` | 100 %, Requalifikation | offen |
-| Bit 7 eines zentralen Betriebsflags gesetzt | `0x2001660C+0x20`, Bit 7 | 100 %, Requalifikation | sehr wahrscheinlich Sonder-/Abtauzustand |
-| Wasser-Temperaturkanal A ungültig | Helper `0x0808795C` -> `0x20015FA8+0x04` | 100 %, Requalifikation | bestätigt als Valid-/Fehlerflag des ΔT-Sensorkanals |
-| Wasser-Temperaturkanal B ungültig | Helper `0x08087992` -> `0x20015FA8+0x0A` | 100 %, Requalifikation | bestätigt als Valid-/Fehlerflag des ΔT-Sensorkanals |
-| erforderliches Run-/Enable-Bit fehlt | `0x20016E0C+0x03`, Bit 1 | 100 %, Requalifikation | sehr wahrscheinlich Betriebsfreigabe |
-| `A40 == 0` | `0x20016C9C+0x0A` | 100 %, Requalifikation | bestätigt |
-| kein gültiger Durchfluss vorhanden | `0x20016FAC == 0` | 100 %, Requalifikation | bestätigt |
-| Betriebsart 1: Temperatur-Plausibilitätsbedingung verletzt | Mode `0x200164B8+0x02 == 1`, Helper `0x08072D98`, Helper `0x08087966` | 100 %, Requalifikation | Datenpfad bestätigt, Herstellersemantik der Grenze offen |
-| Betriebsart 0: zweite Temperatur-Plausibilitätsbedingung verletzt | Mode `0x200164B8+0x02 == 0`, Helper `0x08087966`, `0x20016744+0x14` | 100 %, Requalifikation | Datenpfad bestätigt, Herstellersemantik der Grenze offen |
-| internes Fault-/Betriebsflag !=0 | `0x20016E24+0x02` | 100 %, Requalifikation | bestätigt; zusätzlich Quelle von `MAIN:2139` Bit 4 |
-| internes Betriebsflag !=0 | `0x20016D2C+0x0B` | 100 %, Requalifikation | offen |
-| internes Betriebsflag !=0 | `0x20016BC8+0x0F` | 100 %, Requalifikation | offen |
-| Statusfeld Bits 1..2 !=0 | `0x20016214+0x01`, Bits 1..2 | 100 %, Requalifikation | offen |
-| internes Bit gesetzt | `0x20016D2C+0x09`, Bit 0 | 100 %, Requalifikation | bestätigt; zusätzlich Quelle von `MAIN:2139` Bit 6 |
-| physischer Eingang PE12 aktiv | GPIOE IDR `0x40011800`, Maske `0x1000` | 100 %, Requalifikation | physischer Digitaleingang bestätigt, Klemmenname offen |
-| physischer Eingang PE13 aktiv | GPIOE IDR `0x40011800`, Maske `0x2000` | 100 %, Requalifikation | physischer Digitaleingang bestätigt, Klemmenname offen |
-| internes Bitfeld `0x18` aktiv | `0x20016BE0+0x0E`, Bits 3..4 | 100 %, Requalifikation | offen |
-| Außentemperatur-Hysterese aktiv | Pumpenruntime `+0x07` | 100 %, Requalifikation | bestätigt; 20/22 °C Hysterese in einem Runtime-Modus |
-| falsche ΔT-Richtung länger ca. 30 s | Pumpenruntime `+0x01` | 100 %, Requalifikation | bestätigt |
+| aktiver Abtau-/Defrostzustand | `0x2001660C+0x20`, Bits 2..3; führt zu `MAIN:2012=2` | 100 %, Requalifikation | **bestätigt** |
+| Sterilisation/Pasteurisierung | `0x20016658+0x0E`; führt zu `MAIN:2012=3` | 100 %, Requalifikation | **bestätigt** |
+| Warmwasserbetrieb | `0x2001660C+0x20`, Bit 7; führt zu `MAIN:2012=4` | 100 %, Requalifikation | **bestätigt** |
+| Wasser-Temperaturkanal A ungültig | `0x20015FA8+0x04` über Helper `0x0808795C` | 100 %, Requalifikation | **bestätigt** |
+| Wasser-Temperaturkanal B ungültig | `0x20015FA8+0x0A` über Helper `0x08087992` | 100 %, Requalifikation | **bestätigt** |
+| erforderliche Run-/Regelfreigabe fehlt | `0x20016E0C+0x03`, Bit 1 | 100 %, Requalifikation | **sehr wahrscheinlich** |
+| `A40 == 0` | `MAIN:1344`, `0x20016C9C+0x0A` | 100 %, Requalifikation | **bestätigt** |
+| kein gültiger Durchfluss | `0x20016FAC == 0` | 100 %, Requalifikation | **bestätigt** |
+| unmittelbares Temperatur-Plausibilitätsgate verletzt | Runtime-Mode 0/1, Wasser-T02, A23 bzw. Sollwert | 100 %, Requalifikation | **bestätigt**, Modusname teilweise offen |
+| Niederdruck-Frequenzbegrenzung aktiv | `0x20016E24+0x02`; `MAIN:2139 Bit4` | 100 %, Requalifikation | **bestätigt** |
+| übermäßige T01/T02-Wasserspreizung / A24-Schutz | `0x20016D2C+0x0B`; `MAIN:2139 Bit1` | 100 %, Requalifikation | **bestätigt** |
+| hydraulischer Frostschutzstatus aktiv | `0x20016BC8+0x0F` | 100 %, Requalifikation | **sehr wahrscheinlich** |
+| Winter-Frostschutz Stufe 1/2 aktiv | `0x20016214+0x01`, Bits 1..2 | 100 %, Requalifikation | **bestätigt** |
+| Abgastemperatur-Frequenzbegrenzung aktiv | `0x20016D2C+0x09`, Bit0; `MAIN:2139 Bit6` | 100 %, Requalifikation | **bestätigt** |
+| Elektroheizung Stufe 1 aktiv | GPIOE PE12 / O08 / `MAIN:2019 Bit7` | 100 %, Requalifikation | **bestätigt** |
+| Elektroheizung Stufe 2 aktiv | GPIOE PE13 / O09 / `MAIN:2019 Bit8` | 100 %, Requalifikation | **bestätigt** |
+| Hydraulikmodul-E-Heizung Wasserkreis aktiv | `0x20016BE0+0x0E`, Bit3 / O22 | 100 %, Requalifikation | **bestätigt** |
+| Hydraulikmodul-E-Heizung WW-Tank aktiv | `0x20016BE0+0x0E`, Bit4 / O23 | 100 %, Requalifikation | **bestätigt** |
+| Außentemperatur-Hysterese aktiv | Pumpenruntime `+0x07`, T04 20/22 °C | 100 %, Requalifikation | **bestätigt** |
+| falsche ΔT-Richtung länger ca. 30 s | Pumpenruntime `+0x01` | 100 %, Requalifikation | **bestätigt** |
+| 10-min-Auto-Qualifikation noch nicht erreicht | Pumpenruntime `+0x09 == 0` | 100 % im Auto-Pfad | **bestätigt** |
+| sehr frühe Laufphase | `0x20016AA4+0x06 < 60` | 100 % | **bestätigt**, genaue Zeitbasis dieses Feldes separat betrachten |
+| finales Pumpen-/Hydraulikgate nicht freigegeben | H30-abhängig: `0x20016BE0+0x0E Bit0` oder GPIOC Maske `0x0002` | 100 % | **bestätigt**, Detailsemantik siehe Abschnitt 13 |
 
 ---
 
-# 3. Ungültige Wasser-Temperaturkanäle erzwingen 100 %
+# 3. Betriebszustände, die Auto-PWM absichtlich abschalten
+
+## 3.1 Abtau-/Defrostzustand
+
+Der Byteblock:
+
+```text
+0x2001660C + 0x20
+```
+
+wird sowohl in der Pumpenroutine als auch beim Aufbau des öffentlichen Betriebsstatus verwendet.
+
+Für:
+
+```text
+Bits 2..3 != 0
+```
+
+setzt die Firmware den öffentlichen Betriebszustand auf:
+
+```text
+MAIN:2012 = 2
+```
+
+Dieser Wert entspricht dem aktiven **Abtau-/Defrostzustand**.
+
+Gleichzeitig führt derselbe Zustand im Pumpenregler auf den Vollpumpenpfad:
+
+```text
+Defrost aktiv
+-> MAIN:2115 = 100 %
+-> Auto-PWM-Qualifikation löschen
+```
+
+Damit ist die frühere Bezeichnung „Betriebs-/Sonderzustand offen“ geschlossen.
+
+**Bewertung: bestätigt.**
+
+## 3.2 Sterilisation / Pasteurisierung
+
+Das Feld:
+
+```text
+0x20016658 + 0x0E
+```
+
+wird im Statusbuilder unmittelbar zur Erzeugung von:
+
+```text
+MAIN:2012 = 3
+```
+
+verwendet.
+
+`2012=3` ist der Sterilisations-/Pasteurisierungsbetrieb. Derselbe interne Zustand wird im Pumpenregler geprüft:
+
+```text
+Sterilisation/Pasteurisierung aktiv
+-> 100 % Pumpen-PWM
+-> Auto-Qualifikation löschen
+```
+
+**Bewertung: bestätigt.**
+
+## 3.3 Warmwasserbetrieb
+
+Im selben zentralen Betriebsbitblock gilt:
+
+```text
+0x2001660C+0x20 Bit7 = 1
+```
+
+Dieser Zustand führt im Statusbuilder zu:
+
+```text
+MAIN:2012 = 4
+```
+
+und entspricht dem aktiven Warmwasserbetrieb.
+
+Im Pumpenregler bewirkt Bit7:
+
+```text
+Warmwasserbetrieb aktiv
+-> 100 % Pumpen-PWM
+-> Auto-Qualifikation löschen
+```
+
+Damit ist die frühere Vermutung „Bit7 = Sonder-/Abtauzustand“ korrigiert: **Bit7 gehört zum Warmwasserlauf; der Defrostzustand liegt in Bits 2..3.**
+
+**Bewertung: bestätigt.**
+
+---
+
+# 4. Elektroheizungen erzwingen Vollpumpenbetrieb
+
+## 4.1 PE12 / O08 = Elektroheizung Stufe 1
+
+Die Pumpenroutine liest GPIOE und prüft:
+
+```text
+PE12 / Maske 0x1000
+```
+
+Die Statusabbildung ordnet diesen Pin der ersten Elektroheizstufe zu:
+
+```text
+O08 / Electric heater stage 1
+MAIN:2019 Bit7
+```
+
+Ist die Stufe aktiv, wird Auto-PWM gesperrt und die Hauptpumpe auf 100 % gefahren.
+
+## 4.2 PE13 / O09 = Elektroheizung Stufe 2
+
+Analog:
+
+```text
+PE13 / Maske 0x2000
+O09 / Electric heater stage 2
+MAIN:2019 Bit8
+```
+
+Auch dieser Zustand erzwingt 100 % Pumpen-PWM.
+
+Wichtig: PE12/PE13 sind damit **keine unbekannten externen Override-Klemmen**, sondern die Hardwarezustände der beiden elektrischen Heizstufen.
+
+## 4.3 Hydraulikmodul O22/O23
+
+Bei Hydraulikmodul-Konfigurationen prüft die Firmware zusätzlich:
+
+```text
+0x20016BE0+0x0E Bit3
+0x20016BE0+0x0E Bit4
+```
+
+Zuordnung:
+
+```text
+Bit3 = O22 / elektrische Heizung Wasserkreis
+Bit4 = O23 / elektrische Heizung Warmwasserspeicher
+```
+
+Wenn einer dieser Heizpfade aktiv ist:
+
+```text
+-> 100 % Pumpen-PWM
+-> Auto-PWM-Requalifikation
+```
+
+**Bewertung für PE12/PE13 und O22/O23: bestätigt.**
+
+---
+
+# 5. Frostschutzpfade
+
+## 5.1 Winter-Frostschutz Stufe 1/2
+
+Das Statusfeld:
+
+```text
+0x20016214+0x01
+```
+
+wird im Pumpenregler auf Bits 1..2 geprüft:
+
+```text
+Bits 1..2 != 0
+-> 100 % Pumpen-PWM
+```
+
+Die Writer-/State-Machine-Zuordnung ergibt hier die beiden Winter-Frostschutzstufen.
+
+Damit gilt:
+
+> **Aktiver Winter-Frostschutz hat Vorrang vor der normalen Delta-T-Pumpenregelung.**
+
+**Bewertung: bestätigt.**
+
+## 5.2 Hydraulischer Antifreeze-/Frostschutzstatus
+
+Das Byte:
+
+```text
+0x20016BC8+0x0F
+```
+
+wird ebenfalls direkt als Vollpumpenbedingung geprüft.
+
+Seine Writer hängen an der Frostschutzlogik um:
+
+```text
+MAIN:1038 / A04 = Antifreeze Temp.
+MAIN:1039 / A05 = Antifreeze Temp. Difference
+```
+
+und an einer Wasser-/Hydrauliktemperatur.
+
+Damit ist die frühere Klassifikation als „internes unbekanntes Betriebsflag“ zu eng. Der Datenpfad passt zu einer hydraulischen Frostschutzanforderung.
+
+**Bewertung: sehr wahrscheinlich Frostschutz-/Antifreeze-Status; exakter interner Herstellername offen.**
+
+---
+
+# 6. Ungültige Wasser-Temperaturkanäle
 
 Die beiden Helper:
 
 ```text
-0x0808795C -> signed Feld 0x20015FA8+0x04
-0x08087992 -> signed Feld 0x20015FA8+0x0A
+0x0808795C -> 0x20015FA8+0x04
+0x08087992 -> 0x20015FA8+0x0A
 ```
 
-werden unmittelbar vor dem Vollpumpenpfad geprüft.
+liefern Valid-/Fehlerzustände der beiden Wasser-Temperaturkanäle, die die Pumpenregelung für ihre Spreizungsberechnung benötigt.
 
-Wenn einer der beiden Werte ungleich 0 ist:
+Wenn einer der Kanäle ungültig ist:
 
 ```text
 -> 100 % PWM
 -> Auto-Qualifikation löschen
 ```
 
-Die zugehörigen Temperaturhelper sind:
-
-```text
-0x08087930
-0x08087966
-```
-
-Sie liefern die beiden Wasser-Temperaturkanäle, aus denen die Pumpenregelung abhängig von der Betriebsart ihre Spreizung bildet.
-
-Damit ist fachlich belastbar:
-
-> **Wenn einer der für die Wasser-ΔT-Regelung benötigten Temperaturkanäle ungültig/gestört ist, darf V3.3 die Pumpe nicht automatisch herunterregeln und fährt sie stattdessen auf 100 %.**
-
-Die exakte Herstellerbezeichnung der beiden Sensoren (Ein-/Ausgang in der jeweiligen Helper-Reihenfolge) wird hier bewusst nicht vertauscht; die Orientierung wird in der Pumpenroutine je nach Betriebsart umgedreht.
+Damit ist der Regler fail-safe: Ohne belastbare T01/T02-Basis darf die Pumpe nicht automatisch abgesenkt werden.
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 4. A40 = 0 sperrt Auto-PWM
+# 7. Durchfluss als Freigabe- und Schutzgröße
 
-Direkte Bedingung:
+## 7.1 A40 muss gültig sein
 
 ```text
-0x20016C9C+0x0A = MAIN:1344 / A40
+MAIN:1344 / A40
+-> 0x20016C9C+0x0A
 ```
 
 Wenn:
@@ -128,387 +323,431 @@ Wenn:
 A40 == 0
 ```
 
-springt die Firmware auf den 100-%-Pfad.
+wird Auto-PWM nicht freigegeben und der Vollpumpenpfad benutzt.
 
-Das ist logisch konsistent mit der restlichen Regelung, weil A40 für folgende Schwellen benötigt wird:
+Das ist konsistent mit:
 
 ```text
-10-min-Qualifikation:  ca. 1,2 x A40
-Fallback-Minimum:      ca. 0,8 x A40
+10-min-Qualifikation: ca. 1,2 × A40
+Fallback-Minimum:     ca. 0,8 × A40
 ```
 
-Ohne gültigen Nenn-Wasserdurchfluss gibt V3.3 daher keine automatische Pumpenabsenkung frei.
-
-**Bewertung: bestätigt.**
-
----
-
-# 5. Kein gültiger Durchfluss -> 100 %
-
-Direkte Bedingung:
+## 7.2 Gültige Durchflussquelle erforderlich
 
 ```text
 0x20016FAC == 0
+-> kein gültiger Durchfluss
+-> 100 % Pumpen-PWM
 ```
 
-Dieses Runtimeflag wird im Durchfluss-Erfassungsweg gesetzt, wenn ein gültiger lokaler H31/PWM-Durchfluss bzw. ein gültiger externer H30=3/HYD61-Durchfluss zur Verfügung steht.
-
-Wenn kein gültiger Durchfluss vorliegt:
+Das gilt unabhängig davon, ob der Durchfluss aus:
 
 ```text
--> keine Auto-PWM-Absenkung
--> 2115 = 100 %
--> 10-min-Qualifikation = 0
+H31/PWM-Rückmeldung
 ```
 
-Damit ist bestätigt:
+oder bei `H30=3` aus:
 
-> **Die Auto-PWM-Regelung ist ausdrücklich fail-safe bezüglich der Durchflusserfassung: ohne gültige Durchflussquelle läuft die Pumpe auf Vollleistung.**
+```text
+HYD61:2047/2048
+```
+
+kommt.
+
+Der nach `MAIN:1022` korrigierte Runtime-Durchfluss wird damit nicht nur angezeigt, sondern ist eine echte Freigabe-/Schutzgröße der Pumpenregelung.
 
 **Bewertung: bestätigt.**
 
 ---
 
-# 6. Falsche Wasser-ΔT-Richtung länger ca. 30 s
+# 8. Wasser-ΔT-Schutzpfade
 
-Die Pumpenroutine überwacht die Richtung der Wasser-Spreizung abhängig vom Runtime-Modus `0x200164B8+0x02`.
+## 8.1 Falsche ΔT-Richtung länger ca. 30 s
 
-Ein separater Zähler bei:
+Ein Zähler bei:
 
 ```text
 0x20016FEC
 ```
 
-zählt bis 60 Pumpentasks.
-
-Taskperiode:
+zählt bis 60 Pumpentasks. Bei einer Taskperiode von 0,5 s entspricht das:
 
 ```text
-60 x 0,5 s = 30 s
+60 × 0,5 s = 30 s
 ```
 
-Bleibt die Spreizung über diese Zeit in der zur Betriebsart falschen Richtung:
+Bleibt die Wasser-Spreizung für die aktuelle Betriebsrichtung unplausibel, wird:
 
 ```text
 Pumpenruntime +0x01 = 1
 ```
 
-und dieses Flag führt direkt auf den Vollpumpenpfad.
+und damit:
 
-Damit:
-
-> **Eine über etwa 30 s unplausible Vorlauf-/Rücklauf-Richtung sperrt die Auto-PWM-Regelung und erzwingt 100 %.**
+```text
+-> 100 % PWM
+-> Requalifikation
+```
 
 **Bewertung: bestätigt.**
 
----
+## 8.2 Übermäßige T01/T02-Wasserspreizung / A24
 
-# 7. Außentemperatur-Hysterese 20/22 °C
-
-Ein weiteres Pumpenruntimeflag `+0x07` wird über T04/Außentemperatur geführt.
-
-In dem betroffenen Runtime-Modus gilt:
+Das Feld:
 
 ```text
-T04 < 20,0 °C  -> Flag = 1
-T04 >=22,0 °C  -> Flag = 0
-20,0..21,9 °C -> Zustand halten
+0x20016D2C+0x0B
 ```
 
-Wenn das Flag aktiv ist, führt es direkt auf 100 % PWM.
+wird aus der absoluten Wasser-Temperaturdifferenz gebildet:
 
-Die exakte Herstellerbezeichnung des zugehörigen Betriebsmodus wird noch nicht erzwungen benannt; der Temperaturdatenpfad und die 20/22-°C-Hysterese sind dagegen geschlossen.
+```text
+abs(T_out - T_in)
+```
+
+und gegen:
+
+```text
+MAIN:1044 / A24
+= Excess Temp. Diff. Between inlet and Outlet Temp.
+```
+
+geführt.
+
+Der Schutzstatus ist hysteretisch bzw. mehrstufig (`0/1/2`). Sobald er ungleich 0 ist:
+
+```text
+-> Pumpen-Override 100 %
+```
+
+Derselbe Zustand wird in `MAIN:2139` als **Bit1** gesammelt.
+
+Damit ist geschlossen:
+
+```text
+MAIN:2139 Bit1
+= übermäßige Ein-/Auslasswasser-Temperaturdifferenz / A24-Schutz
+```
 
 **Bewertung: bestätigt.**
 
----
+## 8.3 Sofortige Temperatur-Plausibilitätsgates
 
-# 8. Zentraler Betriebsbitblock 0x2001660C+0x20
+Neben dem verzögerten ΔT-Schutz existieren zwei sofortige, runtime-mode-abhängige Temperaturgates.
 
-Dieser Bytewert wird mehrfach im V3.3-Binary benutzt.
-
-Für die Pumpenregelung sind zwei Teile relevant:
+Für einen Modus gilt sinngemäß:
 
 ```text
-Bits 2..3 != 0 -> 100 %
-Bit 7 == 1     -> 100 %
+T02 <= berechneter Sollwert - 4,0 K
 ```
 
-Bit 7 tritt zusätzlich in mehreren Sonderbetriebs-/Schutz-State-Machines auf. Sein Verhalten ist stark kompatibel mit einem Sonderzyklus wie Abtau-/Defrostbetrieb, die endgültige Herstellerbezeichnung ist aber noch nicht vollständig aus einem öffentlichen Registertext geschlossen.
+als Voraussetzung für Auto-PWM.
 
-Daher aktuelle Bewertung:
+Für den anderen Modus wird T02 gegen:
 
 ```text
-Bits 2..3 : Betriebs-/Sonderzustand, Wirkung bestätigt, Name offen
-Bit 7     : Sonder-/Abtaubetrieb sehr wahrscheinlich, noch nicht final benannt
+MAIN:1043 / A23
+= Antifreeze Min Temp / Min. Auslasswassertemperatur-Schutz
 ```
 
-Wichtig ist unabhängig von der Benennung:
+mit einem 4-K-Abstand geprüft.
 
-> **Wenn diese Zustände aktiv sind, ist die normale P11/P12-Auto-PWM-Regelung absichtlich außer Kraft.**
+Die Rechenwege und die 4,0-K-Konstanten sind bestätigt. Die endgültige öffentliche Benennung des internen Mode-0/1-Feldes bleibt offen.
 
 ---
 
-# 9. Interne Fault-/Statusflags 0x20016E24 und 0x20016D2C
+# 9. MAIN:2139 – Frequenzbegrenzungs-/Schutzstatus
 
-## 9.1 0x20016E24+0x02
+`MAIN:2139` ist kein beliebiges unbekanntes Faultword. V3.3 sammelt dort mehrere aktive Schutz- und Frequenzbegrenzungszustände.
 
-Dieses signed Byte wird vor dem Vollpumpenpfad geprüft:
+Aktuell geschlossene Bits:
+
+| Bit | Maske | Bedeutung | direkte Pumpen-100-%-Kopplung |
+|---:|---:|---|---|
+| 1 | `0x0002` | übermäßige T01/T02-Wasserspreizung / A24-Schutz | **ja, bestätigt** |
+| 3 | `0x0008` | A27 Temperaturdifferenz-Frequenzbegrenzung | Statussemantik bestätigt; direkte Pumpenkopplung separat nicht nachgewiesen |
+| 4 | `0x0010` | Niederdruck-Frequenzbegrenzung | **ja, bestätigt** |
+| 5 | `0x0020` | AC-Eingangsstrom-Frequenzbegrenzung | Statussemantik bestätigt; direkte Pumpenkopplung separat nicht nachgewiesen |
+| 6 | `0x0040` | Abgastemperatur-/Discharge-Frequenzbegrenzung | **ja, bestätigt** |
+
+Noch offen sind insbesondere Bit0 und Bit2 sowie gegebenenfalls höhere, nur unter speziellen Konfigurationen gesetzte Bits.
+
+## 9.1 Bit4 – Niederdruck-Frequenzbegrenzung
+
+Quelle:
 
 ```text
-!= 0 -> 100 % PWM
+0x20016E24+0x02
 ```
 
-Zusätzlich wird dasselbe Feld in der Fault-Sammelroutine in das interne Faultword `0x20016F24` übernommen:
+Messgröße:
 
 ```text
-0x20016E24+0x02 !=0
--> 0x20016F24 |= 0x0010
+MAIN:2069 / T15 = Niederdruck
 ```
 
-`0x20016F24` wird wiederum als:
+Schwellenparameter:
 
 ```text
-MAIN:2139
+MAIN:1342 / A38
+= Low Pressure of Limiting Frequency
+```
+
+Bei aktivem Limiter:
+
+```text
+MAIN:2139 Bit4 = 1
+und
+Pumpen-Override = 100 %
+```
+
+**Bewertung: bestätigt.**
+
+## 9.2 Bit6 – Abgastemperatur-Frequenzbegrenzung
+
+Quelle:
+
+```text
+0x20016D2C+0x09 Bit0
+```
+
+Messgröße:
+
+```text
+MAIN:2053 / T12 = Abgas-/Discharge-Temperatur
+```
+
+Der Zustand wird erst nach einer Laufzeitfreigabe bewertet und besitzt Hysterese.
+
+Bei aktivem Limiter:
+
+```text
+MAIN:2139 Bit6 = 1
+und
+Pumpen-Override = 100 %
+```
+
+**Bewertung: bestätigt.**
+
+## 9.3 Bit3 – A27 Temperaturdifferenz-Frequenzbegrenzung
+
+Der zugehörige Schutzpfad verwendet:
+
+```text
+MAIN:1056 / A27
+= Temp Difference A Of Limiting Frequency
+```
+
+und wird als:
+
+```text
+MAIN:2139 Bit3
 ```
 
 publiziert.
 
-Damit ist neu geschlossen:
+**Bewertung: Semantik bestätigt.**
 
-> **MAIN:2139 Bit 4 stammt von `0x20016E24+0x02`; derselbe Fehler-/Statuszustand erzwingt Pumpen-PWM 100 %.**
+## 9.4 Bit5 – AC-Eingangsstrom-Frequenzbegrenzung
 
-Die konkrete Fehlerbezeichnung dieses Bits bleibt noch offen.
-
-## 9.2 0x20016D2C+0x09 Bit 0
-
-Auch dieses Bit führt direkt zu 100 % PWM.
-
-In derselben Fault-Sammelroutine gilt:
+Die Messgröße ist:
 
 ```text
-(0x20016D2C+0x09) & 0x01
--> 0x20016F24 |= 0x0040
+MAIN:2057 / T35 = AC Input Current
 ```
 
-Damit ist ebenfalls neu geschlossen:
-
-> **MAIN:2139 Bit 6 stammt von `0x20016D2C+0x09 Bit 0`; aktiver Zustand erzwingt 100 % Pumpen-PWM.**
-
-Konkrete Herstellerbezeichnung noch offen.
-
-## 9.3 Weitere interne Flags
-
-Direkte Vollpumpenbedingungen bestehen außerdem für:
+Die State-Machine arbeitet mit gestaffelten Schwellen um ungefähr:
 
 ```text
-0x20016D2C+0x0B != 0
-0x20016BC8+0x0F != 0
-0x20016214+0x01 Bits 1..2 != 0
-0x20016BE0+0x0E & 0x18 != 0
-0x20016658+0x0E != 0
+100 %
+90 %
+80 %
 ```
 
-Die Wirkung ist jeweils bestätigt; die fachliche Einzelbezeichnung wird bewusst offen gelassen, bis Writer/öffentliche Statusabbildung vollständig geschlossen sind.
+des internen Stromlimits und einer Entprellung von 20 Zyklen.
+
+Der aktive Status wird als:
+
+```text
+MAIN:2139 Bit5
+```
+
+publiziert.
+
+**Bewertung: bestätigt.**
 
 ---
 
-# 10. Zwei physische Digitaleingänge auf GPIOE
+# 10. Run-/Regelfreigabe
 
-Die Pumpenroutine prüft direkt den GPIO-Eingangsregisterblock:
-
-```text
-GPIOE IDR = 0x40011800 + 0x0C
-```
-
-über Helper `0x08089D08`.
-
-Geprüft werden:
+Die Pumpenroutine prüft:
 
 ```text
-PE12 / Maske 0x1000
-PE13 / Maske 0x2000
+0x20016E0C+0x03 Bit1
 ```
 
-Ist einer der beiden Eingänge aktiv:
-
-```text
--> 100 % PWM
--> Auto-Qualifikation löschen
-```
-
-Damit ist bestätigt, dass zwei reale Hardwareeingänge die Pumpenautomatik direkt überstimmen können.
-
-Die konkrete Klemmen-/Funktionsbezeichnung von PE12 und PE13 ist noch offen und sollte über Board-I/O-Mapping bzw. Schaltplan/Mitschnitt geschlossen werden.
-
-**Bewertung: physischer Eingang und Wirkung bestätigt; Funktionsname offen.**
-
----
-
-# 11. Erforderliches Run-/Enable-Bit
-
-Die Firmware prüft:
-
-```text
-0x20016E0C+0x03, Bit 1
-```
-
-Wenn dieses Bit **nicht** gesetzt ist:
+Wenn dieses Bit nicht gesetzt ist:
 
 ```text
 -> 100 % PWM
 ```
 
-Dasselbe Runtimefeld wird auch im 10-min-Qualifikationspfad als Betriebsfreigabe verwendet.
+Dasselbe Bit wird auch von weiteren Limiter-/Qualifikationspfaden als Laufzeit-/Regelfreigabe benutzt.
 
 Damit ist sicher:
 
-> **Auto-PWM wird nur in einem bestimmten aktiven Betriebszustand zugelassen; außerhalb dieses Zustands bleibt die Pumpe auf 100 %.**
+> **Die automatische Pumpenabsenkung ist nur in einem freigegebenen aktiven Betriebszustand erlaubt.**
 
-Ob das Bit exakt „Kompressor läuft“, „Heiz-/Kühlbetrieb aktiv“ oder eine kombinierte Run-Freigabe bedeutet, bleibt bis zur vollständigen Writeranalyse offen.
+Der exakte PHNIX-interne Name des Bits ist noch nicht geschlossen. „Run-/Regelfreigabe“ ist daher eine Funktionsbeschreibung und kein bestätigter Herstellertext.
 
-**Bewertung: Wirkung bestätigt, Bezeichnung sehr wahrscheinlich Betriebsfreigabe.**
-
----
-
-# 12. Temperatur-Plausibilitätsgates je Betriebsart
-
-Zusätzlich zur 30-s-Richtungsprüfung existieren zwei sofort wirkende Temperaturgrenzen.
-
-## Runtime-Modus 1
-
-Sinngemäß:
-
-```text
-wenn mode == 1
-und (helper_0x08072D98 - 4,0 K) < Wasserkanal_0x08087966:
-    -> 100 %
-```
-
-## Runtime-Modus 0
-
-Sinngemäß:
-
-```text
-wenn mode == 0
-und Wasserkanal_0x08087966 < (0x20016744+0x14 + 4,0 K):
-    -> 100 %
-```
-
-Die Konstanten sind jeweils `40 raw = 4,0 K`.
-
-Die Datenpfade sind bestätigt. Die exakten Herstellertexte der beiden Vergleichsgrößen werden erst dann benannt, wenn der Helper `0x08072D98` und das Parameterfeld `0x20016744+0x14` vollständig fachlich geschlossen sind.
+**Bewertung: Wirkung bestätigt, fachliche Bezeichnung sehr wahrscheinlich.**
 
 ---
 
-# 13. Weitere 100-%-Pfade nach dem Haupt-Gate
+# 11. Außentemperatur-Hysterese 20/22 °C
 
-Auch nach dem zentralen Gate existieren weitere Vollpumpenpfade.
+Ein Pumpenruntimeflag `+0x07` wird in einem bestimmten Runtime-Modus über T04/Außentemperatur geführt:
 
-Bestätigt sind unter anderem:
+```text
+T04 < 20,0 °C   -> Flag = 1
+T04 >= 22,0 °C  -> Flag = 0
+20,0..21,9 °C   -> Zustand halten
+```
 
-1. **nicht unterstützter/unerwarteter Runtime-Modus** außerhalb der vorgesehenen Werte 0/1 -> 100 %,
-2. **interner Lauf-/Zeitwert `0x20016AA4+0x06 < 60`** -> 100 %,
-3. **10-min-Qualifikation `runtime +0x09 == 0`** -> 100 %,
-4. feste/Factory-/Sondervorgaben können 100 % direkt setzen,
-5. finale Plausibilitätsbegrenzung setzt Werte außerhalb `1..100` auf 100 %.
+Wenn das Flag aktiv ist:
 
-Damit ist diagnostisch wichtig:
+```text
+-> 100 % Pumpen-PWM
+```
+
+Die Hysterese selbst ist bestätigt; die endgültige fachliche Bezeichnung des betroffenen internen Betriebsmodus bleibt offen.
+
+---
+
+# 12. Weitere 100-%-Pfade nach dem Haupt-Gate
+
+Auch nach dem zentralen Override-Gate existieren weitere Vollpumpenbedingungen:
+
+1. unerwarteter/nicht unterstützter Runtime-Modus außerhalb der vorgesehenen Werte 0/1,
+2. interner Lauf-/Zeitwert `0x20016AA4+0x06 < 60`,
+3. noch nicht abgeschlossene 10-min-Qualifikation (`Pumpenruntime +0x09 == 0`),
+4. feste/Factory-/Sondervorgaben,
+5. finale Plausibilitätsbegrenzung: Werte außerhalb `1..100` werden auf 100 % gesetzt.
+
+Damit gilt diagnostisch:
 
 ```text
 P10 = 0
 MAIN:2115 = 100
 ```
 
-ist in V3.3 ein normaler und häufig absichtlich erzeugter Zustand. Er bedeutet nicht automatisch einen Fehler der Pumpenregelung.
+nicht automatisch als Fehler. 100 % ist in zahlreichen normalen Start-, Sonder-, Schutz- und Qualifikationszuständen ausdrücklich vorgesehen.
 
 ---
 
-# 14. Separater Hardware-/Hydraulik-Gate nahe der PWM-Ausgabe
+# 13. Finales Hardware-/Hydraulikgate
 
-Unmittelbar vor der finalen Hardware-PWM-Ausgabe existiert noch ein weiterer Gate-Pfad.
+Nahe der endgültigen Hardware-PWM-Ausgabe existiert ein weiteres H30-abhängiges Gate.
 
-Bei einer bestimmten H30-Konfiguration wird ein Bit aus:
+Je nach Hydraulikarchitektur wird entweder:
 
 ```text
-0x20016BE0+0x0E, Bit 0
+0x20016BE0+0x0E Bit0
 ```
 
-verwendet; ansonsten wird ein physischer GPIOC-Eingang über:
+oder ein physischer GPIOC-Zustand mit:
 
 ```text
-GPIOC IDR
 Maske 0x0002
 ```
 
-geprüft.
+verwendet.
 
-Wenn dieser Eingangszustand nicht die erwartete Freigabe liefert, setzt die Firmware die Pumpenvorgabe ebenfalls auf 100 %.
+Das GPIOC-Signal lässt sich dem Haupt-Wasserpumpenpfad/O05 zuordnen. Es handelt sich damit nicht um einen beliebigen externen Sensor, sondern um die lokale Pumpen-/Hydraulikfreigabe bzw. den zugehörigen Hardwarezustand.
 
-Die Struktur passt zu einem hydraulischen/Hardware-Freigabesignal, die endgültige Klemmenbezeichnung ist noch offen.
+Wenn die erwartete Freigabe fehlt, setzt die Firmware die Pumpenvorgabe auf 100 %.
 
-**Bewertung: Wirkung bestätigt; fachliche Bezeichnung offen.**
+**Bewertung: Pumpen-/Hydraulikbezug bestätigt; exakter Signalname für alle H30-Varianten offen.**
 
 ---
 
-# 15. Praktische Bedeutung
+# 14. Praktische Gesamtaussage
 
-Die automatische P11/P12-Regelung ist in V3.3 bewusst konservativ aufgebaut.
-
-Sie darf die Pumpe nur dann unter 100 % fahren, wenn gleichzeitig unter anderem gilt:
+Die V3.3-Pumpenregelung ist bewusst konservativ und fail-safe aufgebaut. Eine Absenkung unter 100 % ist nur zulässig, wenn gleichzeitig unter anderem gilt:
 
 ```text
-- gültige Wasser-Temperaturkanäle
-- plausibles ΔT
+- normaler Heiz-/Kühl-Regelzustand, kein Defrost/WW/Pasteurisierung
+- keine aktive elektrische Zusatzheizung
+- kein Frostschutz-Sonderzustand
+- gültige T01/T02-Wasserkanäle
+- plausible Wasser-Spreizung
 - gültiger Durchfluss
 - A40 != 0
-- erforderlicher Betriebszustand aktiv
-- keine relevanten Fault-/Sonderflags
-- keine physischen Overrideeingänge aktiv
-- keine 20/22-°C-Sperre
+- erforderliche Run-/Regelfreigabe aktiv
+- keine relevanten Frequenzbegrenzungs-/Schutzflags
+- keine 20/22-°C-Sperre im betreffenden Modus
 - keine 30-s-ΔT-Richtungsstörung
-- Auto-PWM-Qualifikation abgeschlossen
+- 10-min-Auto-PWM-Qualifikation abgeschlossen
 ```
 
-Das erklärt, warum MAIN:2115 nach Start, Abtauung, Sensor-/Durchflussproblemen oder bestimmten Betriebszuständen längere Zeit 100 % bleiben kann, obwohl `P10=0` eingestellt ist.
+Das erklärt insbesondere, warum `MAIN:2115` nach Start, Abtauung, Warmwasser, Pasteurisierung, E-Heizerbetrieb, Frostschutz oder Schutzlimitierungen längere Zeit 100 % bleiben kann, obwohl `P10=0` eingestellt ist.
 
 ---
 
-# 16. Neue Zuordnungen aus diesem Audit
+# 15. Korrigierte Zuordnungen gegenüber dem ersten Audit
 
-Neu belastbar geschlossen:
+Die folgenden vorher offenen bzw. falsch vermuteten Einträge sind jetzt geschlossen:
 
 ```text
-MAIN:2139 Bit 4
-<- 0x20016E24+0x02
--> gleichzeitig Pumpen-Override auf 100 %
+0x2001660C+0x20 Bits2..3
+-> Defrost / MAIN:2012=2
 
-MAIN:2139 Bit 6
-<- 0x20016D2C+0x09 Bit 0
--> gleichzeitig Pumpen-Override auf 100 %
+0x20016658+0x0E
+-> Sterilisation/Pasteurisierung / MAIN:2012=3
+
+0x2001660C+0x20 Bit7
+-> Warmwasser / MAIN:2012=4
+
+PE12
+-> O08 / Elektroheizung Stufe 1 / MAIN:2019 Bit7
+
+PE13
+-> O09 / Elektroheizung Stufe 2 / MAIN:2019 Bit8
+
+0x20016BE0+0x0E Bit3
+-> O22 / E-Heizung Wasserkreis
+
+0x20016BE0+0x0E Bit4
+-> O23 / E-Heizung WW-Tank
+
+0x20016214+0x01 Bits1..2
+-> Winter-Frostschutz Stufe 1/2
+
+0x20016D2C+0x0B
+-> übermäßige T01/T02-Wasserspreizung / A24
+-> MAIN:2139 Bit1
+
+0x20016E24+0x02
+-> Niederdruck-Frequenzbegrenzung
+-> MAIN:2139 Bit4
+
+0x20016D2C+0x09 Bit0
+-> Abgastemperatur-Frequenzbegrenzung
+-> MAIN:2139 Bit6
 ```
-
-Damit ist MAIN:2139 nicht mehr vollständig semantisch leer: mindestens zwei seiner Bits stammen direkt aus internen Fehler-/Betriebsflags, die auch die Pumpenregelung auf Vollleistung zwingen.
-
-Die Herstellerbezeichnungen dieser beiden Bits sind noch offen.
 
 ---
 
-# 17. Offene Restpunkte
+# 16. Verbleibende offene Restpunkte
 
-Noch fachlich zu benennen:
+Nach diesem Audit bleiben nur noch wenige fachliche Restpunkte:
 
-1. `0x2001660C+0x20` Bits 2..3,
-2. `0x2001660C+0x20` Bit 7 endgültige Herstellerbezeichnung,
-3. `0x20016658+0x0E`,
-4. `0x20016D2C+0x0B`,
-5. `0x20016BC8+0x0F`,
-6. `0x20016214+0x01` Bits 1..2,
-7. `0x20016BE0+0x0E` Bits 3..4,
-8. PE12/PE13 Klemmenfunktion,
-9. GPIOC Maske `0x0002` Klemmenfunktion,
-10. genaue Herstellerbezeichnung der `MAIN:2139` Bits 4 und 6,
-11. genaue Bedeutung des Betriebsfreigabebits `0x20016E0C+3 Bit1`,
-12. vollständige Semantik der beiden unmittelbaren Temperatur-Plausibilitätsgrenzen.
+1. `MAIN:2139 Bit0` – Quelle/Schutzart noch nicht abschließend benannt.
+2. `MAIN:2139 Bit2` – Quelle/Schutzart noch nicht abschließend benannt.
+3. mögliche höhere `MAIN:2139`-Bits in Sonderkonfigurationen.
+4. exakter PHNIX-interner Herstellername von `0x20016E0C+0x03 Bit1`.
+5. endgültige öffentliche Benennung des internen Pumpen-`mode=0/1` für die beiden unmittelbaren Temperatur-Plausibilitätsgates.
+6. exakter interner Name von `0x20016BC8+0x0F`; der Bezug zur A04/A05-Frostschutzlogik ist stark, aber der Herstellertext noch nicht gefunden.
+7. Detailname des H30-abhängigen finalen Pumpen-/Hydraulikgates.
 
-Die Auswirkungen dieser Bedingungen auf die Pumpenregelung sind dagegen bytegenau geschlossen.
+Die für den praktischen Betrieb wichtigsten 100-%-Overrideursachen sind damit jedoch weitgehend geschlossen.
