@@ -1,6 +1,6 @@
 # Mainboard-Firmware V3.3 – Modbus-Parameter 1001–1540
 
-Stand: 24. August 2026
+Stand: 28. August 2026
 
 Diese Datei dokumentiert den strukturellen Audit des kompletten öffentlichen Parameterbereichs der Mainboard-Firmware `82400644 / V3.3`.
 
@@ -89,6 +89,7 @@ V3.3 hält die Parameter nicht nur im Modbusspiegel. Die Firmware synchronisiert
 | Pumpenmodus/-Timer | `0x20016C6C` | 1197–1205 |
 | Zusatzblock | `0x20016C7C` | 1152–1156, 1022 |
 | Kompressor C | `0x20016B20` | 1217–1223, 1227, 1209–1211 |
+| Sensor-/Messwertkalibrierung | diverse Live-Strukturen | **1022, 1212–1214, 1353–1355** |
 | Silent-Timer | `0x20016B68` | 1244–1249 + 1141 |
 | Systemzeit | `0x20016D90` | 1250–1255 |
 | ältere Timer-/Displaylogik | `0x200167A4` | 1256–1270, 1239–1243, 1025/26, 1216 |
@@ -138,6 +139,12 @@ Weitere Sonderfelder:
 - 1015/1016 aus `0x20016D9C`
 - 1022 aus `0x20016C7C+0x0C`
 - 1047 aus `0x200166A0+0x34`
+- 1212 aus `0x20016A04+0x16` signed byte
+- 1213 aus `0x20016A04+0x17` signed byte
+- 1214 aus `0x20016B20+0x0F` signed byte
+- 1353 aus `0x20016DFC+0x04` signed byte
+- 1354 aus `0x20016DFC+0x05` signed byte
+- 1355 aus `0x20016DFC+0x01` signed byte
 - 1011, 1012, 1013, 1017 und 1046 über Sonder-/Steuerlogik
 
 ## 4.2 A-Parameter `0x20016744`
@@ -366,7 +373,120 @@ Der Hold-Timer liegt in der SG-Runtime-Struktur, nicht im Parameterregister selb
 
 ---
 
-# 5. C12–C15 / E20–E21: in V3.3 echte aktive Parameter
+# 5. Sensor- und Messwertkalibrierungen
+
+Der systematische Audit der additiven Messwertkorrekturen in V3.3 ergibt **sieben öffentliche Modbus-Kalibrierparameter**.
+
+| MAIN:P | Messwert | Live-RAM | Typ | Skalierung | Wirkung |
+|---:|---|---|---|---|---|
+| **1022** | Wasserdurchfluss | `0x20016C7C+0x0C` | signed int16 | `1 raw = 0,01 m³/h` | Offset auf den bereits gültigen Basisdurchfluss |
+| **1212** | T01 Einlasswassertemperatur | `0x20016A04+0x16` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur |
+| **1213** | T02 Auslasswassertemperatur | `0x20016A04+0x17` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur |
+| **1214** | T08 Warmwasserspeicher | `0x20016B20+0x0F` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur |
+| **1353** | Zone-1-Raumtemperatur | `0x20016DFC+0x04` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur; korrigierter Wert → MAIN:2160 |
+| **1354** | Zone-2-Raumtemperatur | `0x20016DFC+0x05` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur; korrigierter Wert → MAIN:2162 |
+| **1355** | T04 Außentemperatur | `0x20016DFC+0x01` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur auf den wirksamen T04-Getter |
+
+Für die Temperaturkorrekturen gilt sinngemäß:
+
+```text
+T_effektiv_raw = T_sensor_raw + signed(offset)
+```
+
+Die Firmware implementiert diese Pfade mit signed-Byte-Addition (`LDRSB`/`SXTAB`). Damit sind negative Werte ausdrücklich vorgesehen.
+
+### 5.1 MAIN:1353 / 1354 – Raumtemperatur Zone 1 / Zone 2
+
+Die Parameter werden aus dem öffentlichen Spiegel nach:
+
+```text
+1353 -> 0x20016DFC+0x04
+1354 -> 0x20016DFC+0x05
+```
+
+synchronisiert und in den beiden Zonen-Temperaturpfaden als signed Korrektur addiert.
+
+Die korrigierten Werte werden öffentlich als:
+
+```text
+MAIN:2160 = Zone-1-Raumtemperatur
+MAIN:2162 = Zone-2-Raumtemperatur
+```
+
+veröffentlicht. Die DWIN-Firmware bestätigt die beiden Bezeichnungen zusätzlich als `Zone 1 room temperature` bzw. `Zone 2 room temperature`.
+
+**Bewertung: bestätigt.**
+
+### 5.2 MAIN:1355 – T04 Außentemperatur-Offset
+
+`MAIN:1355` wird nach:
+
+```text
+0x20016DFC+0x01
+```
+
+synchronisiert. Der T04-Getter bei:
+
+```text
+VA 0x0808799C
+```
+
+addiert diesen Wert signed auf den Außentemperatur-Rohwert. Die korrigierte T04 wird anschließend nicht nur angezeigt, sondern auch von temperaturabhängigen Regel- und Schutzfunktionen verwendet.
+
+Beispiele:
+
+```text
+1355 = +10 -> T04 +1,0 °C
+1355 = -10 -> T04 -1,0 °C
+```
+
+**Bewertung: bestätigt.**
+
+### 5.3 MAIN:1022 – Durchflusskorrektur
+
+Anders als die sechs Temperaturwerte ist `1022` signed 16 bit und skaliert mit `0,01 m³/h`.
+
+Sinngemäß:
+
+```text
+wenn Basisdurchfluss gültig/ungleich 0:
+    Q_effektiv = Q_basis + signed(MAIN:1022)
+    Werte < 0,01 m³/h -> 0
+```
+
+Der korrigierte Durchfluss ist der gemeinsame Runtimewert für `MAIN:2077` und nachgelagerte Regel-/Leistungsfunktionen. Details stehen in:
+
+- [`FW3.3-PUMPEN-PWM-REGELUNG.md`](FW3.3-PUMPEN-PWM-REGELUNG.md)
+- [`FW3.3-DURCHFLUSS-VERWENDUNG.md`](FW3.3-DURCHFLUSS-VERWENDUNG.md)
+
+**Bewertung: bestätigt.**
+
+### 5.4 Audit auf weitere Offsets
+
+Zusätzlich wurden die übrigen signed-Additionsmuster (`SXTAB`, `SXTAH`, `UXTAH`) und die Sensorpfade der V3.3 geprüft.
+
+Für öffentliche, additive Messwertkalibrierungen führen die Treffer auf genau:
+
+```text
+Temperatur:
+1212  T01 Einlasswasser
+1213  T02 Auslasswasser
+1214  T08 Warmwasserspeicher
+1353  Zone-1-Raumtemperatur
+1354  Zone-2-Raumtemperatur
+1355  T04 Außentemperatur
+
+Hydraulik:
+1022  Wasserdurchfluss
+```
+
+Für T03, T05, T06, T07, T10, T11, T12, Zone-2-Mischwassertemperatur, Hoch-/Niederdruck, AC-Strom und IPM-Temperatur wurde **kein weiterer öffentlicher additiver Modbus-Offset** gefunden.
+
+Das schließt feste ADC-/Kennlinienkonstanten innerhalb der Firmware nicht aus; gemeint sind hier ausdrücklich über MAIN:P einstellbare additive Kalibrierwerte.
+
+---
+
+# 6. C12–C15 / E20–E21: in V3.3 echte aktive Parameter
 
 Der Liveblock liegt bei:
 
@@ -405,7 +525,7 @@ Damit sind C13–C15 und E20/E21 definitiv keine bloßen Display-Platzhalter.
 
 ---
 
-# 6. Factory-Testblock 1371–1380
+# 7. Factory-Testblock 1371–1380
 
 Live-RAM:
 
@@ -428,7 +548,7 @@ Live-RAM:
 
 ---
 
-# 7. V3.3-Erweiterungsblock ab 1381
+# 8. V3.3-Erweiterungsblock ab 1381
 
 ## `0x20016278`
 
@@ -489,7 +609,7 @@ Weitere bestätigte V3.3-Felder:
 
 ---
 
-# 8. Adressierbar, aber ohne geschlossenen V3.3-Livepfad
+# 9. Adressierbar, aber ohne geschlossenen V3.3-Livepfad
 
 ```text
 1011, 1012, 1013, 1017, 1046,
@@ -515,21 +635,23 @@ Saubere Klassifikation:
 
 ---
 
-# 9. Wichtigste Deltas zu `FoxAir_Control/data`
+# 10. Wichtigste Deltas zu `FoxAir_Control/data`
 
 1. `1541–1550` aus dem normalen Mainboard-Namespace herauslösen; V3.3 endet bei 1540.
 2. Paketköpfe softwareseitig read-only lassen, obwohl FC10 technisch schreiben kann.
 3. **`1334` um Wert `3 = virtueller SG-Ready-Eingang über Modbus` ergänzen.**
 4. **`8801` als zugehöriges Engineering-Control-Register mit live bestätigter Funktion verknüpfen.**
 5. **10-Minuten-Hold und Reset des Holds bei Änderung von 1334 als Laufzeitverhalten dokumentieren.**
-6. C13/C14/C15/E20/E21 auf echte V3.3-Liveparameter hochstufen.
-7. Breite/Signedness und V3.3-Defaults für diese Felder ergänzen.
-8. V3.3-Felder `1381–1389`, `1402`, `1404/1405`, `1422–1431`, `1445–1448`, `1461–1469`, `1476/1477`, `1481` in den Wissenskatalog aufnehmen.
-9. 1024 als Ziel des speziellen 60000/60010-Modbus-Adressmechanismus dokumentieren.
+6. **Sensor-/Messwert-Offsets korrekt benennen und signed behandeln:** `1022`, `1212–1214`, `1353–1355`.
+7. **1353 = Zone-1-Raumtemperatur-Offset, 1354 = Zone-2-Raumtemperatur-Offset, 1355 = T04-Außentemperatur-Offset.**
+8. C13/C14/C15/E20/E21 auf echte V3.3-Liveparameter hochstufen.
+9. Breite/Signedness und V3.3-Defaults für diese Felder ergänzen.
+10. V3.3-Felder `1381–1389`, `1402`, `1404/1405`, `1422–1431`, `1445–1448`, `1461–1469`, `1476/1477`, `1481` in den Wissenskatalog aufnehmen.
+11. 1024 als Ziel des speziellen 60000/60010-Modbus-Adressmechanismus dokumentieren.
 
 ---
 
-# 10. Ergebnis
+# 11. Ergebnis
 
 Der öffentliche Parameterbereich ist damit strukturell vollständig auditiert:
 
@@ -539,6 +661,8 @@ Der öffentliche Parameterbereich ist damit strukturell vollständig auditiert:
 - Paketkopf-Ausnahmen: geschlossen
 - zentraler Spiegel: geschlossen
 - große Live-Strukturen: geschlossen
+- **öffentliche additive Messwertkalibrierungen: 7 Register geschlossen**
+- **1353/1354/1355 fachlich als Zone-1-/Zone-2-Raum- und T04-Außentemperatur-Offsets geschlossen**
 - aktive V3.3-Erweiterungsfelder: identifiziert
 - SG-Ready-Parameterquelle `1334=3`: **Binary + live bestätigt**
 - Verbindung zu `ENG:CTRL:8801`: **Binary + live bestätigt**
