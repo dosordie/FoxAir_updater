@@ -98,7 +98,7 @@ V3.3 hält die Parameter nicht nur im Modbusspiegel. Die Firmware synchronisiert
 | **SG Ready** | `0x20016CAC` | **1334–1341** |
 | C12/C13/C14/C15/E20/E21 + Erweiterungen | `0x20016C9C` | 1342–1352, 1402, 1437 |
 | Factory Test | `0x20016C10` | 1371–1380 |
-| neuer V3.3-Erweiterungsblock | `0x20016278` | 1381ff, 1404, 1429, 1431–1438, 1444–1448, 1462–1467 |
+| neuer V3.3-Erweiterungsblock | `0x20016278` | 1381ff, 1404, 1429, 1431–1438, 1444–1448, **1462–1467** |
 | zusätzlicher V3.3-Optionsblock | `0x20016A24` | 1422–1430, 1477, 1481 |
 
 **Bewertung: bestätigt.**
@@ -385,7 +385,7 @@ Der systematische Audit der additiven Messwertkorrekturen in V3.3 ergibt **siebe
 | **1214** | T08 Warmwasserspeicher | `0x20016B20+0x0F` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur |
 | **1353** | Zone-1-Raumtemperatur | `0x20016DFC+0x04` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur; korrigierter Wert → MAIN:2160 |
 | **1354** | Zone-2-Raumtemperatur | `0x20016DFC+0x05` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur; korrigierter Wert → MAIN:2162 |
-| **1355** | T04 Außentemperatur | `0x20016DFC+0x01` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur auf den wirksamen T04-Getter |
+| **1355** | T04 Außentemperatur | `0x20016DFC+0x01` | signed int8 | `1 raw = 0,1 K` | additive Sensorkorrektur auf den lokalen T04-Getter |
 
 Für die Temperaturkorrekturen gilt sinngemäß:
 
@@ -417,7 +417,7 @@ veröffentlicht. Die DWIN-Firmware bestätigt die beiden Bezeichnungen zusätzli
 
 **Bewertung: bestätigt.**
 
-### 5.2 MAIN:1355 – T04 Außentemperatur-Offset
+### 5.2 MAIN:1355 – lokaler T04-Außentemperatur-Offset
 
 `MAIN:1355` wird nach:
 
@@ -425,20 +425,22 @@ veröffentlicht. Die DWIN-Firmware bestätigt die beiden Bezeichnungen zusätzli
 0x20016DFC+0x01
 ```
 
-synchronisiert. Der T04-Getter bei:
+synchronisiert. Der lokale T04-Getter bei:
 
 ```text
 VA 0x0808799C
 ```
 
-addiert diesen Wert signed auf den Außentemperatur-Rohwert. Die korrigierte T04 wird anschließend nicht nur angezeigt, sondern auch von temperaturabhängigen Regel- und Schutzfunktionen verwendet.
+addiert diesen Wert signed auf den lokalen Außentemperatur-Rohwert. Dieser direkte lokale T04-Pfad wird u. a. als `MAIN:2136` veröffentlicht.
 
 Beispiele:
 
 ```text
-1355 = +10 -> T04 +1,0 °C
-1355 = -10 -> T04 -1,0 °C
+1355 = +10 -> lokaler T04 +1,0 °C
+1355 = -10 -> lokaler T04 -1,0 °C
 ```
+
+Wichtig seit dem Audit von `MAIN:1463`: Der für Regelzwecke verwendete **effektive Außentemperaturpfad** kann optional auf einen zweiten lokalen Außentemperatursensor umgeschaltet werden. `MAIN:1355` kalibriert dabei den normalen lokalen T04-Pfad; eine separate additive Modbus-Korrektur für den optionalen zweiten AT-Sensor wurde nicht gefunden.
 
 **Bewertung: bestätigt.**
 
@@ -474,7 +476,7 @@ Temperatur:
 1214  T08 Warmwasserspeicher
 1353  Zone-1-Raumtemperatur
 1354  Zone-2-Raumtemperatur
-1355  T04 Außentemperatur
+1355  lokaler T04 Außentemperatur
 
 Hydraulik:
 1022  Wasserdurchfluss
@@ -576,7 +578,7 @@ Live-RAM:
 1447 -> +0x0C
 1448 -> +0x0E
 1462 -> +0x54 byte
-1463 -> +0x55 byte
+1463 -> +0x55 byte   alternativen lokalen AT-Sensor aktivieren
 1464 -> +0x56
 1465 -> +0x58
 1466 -> +0x5A
@@ -584,6 +586,120 @@ Live-RAM:
 ```
 
 `1387–1389` werden in temperatur-/zustandsabhängiger Regelung benutzt; `1462–1467` werden als zusammengehöriger Parametersatz an Laufzeitlogik übergeben.
+
+## 8.1 MAIN:1463 – Auswahl eines zweiten lokalen Außentemperatursensors
+
+`MAIN:1463` ist im untersuchten V3.3-Build ein Byteparameter bei:
+
+```text
+MAIN:1463
+-> 0x20016278 + 0x55
+Default = 0
+```
+
+Die Firmware prüft den Parameter explizit auf den Wert `1`.
+
+```text
+1463 = 0 -> normaler lokaler T04-Pfad
+1463 = 1 -> optionalen zweiten lokalen Außentemperatur-Thermistor zulassen/verwenden
+```
+
+Der zentrale Quellenselektor liegt bei:
+
+```text
+VA 0x08088496
+```
+
+Verhalten:
+
+```text
+wenn 1463 != 1:
+    -> lokalen T04 verwenden
+
+wenn 1463 == 1 und alternativer Sensor gültig:
+    -> alternativen Sensor verwenden
+
+wenn 1463 == 1 und alternativer Sensor fehlerhaft:
+    -> automatisch auf lokalen T04 zurückfallen
+
+wenn beide Sensoren ungültig:
+    -> ungültigen Sentinel 0x7FFF liefern
+```
+
+Der aktuell gewählte Quelltyp wird intern über:
+
+```text
+0x20016F7A
+0 = lokaler T04 / Fallback
+1 = alternativer AT-Sensor aktiv
+```
+
+geführt; eine öffentliche Modbusabbildung dieses internen Flags ist bisher nicht bestätigt.
+
+### Alternativer Sensorpfad
+
+Die beiden Getter:
+
+```text
+VA 0x08088B58 -> alternativer Temperaturwert
+VA 0x08088B78 -> alternativer Sensorstatus
+```
+
+liefern bei `1463=1`:
+
+```text
+Wert:   0x20015FA8 + 0x8A
+Status: 0x20015FA8 + 0x8E
+```
+
+Diese Felder liegen im **lokalen Sensor-Scanner**, nicht im H30/HYD5/HYD61-Modulblock. Der alternative AT-Wert ist daher kein Modbus-/Hydraulikmodulwert, sondern ein echter lokaler Analog-/Thermistoreingang.
+
+Die lokale Sensorstruktur benutzt 6 Byte pro logischem Temperaturkanal. Damit gilt:
+
+```text
+0x8A / 6 = 23
+```
+
+Der alternative AT-Sensor ist **logischer Sensorkanal 23**. Dieser Kanal wird von der Sensorverarbeitung nur dann aktiviert/konvertiert, wenn `MAIN:1463 == 1`.
+
+### Hardwarepfad des Sensorkanals 23
+
+Die Sensorerfassung scannt:
+
+```text
+3 ADC-Zweige × 8 externe Multiplexerstellungen = 24 logische Sensorkanäle
+```
+
+Der logische Index wird gebildet als:
+
+```text
+sensor_index = mux_index + 8 × adc_branch
+```
+
+Kanal 23 entspricht daher:
+
+```text
+ADC-Zweig 2
+Mux-Index 7
+```
+
+Die drei ADC-Zweige werden über ADC3 und die STM32F1-Kanäle 10/11/12 erfasst; Zweig 2 entspricht Kanal 12 / PC2. Der externe 8:1-Multiplexer wird über PE2/PE3/PE4 adressiert; Mux-Index 7 entspricht im verwendeten Lookup der Select-Kombination `000`.
+
+Damit ist technisch geschlossen:
+
+> **MAIN:1463 aktiviert einen optionalen zweiten, physisch am Mainboard vorhandenen Außentemperatur-Thermistoreingang.**
+
+Noch **offen** bleiben die offizielle PHNIX-Parameterbezeichnung von `1463` sowie die PCB-/Klemmen-/Steckerbezeichnung des zusätzlichen Thermistoreingangs. Diese werden nicht erfunden.
+
+### Wirkung auf 2048 und 2136
+
+`MAIN:2136` bleibt unabhängig von `1463` der direkte korrigierte **lokale T04** über Getter `0x0808799C` und Offset `MAIN:1355`.
+
+`MAIN:2048` entsteht dagegen aus dem langsam aufbereiteten **effektiven Außentemperaturpfad**. Dieser benutzt den oben beschriebenen Quellenselektor und kann daher bei `1463=1` den optionalen zweiten AT-Sensor verwenden. Bei Fehler des zweiten Sensors fällt `2048` wieder auf den normalen lokalen T04 zurück.
+
+Damit können `MAIN:2048` und `MAIN:2136` bei aktiviertem alternativem Sensor sowohl zeitlich als auch dauerhaft voneinander abweichen.
+
+**Bewertung: bestätigt** für Register, Auswahlwert, Fallbacklogik, lokalen Sensorkanal und Hardware-ADC/Mux-Pfad; **offen** nur für offiziellen Herstellertext und physische Klemmenbezeichnung.
 
 ## `0x20016A24`
 
@@ -643,11 +759,12 @@ Saubere Klassifikation:
 4. **`8801` als zugehöriges Engineering-Control-Register mit live bestätigter Funktion verknüpfen.**
 5. **10-Minuten-Hold und Reset des Holds bei Änderung von 1334 als Laufzeitverhalten dokumentieren.**
 6. **Sensor-/Messwert-Offsets korrekt benennen und signed behandeln:** `1022`, `1212–1214`, `1353–1355`.
-7. **1353 = Zone-1-Raumtemperatur-Offset, 1354 = Zone-2-Raumtemperatur-Offset, 1355 = T04-Außentemperatur-Offset.**
-8. C13/C14/C15/E20/E21 auf echte V3.3-Liveparameter hochstufen.
-9. Breite/Signedness und V3.3-Defaults für diese Felder ergänzen.
-10. V3.3-Felder `1381–1389`, `1402`, `1404/1405`, `1422–1431`, `1445–1448`, `1461–1469`, `1476/1477`, `1481` in den Wissenskatalog aufnehmen.
-11. 1024 als Ziel des speziellen 60000/60010-Modbus-Adressmechanismus dokumentieren.
+7. **1353 = Zone-1-Raumtemperatur-Offset, 1354 = Zone-2-Raumtemperatur-Offset, 1355 = lokaler T04-Außentemperatur-Offset.**
+8. **1463 = Enable/Selector des optionalen zweiten lokalen Außentemperatur-Thermistors; Wert 1 aktiviert die alternative Quelle mit automatischem T04-Fallback.**
+9. C13/C14/C15/E20/E21 auf echte V3.3-Liveparameter hochstufen.
+10. Breite/Signedness und V3.3-Defaults für diese Felder ergänzen.
+11. V3.3-Felder `1381–1389`, `1402`, `1404/1405`, `1422–1431`, `1445–1448`, `1461–1469`, `1476/1477`, `1481` in den Wissenskatalog aufnehmen.
+12. 1024 als Ziel des speziellen 60000/60010-Modbus-Adressmechanismus dokumentieren.
 
 ---
 
@@ -662,7 +779,8 @@ Der öffentliche Parameterbereich ist damit strukturell vollständig auditiert:
 - zentraler Spiegel: geschlossen
 - große Live-Strukturen: geschlossen
 - **öffentliche additive Messwertkalibrierungen: 7 Register geschlossen**
-- **1353/1354/1355 fachlich als Zone-1-/Zone-2-Raum- und T04-Außentemperatur-Offsets geschlossen**
+- **1353/1354/1355 fachlich als Zone-1-/Zone-2-Raum- und lokaler T04-Außentemperatur-Offsets geschlossen**
+- **MAIN:1463 als Selector des optionalen zweiten lokalen Außentemperatursensors geschlossen**
 - aktive V3.3-Erweiterungsfelder: identifiziert
 - SG-Ready-Parameterquelle `1334=3`: **Binary + live bestätigt**
 - Verbindung zu `ENG:CTRL:8801`: **Binary + live bestätigt**
