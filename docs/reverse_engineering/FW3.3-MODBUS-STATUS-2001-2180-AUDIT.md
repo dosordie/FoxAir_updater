@@ -48,13 +48,14 @@ Wichtigste Ergebnisse:
 8. **2117/2119/2121/2123 sind High-Wörter von 32-Bit-Energiezählern**.
 9. **2125/2126 und 2127/2128** bilden zwei weitere 32-Bit-Energiezählerpaare, sehr wahrscheinlich DHW elektrisch/thermisch.
 10. **2133 = tatsächlich aktiver SG-Ready-Modus 0..4** und unterliegt einem **festen 10-Minuten-Hold zwischen akzeptierten Modewechseln**.
-11. **2136 = zweiter T04-/Außentemperaturwert**; der zugrunde liegende T04-Getter enthält `MAIN:1355` als signed Offset.
-12. **2137/2138 sind WP-only-Leistungsgrößen**, keine simplen Spiegel von 2054/2059.
-13. **2140–2143 = zwei 32-Bit-Werte**.
-14. **2146 = Capability-/Statusbitfeld**, Basiswert `0x002C`.
-15. **2160 = Zone-1-Raumtemperatur**, korrigiert über `MAIN:1353`.
-16. **2162 = Zone-2-Raumtemperatur**, korrigiert über `MAIN:1354`.
-17. V3.3 baut und broadcastet bis **2180**; 2151–2166 und 2178–2180 haben bestätigte interne Quellen.
+11. **2136 = direkter lokaler T04-Außentemperaturwert**; der T04-Getter enthält `MAIN:1355` als signed Offset.
+12. **2048 = ausgewählte und zeitlich aufbereitete wirksame Außentemperatur**; Quelle ist standardmäßig lokaler T04, bei `MAIN:1463=1` der zweite lokale AT-Thermistor mit automatischem T04-Fallback.
+13. **2137/2138 sind WP-only-Leistungsgrößen**, keine simplen Spiegel von 2054/2059.
+14. **2140–2143 = zwei 32-Bit-Werte**.
+15. **2146 = Capability-/Statusbitfeld**, Basiswert `0x002C`.
+16. **2160 = Zone-1-Raumtemperatur**, korrigiert über `MAIN:1353`.
+17. **2162 = Zone-2-Raumtemperatur**, korrigiert über `MAIN:1354`.
+18. V3.3 baut und broadcastet bis **2180**; 2151–2166 und 2178–2180 haben bestätigte interne Quellen.
 
 ---
 
@@ -172,6 +173,67 @@ Für 2044:
 ```text
 MAIN:2044 = (INV1:2110 - 55) × 10
 ```
+
+## 6.1 MAIN:2048 versus MAIN:2136 – zwei unterschiedliche Außentemperaturpfade
+
+Die beiden Register dürfen nicht als identische Spiegel behandelt werden.
+
+### MAIN:2136 – direkter lokaler T04
+
+Der Statusbuilder ruft direkt den T04-Getter auf:
+
+```text
+CALL 0x0808799C
+→ MAIN:2136
+```
+
+Der Getter addiert vorher den signed Kalibrierwert `MAIN:1355`:
+
+```text
+T04_direkt = T04_lokal + signed(MAIN:1355)
+```
+
+Damit ist `2136` der aktuelle korrigierte lokale T04-Wert.
+
+### MAIN:2048 – ausgewählte und zeitlich aufbereitete wirksame AT
+
+`2048` stammt nicht direkt aus dem T04-Getter, sondern aus:
+
+```text
+0x20016DA8 + 0x0A
+→ MAIN:2048
+```
+
+Diese Struktur wird von einer eigenen Außentemperatur-Aufbereitung gepflegt. Nach der Anlaufphase wird der Wert nur in einem langsamen Sample-/Hold-Rhythmus aktualisiert. Zusätzlich werden sechs dieser Samples in `0x20016DA8+0x06` zu einem noch stärker beruhigten internen Mittelwert zusammengefasst, der von Regel-/Grenzwertlogik verwendet wird.
+
+Die Quellenauswahl erfolgt über `MAIN:1463`:
+
+```text
+1463 != 1
+→ lokaler T04
+
+1463 == 1 und zweiter AT-Sensor gültig
+→ zweiter lokaler Außentemperatur-Thermistor
+
+1463 == 1 und zweiter AT-Sensor ungültig
+→ automatischer Fallback auf lokalen T04
+
+beide Quellen ungültig
+→ 0x7FFF / ungültig
+```
+
+Der zweite Außentemperaturfühler ist ein physischer lokaler Sensorkanal des Mainboards, kein H30-/Hydraulikmodul- oder Modbuswert. Er liegt im lokalen Sensorblock bei:
+
+```text
+Temperatur   0x20015FA8+0x8A
+Sensorstatus 0x20015FA8+0x8E
+```
+
+Das entspricht logischem Sensor-Kanal 23 des 24-Kanal-Temperaturscanners.
+
+Während aktivem Defrost wird der langsame Samplingpfad zurückgesetzt bzw. nicht normal weitergeführt. Dadurch wird die langfristige Außentemperaturbewertung nicht durch Abtaueffekte verfälscht.
+
+**Bewertung: bestätigt** für Datenfluss, Quellenauswahl und Fallback; die offizielle PHNIX-Klartextbezeichnung des Parameters `1463` sowie die konkrete Steckerklemmenbezeichnung des zweiten AT-Sensors bleiben offen.
 
 ---
 
@@ -377,22 +439,23 @@ Details:
 
 ---
 
-# 14. Register 2136 – zweiter T04-/Außentemperaturwert
+# 14. Register 2136 – direkter lokaler T04-Außentemperaturwert
 
-Helper `0x0808799C` schreibt nach MAIN:2136 und ist als T04/Außentemperatur bestätigt.
-
-```text
-2136 = zweiter T04-/Außentemperaturwert, x0,1 °C
-```
-
-Der gleiche T04-Getter addiert vorher den signed Kalibrierwert:
+Helper `0x0808799C` schreibt direkt nach MAIN:2136.
 
 ```text
-MAIN:1355
-1 raw = 0,1 K
+2136 = lokaler T04 + signed(MAIN:1355)
 ```
 
-Damit ist `2136` bereits ein **korrigierter** Außentemperaturwert. Der Offset wirkt nicht nur auf die Anzeige, sondern auf alle Verbraucher dieses Getters.
+Skalierung:
+
+```text
+1 raw = 0,1 °C
+```
+
+Damit ist `2136` der **aktuelle korrigierte lokale Außentemperaturfühlerwert** und nicht einfach ein zweiter Spiegel von `2048`.
+
+`MAIN:1463` ändert diesen direkten lokalen T04-Pfad nicht. Die alternative Außentemperaturquelle wird ausschließlich im aufbereiteten/ausgewählten AT-Pfad verwendet, der nach `MAIN:2048` führt.
 
 **Bewertung: bestätigt.**
 
@@ -545,6 +608,7 @@ Zuordnung damit bestätigt.
 2026       → INV1:2113 High-Byte Diagnose
 2027       → INV1:2113 Low-Byte Diagnose
 2028       → INV1:2118 Diagnose
+2048       → ausgewählte/zeitlich aufbereitete wirksame Außentemperatur; Quelle über MAIN:1463
 2057       → T35 AC Input Current
 2071       → Kompressor-Sollfrequenz
 2080       → Inverter-/Driver-Statuswort INV1:2099
@@ -553,7 +617,7 @@ Zuordnung damit bestätigt.
 2109       → intern beschriebener V3.3-Status
 2117/19/21/23 → High-Wörter der 32-Bit-Energiezähler
 2133       → effektiver SG-Modus 0..4; 10-min-Hold dokumentieren
-2136       → T04 Außentemperatur, zweiter Veröffentlichungsweg; MAIN:1355 Offset wirkt bereits
+2136       → direkter lokaler korrigierter T04; MAIN:1355 Offset wirkt bereits
 2137       → elektrische WP-/Inverterleistung ohne Zusatzanteil, /10 kW
 2138       → thermische WP-Leistung ohne Zusatzanteil, /10 kW
 2140/2141 → 32-Bit-Paar
@@ -562,6 +626,14 @@ Zuordnung damit bestätigt.
 2147       → intern befüllter V3.3-Wert
 2160       → Zone-1-Raumtemperatur; Offset MAIN:1353
 2162       → Zone-2-Raumtemperatur; Offset MAIN:1354
+```
+
+Zusätzlich gilt für den AT-Pfad:
+
+```text
+MAIN:1463 = 1 aktiviert den zweiten lokalen Außentemperaturfühler für den 2048-Regelpfad
+bei ungültigem Alternativsensor erfolgt automatischer Fallback auf lokalen T04
+MAIN:2136 bleibt der direkte lokale T04
 ```
 
 Zusätzlich muss die SG-Ready-UI wissen:
@@ -623,6 +695,15 @@ offset_scale
 offset_signed
 ```
 
+Für ausgewählte/gefilterte Sensorpfade wie `2048` zusätzlich sinnvoll:
+
+```text
+source_selector
+source_fallback
+filtering
+raw/direct_register
+```
+
 ---
 
 # 24. Abschlussstatus
@@ -635,12 +716,14 @@ MAIN:2133 als effektiver SG-Ready-Modus
 Reset dieses Holds bei Änderung von MAIN:1334
 ```
 
-Zusätzlich sind die zuvor offenen Zonenwerte jetzt fachlich geschlossen:
+Zusätzlich sind die zuvor offenen bzw. zu grob bezeichneten Sensorpfade jetzt fachlich getrennt:
 
 ```text
 MAIN:2160 = Zone-1-Raumtemperatur, korrigiert durch MAIN:1353
 MAIN:2162 = Zone-2-Raumtemperatur, korrigiert durch MAIN:1354
-MAIN:2136 = korrigierter T04-Zweitpfad; MAIN:1355 wirkt im T04-Getter
+MAIN:2136 = direkter lokaler T04, korrigiert durch MAIN:1355
+MAIN:2048 = ausgewählte und zeitlich aufbereitete wirksame Außentemperatur
+MAIN:1463 = Auswahl des optionalen zweiten lokalen AT-Fühlers für den 2048-Pfad
 ```
 
 ---
