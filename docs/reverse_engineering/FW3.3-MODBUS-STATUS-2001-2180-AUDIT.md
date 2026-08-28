@@ -1,6 +1,6 @@
 # Mainboard-Firmware V3.3 – Modbus-Statusregister 2001–2180: Audit gegen FoxAir_Control
 
-Stand: 24. August 2026
+Stand: 28. August 2026
 
 Diese Datei dokumentiert den vollständigen Audit des öffentlichen V3.3-Statusbereichs gegen den aktuellen Wissensstand in `FoxAir_Control/data`.
 
@@ -48,11 +48,13 @@ Wichtigste Ergebnisse:
 8. **2117/2119/2121/2123 sind High-Wörter von 32-Bit-Energiezählern**.
 9. **2125/2126 und 2127/2128** bilden zwei weitere 32-Bit-Energiezählerpaare, sehr wahrscheinlich DHW elektrisch/thermisch.
 10. **2133 = tatsächlich aktiver SG-Ready-Modus 0..4** und unterliegt einem **festen 10-Minuten-Hold zwischen akzeptierten Modewechseln**.
-11. **2136 = zweiter T04-/Außentemperaturwert**.
+11. **2136 = zweiter T04-/Außentemperaturwert**; der zugrunde liegende T04-Getter enthält `MAIN:1355` als signed Offset.
 12. **2137/2138 sind WP-only-Leistungsgrößen**, keine simplen Spiegel von 2054/2059.
 13. **2140–2143 = zwei 32-Bit-Werte**.
 14. **2146 = Capability-/Statusbitfeld**, Basiswert `0x002C`.
-15. V3.3 baut und broadcastet bis **2180**; 2151–2166 und 2178–2180 haben bestätigte interne Quellen.
+15. **2160 = Zone-1-Raumtemperatur**, korrigiert über `MAIN:1353`.
+16. **2162 = Zone-2-Raumtemperatur**, korrigiert über `MAIN:1354`.
+17. V3.3 baut und broadcastet bis **2180**; 2151–2166 und 2178–2180 haben bestätigte interne Quellen.
 
 ---
 
@@ -383,6 +385,17 @@ Helper `0x0808799C` schreibt nach MAIN:2136 und ist als T04/Außentemperatur bes
 2136 = zweiter T04-/Außentemperaturwert, x0,1 °C
 ```
 
+Der gleiche T04-Getter addiert vorher den signed Kalibrierwert:
+
+```text
+MAIN:1355
+1 raw = 0,1 K
+```
+
+Damit ist `2136` bereits ein **korrigierter** Außentemperaturwert. Der Offset wirkt nicht nur auf die Anzeige, sondern auf alle Verbraucher dieses Getters.
+
+**Bewertung: bestätigt.**
+
 ---
 
 # 15. Register 2140–2143 – zwei 32-Bit-Werte
@@ -449,17 +462,36 @@ Der aktuelle `FoxAir_Control`-Katalog endet bei 2149, V3.3 erzeugt/broadcastet a
 | 2157 | `0x20015EF0+0x10` | uint16 | 0 | offen |
 | 2158 | `0x20015EF0+0x12` | uint16 | 0 | offen |
 | 2159 | im Hauptbuilder nicht gesetzt | – | 0 | Reserve/anderer Pfad |
-| 2160 | `0x2001605C+0x66` | uint16 | 0 | offen |
-| 2161 | `0x20016100+0x78` | uint16 | 0 | offen |
-| 2162 | `0x20016100+0x66` | uint16 | 0 | offen |
-| 2163 | berechnet, auf 100 begrenzt | Ratio/Prozent-artig | 0 | offen |
-| 2164 | `0x2001605C+0x7A` | uint16 | **450** | offen |
-| 2165 | `0x20016100+0x7A` | uint16 | **350** | offen |
-| 2166 | `0x20016100+0x46` | int16 | **1** | offen |
+| **2160** | `0x2001605C+0x66` | uint16 | 0 | **Zone-1-Raumtemperatur; korrigiert über MAIN:1353** |
+| 2161 | `0x20016100+0x78` | uint16 | 0 | Zone-2-Mischwassertemperatur |
+| **2162** | `0x20016100+0x66` | uint16 | 0 | **Zone-2-Raumtemperatur; korrigiert über MAIN:1354** |
+| 2163 | berechnet, auf 100 begrenzt | Ratio/Prozent-artig | 0 | Mischventil-/Mischkreiswert 0…100 % |
+| 2164 | `0x2001605C+0x7A` | uint16 | **450** | Zone-1-Auslauftemperatur nach AT-Kompensation |
+| 2165 | `0x20016100+0x7A` | uint16 | **350** | Zone-2-Auslauftemperatur nach AT-Kompensation |
+| 2166 | `0x20016100+0x46` | int16 | **1** | aktiver signed Wert derselben Zonenstruktur; Semantik offen |
 | 2167–2177 | im Hauptbuilder nicht befüllt | – | 0 | Reserve/anderer Pfad |
 | 2178 | `0x20016DB4+0x00` | uint16 | 0 | offen |
 | 2179 | `0x20016DB4+0x02` | uint16 | 0 | offen |
 | 2180 | `0x20016DB4+0x04` | uint16 | 0 | offen |
+
+## 18.1 Kalibrierung der Raumtemperaturen
+
+Die Zonenpfade addieren die öffentlichen signed Parameter:
+
+```text
+MAIN:1353 -> Zone-1-Raumtemperatur -> MAIN:2160
+MAIN:1354 -> Zone-2-Raumtemperatur -> MAIN:2162
+```
+
+Skalierung:
+
+```text
+1 raw = 0,1 K
+```
+
+Die DWIN-Firmware bestätigt die Bezeichnungen `Zone 1 room temperature` für `2160` und `Zone 2 room temperature` für `2162`.
+
+Für `MAIN:2161 / Zone-2-Mischwassertemperatur` wurde im V3.3-Audit **kein eigener öffentlicher additiver Modbus-Offset** gefunden.
 
 ---
 
@@ -521,13 +553,15 @@ Zuordnung damit bestätigt.
 2109       → intern beschriebener V3.3-Status
 2117/19/21/23 → High-Wörter der 32-Bit-Energiezähler
 2133       → effektiver SG-Modus 0..4; 10-min-Hold dokumentieren
-2136       → T04 Außentemperatur, zweiter Veröffentlichungsweg
+2136       → T04 Außentemperatur, zweiter Veröffentlichungsweg; MAIN:1355 Offset wirkt bereits
 2137       → elektrische WP-/Inverterleistung ohne Zusatzanteil, /10 kW
 2138       → thermische WP-Leistung ohne Zusatzanteil, /10 kW
 2140/2141 → 32-Bit-Paar
 2142/2143 → 32-Bit-Paar
 2146       → Capability-/Statusbitfeld; Basis 0x2C
 2147       → intern befüllter V3.3-Wert
+2160       → Zone-1-Raumtemperatur; Offset MAIN:1353
+2162       → Zone-2-Raumtemperatur; Offset MAIN:1354
 ```
 
 Zusätzlich muss die SG-Ready-UI wissen:
@@ -581,6 +615,14 @@ feedback_of
 backend_notes
 ```
 
+Für kalibrierte Messwerte zusätzlich sinnvoll:
+
+```text
+offset_register
+offset_scale
+offset_signed
+```
+
 ---
 
 # 24. Abschlussstatus
@@ -593,7 +635,13 @@ MAIN:2133 als effektiver SG-Ready-Modus
 Reset dieses Holds bei Änderung von MAIN:1334
 ```
 
-Damit ist die beobachtete Verzögerung von 2133 nicht mehr nur plausibel, sondern aus V3.3 erklärt und live bestätigt.
+Zusätzlich sind die zuvor offenen Zonenwerte jetzt fachlich geschlossen:
+
+```text
+MAIN:2160 = Zone-1-Raumtemperatur, korrigiert durch MAIN:1353
+MAIN:2162 = Zone-2-Raumtemperatur, korrigiert durch MAIN:1354
+MAIN:2136 = korrigierter T04-Zweitpfad; MAIN:1355 wirkt im T04-Getter
+```
 
 ---
 
