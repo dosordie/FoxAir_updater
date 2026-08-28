@@ -109,9 +109,18 @@ cleanup_original_state() {
 cleanup() {
     if test -f "$RUN_ACTIVE" && ! test -f "$SAFE_TO_CLEAN"; then
         PID=$(service_pid || true)
-        test -n "$PID" && kill -STOP "$PID" 2>/dev/null || true
-        printf '{"phase":"guarded-hold","terminal":false,"recovery_required":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
-        echo "ACTIVE OTA LEFT IN GUARDED HOLD; CLOUD AND WATCHDOGS REMAIN BLOCKED" >&2
+        if test -f "$TRANSFER_STARTED"; then
+            # Once C5A8 has started, the original service owns the transfer.
+            # Stopping it as a debugger-failure fallback would be more
+            # dangerous than losing our observation channel.
+            test -n "$PID" && kill -CONT "$PID" 2>/dev/null || true
+            printf '{"phase":"transfer-active-unmonitored","terminal":false,"recovery_required":true,"original_service_authoritative":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
+            echo "ACTIVE C5A8 TRANSFER CONTINUES UNDER ORIGINAL SERVICE; CLOUD AND WATCHDOGS REMAIN BLOCKED" >&2
+        else
+            test -n "$PID" && kill -STOP "$PID" 2>/dev/null || true
+            printf '{"phase":"guarded-hold","terminal":false,"recovery_required":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
+            echo "ACTIVE PRE-C5A8 OTA LEFT IN GUARDED HOLD; CLOUD AND WATCHDOGS REMAIN BLOCKED" >&2
+        fi
         return
     fi
     cleanup_original_state
@@ -660,6 +669,7 @@ target remote 127.0.0.1:12345
 set \$launcher_armed = 1
 set \$local_ota_active = 0
 set \$terminal_pending = 0
+set \$ota_event_seq = 0
 
 break *0x1fe40
 break *0x1c4bc
@@ -669,6 +679,7 @@ break *0x1c7cc
 break *0x1d2f8
 commands 6
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$launcher_armed == 1 && \$r0 == 7
     set \$r0 = 11
   end
@@ -677,6 +688,7 @@ end
 
 commands 4
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1
     disable 4
     shell echo '{"phase":"c357","terminal":false}' > $STATUS
@@ -686,6 +698,7 @@ end
 
 commands 5
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1
     disable 5
     shell touch $TRANSFER_STARTED
@@ -697,6 +710,7 @@ end
 break *0x18d04
 commands 7
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1
     set \$r0 = 0
     set \$pc = \$lr
@@ -707,6 +721,7 @@ end
 break *0x191c0
 commands 8
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1
     set \$terminal_pending = 1
     shell echo '{"phase":"success-report","terminal":false}' > $STATUS
@@ -719,6 +734,7 @@ end
 break *0x19264
 commands 9
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1
     set \$terminal_pending = 2
     shell echo '{"phase":"failure-report","terminal":false}' > $STATUS
@@ -731,6 +747,7 @@ end
 break *0x1da3c
 commands 10
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1 && \$terminal_pending == 1 && *(unsigned char *)0x98a94 == 12
     set \$local_ota_active = 0
     set \$launcher_armed = 0
@@ -745,6 +762,7 @@ end
 break *0x1d748
 commands 11
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1 && \$terminal_pending == 2 && *(unsigned char *)0x98a94 == 12
     set \$local_ota_active = 0
     set \$launcher_armed = 0
@@ -808,12 +826,22 @@ set \$local_ota_active = 1
 shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c36e_status":1}' > $STATUS
 commands 3
   silent
+  set \$ota_event_seq = \$ota_event_seq + 1
   if \$local_ota_active == 1
     printf "PHNIX later-c36e status=%u\n", *(unsigned char *)(\$r0+3)
   end
   continue
 end
-continue
+while \$local_ota_active == 1
+  set \$ota_event_before = \$ota_event_seq
+  continue
+  if \$local_ota_active == 1 && \$ota_event_seq == \$ota_event_before
+    shell echo '{"phase":"debugger-unexpected-stop","terminal":false,"recovery_required":true}' > $STATUS
+    shell kill -STOP $PID
+    detach
+    quit
+  end
+end
 EOF
 }
 
@@ -841,7 +869,13 @@ run_hook() {
     sleep 1
     gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/gdb.log" 2>&1 &
     echo $! > "$GDB_PID"
-    wait "$(cat "$GDB_PID")"
+    GDB_RC=0
+    wait "$(cat "$GDB_PID")" || GDB_RC=$?
+    if ! grep -q '"terminal":true' "$STATUS" 2>/dev/null; then
+        printf '{"phase":"debugger-ended-before-terminal","terminal":false,"recovery_required":true,"gdb_exit_code":%s}\n' "$GDB_RC" > "$STATUS"
+        fail "runtime debugger ended before a terminal OTA state (gdb exit $GDB_RC)"
+    fi
+    test "$GDB_RC" = 0 || fail "runtime debugger failed after terminal OTA state (gdb exit $GDB_RC)"
 }
 
 hold_hook() {
