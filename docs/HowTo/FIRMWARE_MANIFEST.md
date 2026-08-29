@@ -1,15 +1,17 @@
 # Firmwaremanifest
 
+Stand: 29. August 2026
+
 > [!NOTE]
-> Für Windows steht dieselbe Manifest-Logik inzwischen direkt in der **FoxAir-Updater-GUI** zur Verfügung. Öffentliche Windows-Versionen gibt es unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases).
+> Für Windows steht dieselbe Manifest-Logik direkt in der **FoxAir-Updater-GUI** zur Verfügung. Öffentliche Windows-Versionen gibt es unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases).
 >
-> Unter Windows sind ADB-Verbindung, Originalstatus und Backup real getestet. Ein **echtes Firmwareupdate auf eine andere Mainboard-Version ist weiterhin nicht live validiert**.
+> Der vollständige Firmwarewechsel **V3.3 → V3.4** wurde auf realer Hardware erfolgreich durchgeführt. Der dabei verwendete V3.4-Datensatz wurde vor dem Lauf über das Manifest geprüft und nach dem Update über C36E Status 5 / Board-Step 12 sowie C544-Version `0034` bestätigt.
 
-Jeder Firmwarelauf verwendet eine Manifestdatei als zentrale Quelle für die
-Firmwaremetadaten, die der Updater für Prüfung, Vorbereitung und OTA-Handshake
-verwendet.
+Jeder Firmwarelauf verwendet eine Manifestdatei als zentrale Quelle für die Firmwaremetadaten, die der Updater für Prüfung, Vorbereitung und OTA-Handshake benötigt.
 
-Für FoxAir gibt es jetzt drei sinnvolle Arbeitsweisen:
+Das Manifest ersetzt keine Herstellersignatur. Es stellt sicher, dass die ausgewählte Datei exakt zu den lokal erwarteten Metadaten und Prüfsummen passt.
+
+## Arbeitsweisen
 
 ```text
 Standardmodus
@@ -28,33 +30,38 @@ Standardmodus
   -> schreibt keine Manifestdatei
 ```
 
-`--full` und `--show` können kombiniert werden. Damit lässt sich eine neue
-Firmware vollständig lesend analysieren, ohne eine JSON-Datei anzulegen.
+`--full` und `--show` können kombiniert werden. Damit lässt sich eine neue Firmware vollständig lesend analysieren, ohne eine JSON-Datei anzulegen.
 
-Der Vollmodus arbeitet fail-closed: Wird keine eindeutige Firmwareidentität
-gefunden, wird weder ein Manifest geschrieben noch eine Vorschau ausgegeben.
+Der Vollmodus arbeitet fail-closed: Wird keine eindeutige Firmwareidentität gefunden, wird weder ein Manifest geschrieben noch eine Vorschau erzeugt.
 
 ## Windows-GUI
 
 Auf der Registerkarte **Manifest** stehen die gleichen Funktionen ohne Python-/PowerShell-Bedienung bereit:
 
-1. originale Firmwaredatei auswählen – die Datei muss keine `.bin`-Endung besitzen;
+1. originale Firmwaredatei auswählen – sie muss keine `.bin`-Endung besitzen;
 2. **Vorschau aus Firmware (Full / Show)** ausführen;
 3. erkannte Werte prüfen;
-4. **Manifest automatisch erzeugen (Full)** verwenden.
+4. **Manifest automatisch erzeugen (Full)** verwenden;
+5. das erzeugte Manifest im Firmware-Update-Tab verwenden.
 
-Intern werden weiterhin unverändert dieselben Aufrufe verwendet:
+Intern werden dieselben Werkzeuge verwendet:
 
 ```text
 create_firmware_manifest.py --firmware FIRMWARE --full --show
 create_firmware_manifest.py --firmware FIRMWARE --full --output FIRMWARE.json
 ```
 
-Falls die automatische Analyse nicht möglich ist, bleibt in der GUI als letzter Fallback die manuelle Manifest-Erzeugung mit Software-Code, Display-Version und Target-SSID erhalten.
+Falls die automatische Analyse nicht möglich ist, bleibt als letzter Fallback die manuelle Manifest-Erzeugung mit Software-Code, Display-Version und Target-SSID erhalten. Diese Werte dürfen nicht geraten werden.
 
 ## Aufbau
 
-Beispiel für das bestätigte V3.3-Format:
+Schema:
+
+```text
+foxair-firmware-v1
+```
+
+Beispiel V3.3:
 
 ```json
 {
@@ -71,44 +78,21 @@ Beispiel für das bestätigte V3.3-Format:
 }
 ```
 
-## V3.3 zusätzlich gegen originale PHNIX-OTA-Metadaten verifiziert
+Beim erfolgreichen V3.3→V3.4-Live-Update wurde verwendet:
 
-Für die vorhandene V3.3-Referenzdatei liegt inzwischen auch eine gesicherte originale Datei
-
-```text
-/data/phnixIot_device_OTA_INFO
-```
-
-vor. Deren CRC ist gültig. Aus ihr wurden folgende vom Originaldienst `phnixIot4G` persistent gespeicherte Werte dekodiert:
-
-```text
-Firmware-MD5     CEB6A4BF386FF644E23E410023E74673
-SoftwareCode     82400644
-SoftwareVersion  0033
-```
-
-Die gesicherte V3.3-Firmware besitzt lokal exakt denselben MD5:
-
-```text
-CEB6A4BF386FF644E23E410023E74673
-```
-
-und enthält dieselbe Identität:
-
-```text
-82400644 / 0033 -> V3.3
-```
-
-Damit ist die V3.3-Referenzfirmware nicht nur strukturell plausibel und lokal gehasht, sondern zusätzlich **gegen die original vom PHNIX-Updatedienst gespeicherten OTA-Metadaten verifiziert**.
-
-Wichtig: Das ist ein MD5-Integritätsnachweis gegen die originale PHNIX-Sollreferenz, keine digitale Herstellersignatur. Der zusätzliche SHA-256-Wert stammt aus unserer lokalen Sicherung und dient der späteren eindeutigen Wiedererkennung.
-
-Die zugehörige gesicherte `phnixIot_device_statisic` enthält außerdem die Board-OTA-SSID `99` dezimal = `0x63` und bestätigt damit zusätzlich die Verwendung von `target_ssid = "0063"` für FoxAir.
-
-Details zur Persistenzstruktur und zum realen Abgleich stehen unter:
-
-```text
-docs/reverse_engineering/PHNIX_phnixIot4G_ota_persistence.md
+```json
+{
+  "schema": "foxair-firmware-v1",
+  "firmware_file": "phnixIot_device_OTA",
+  "software_code": "82400644",
+  "display_version": "V3.4",
+  "wire_version": "0034",
+  "target_ssid": "0063",
+  "size": 289806,
+  "md5": "149A586EDE6F035B385762EA48C71605",
+  "sha256": "97B4BB09BF854BD3C7521278DE05354D9BB04A862DD05A864582B365D7AF5890",
+  "image_base": "0x08050000"
+}
 ```
 
 ## Herkunft der Felder
@@ -116,17 +100,41 @@ docs/reverse_engineering/PHNIX_phnixIot4G_ota_persistence.md
 | Feld | Standardmodus | `--full` | Bedeutung |
 |---|---|---|---|
 | `schema` | Toolkonstante | Toolkonstante | Manifestformat `foxair-firmware-v1` |
-| `firmware_file` | Firmware-Dateiname | Firmware-Dateiname | Name der BIN |
+| `firmware_file` | Firmware-Dateiname | Firmware-Dateiname | zugehörige Firmwaredatei |
 | `software_code` | `--software-code` | **aus BIN extrahiert** | 8-stellige Mainboard-/Softwarekennung |
-| `display_version` | `--display-version` | aus `wire_version` abgeleitet | z. B. `V3.3` |
-| `wire_version` | aus Display-Version | **aus BIN extrahiert** | z. B. `0033` |
-| `target_ssid` | fest `0063` | fest `0063` | FoxAir Modbus Unit-ID `0x63` |
+| `display_version` | `--display-version` | aus `wire_version` abgeleitet | z. B. `V3.4` |
+| `wire_version` | aus Display-Version | **aus BIN extrahiert** | z. B. `0034` |
+| `target_ssid` | explizit/fest geprüft | explizit/fest geprüft | FoxAir-Modbus-Unit-ID `0x63` → `0063` |
 | `size` | aus Datei | aus Datei | tatsächliche Dateigröße |
-| `md5` | berechnet | berechnet | Original-PHNIX-Dateihash |
-| `sha256` | berechnet | berechnet | zusätzliche lokale Integritätsprüfung |
-| `image_base` | fest/validiert `0x08050000` | fest/validiert `0x08050000` | erwartete Mainboard-Imagebasis |
+| `md5` | berechnet | berechnet | vom Original-PHNIX-OTA verwendete Integritätsprüfung |
+| `sha256` | berechnet | berechnet | zusätzliche lokale eindeutige Integritätsprüfung |
+| `image_base` | validiert | validiert | erwartete Mainboard-Imagebasis `0x08050000` |
 
-## Firmwareidentität in der V3.3-BIN
+## V3.3 gegen originale PHNIX-OTA-Metadaten verifiziert
+
+Für die V3.3-Referenzdatei liegt eine originale
+
+```text
+/data/phnixIot_device_OTA_INFO
+```
+
+mit gültiger CRC vor. Dekodiert wurden:
+
+```text
+Firmware-MD5     CEB6A4BF386FF644E23E410023E74673
+SoftwareCode     82400644
+SoftwareVersion  0033
+```
+
+Die gesicherte V3.3-Firmware besitzt exakt denselben MD5 und dieselbe Identität.
+
+Das ist ein Integritätsnachweis gegen die vom Originaldienst gespeicherten OTA-Metadaten, **keine digitale Herstellersignatur**.
+
+Details:
+
+[`../reverse_engineering/PHNIX_phnixIot4G_ota_persistence.md`](../reverse_engineering/PHNIX_phnixIot4G_ota_persistence.md)
+
+## Firmwareidentität in der BIN
 
 Die analysierte V3.3-Firmware enthält die aktive Identität als 12 ASCII-Bytes:
 
@@ -148,8 +156,7 @@ Datei-Offset: 0x42780
 Flashadresse: 0x08092780
 ```
 
-Der Vollmodus verwendet **nicht** diesen festen Offset. Eine neue Firmware darf
-die Konstante an eine andere Stelle verschieben.
+Der Vollmodus verwendet **nicht** diesen festen Offset. Eine andere Firmware darf die Konstante an eine andere Stelle verschieben.
 
 Stattdessen sucht der Generator nach dem rekonstruierten Format:
 
@@ -159,53 +166,40 @@ Stattdessen sucht der Generator nach dem rekonstruierten Format:
 4-stellige nicht-null Wire-Version im Format 00xy
 ```
 
-Die V3.3 enthält direkt daneben noch die andere code-referenzierte Konstante:
+Werden kein oder mehrere gültige Kandidaten gefunden, bricht `--full` ab. Das Tool rät nicht.
 
-```text
-823003140000
-```
+## `display_version` wird aus `wire_version` abgeleitet
 
-Da deren Versionsanteil `0000` ist, wird sie nicht als laufende
-Firmwareidentität akzeptiert.
-
-Werden kein oder mehrere gültige nicht-null Kandidaten gefunden, bricht
-`--full` ab. Das Tool rät nicht und verwendet nicht automatisch den ersten
-Treffer.
-
-## `display_version` wird nicht separat aus der BIN gelesen
-
-Ein ASCII-String `V3.3` ist in der V3.3-BIN nicht vorhanden. Die sichtbare
-Version wird aus der Wire-Version erzeugt:
+Beispiele:
 
 ```text
 0033 -> V3.3
 0034 -> V3.4
 ```
 
-## `target_ssid = 0063` ist die Modbus-Adresse
+## `target_ssid = 0063`
 
-Die als `target_ssid` bezeichnete Manifestangabe entspricht beim FoxAir-Pfad
-der festen Modbus-Unit-ID des Mainboards:
-
-```text
-0x63 -> Manifest/0033-Darstellung "0063"
-```
-
-Deshalb gilt für dieses Repository:
+Für den bestätigten FoxAir-Pfad entspricht `target_ssid` der Modbus-Unit-ID des Mainboards:
 
 ```text
-target_ssid muss 0063 sein
+0x63 -> "0063"
 ```
 
-## Vollmodus: Manifest aus einer Source-Firmware erzeugen
+Für den aktuell bestätigten GL9-/Softwarecode-82400644-Pfad gilt deshalb:
 
-Liegt eine neue Firmware im lokalen Ordner `firmware/`:
+```text
+target_ssid = 0063
+```
+
+Andere Hardwarevarianten nicht ohne eigenen Nachweis übernehmen.
+
+## Vollmodus: Manifest aus einer Firmware erzeugen
 
 ```bash
 ./foxair-updater manifest FW3.4.bin --full
 ```
 
-Das Ergebnis wird standardmäßig neben der Firmware geschrieben:
+Standardausgabe:
 
 ```text
 firmware/FW3.4.bin
@@ -214,45 +208,11 @@ firmware/FW3.4.bin
 
 ## Read-only Vorschau mit `--show`
 
-Soll die Firmware nur analysiert und das resultierende Manifest angesehen
-werden, ohne eine Datei zu erzeugen:
-
 ```bash
 ./foxair-updater manifest FW3.4.bin --full --show
 ```
 
-Der Befehl liest ausschließlich die lokale Firmwaredatei, führt dieselbe
-Firmwareanalyse wie beim echten Manifest-Erstellen aus und gibt anschließend
-das vollständige JSON auf stdout aus.
-
-Beispielausgabe:
-
-```json
-{
-  "schema": "foxair-firmware-v1",
-  "firmware_file": "FW3.4.bin",
-  "software_code": "82400644",
-  "display_version": "V3.4",
-  "wire_version": "0034",
-  "target_ssid": "0063",
-  "size": 123456,
-  "md5": "...",
-  "sha256": "...",
-  "image_base": "0x08050000"
-}
-```
-
-Dabei wird **keine `.json`-Datei geschrieben**. `--show` ist damit besonders
-geeignet, um eine unbekannte Firmware zunächst nur lesend zu prüfen.
-
-Auch der Standardmodus kann so nur als Vorschau verwendet werden:
-
-```bash
-./foxair-updater manifest FW3.4.bin \
-  --software-code 82400644 \
-  --display-version V3.4 \
-  --show
-```
+Dabei wird keine `.json`-Datei geschrieben.
 
 Der direkte Python-Aufruf funktioniert ebenfalls:
 
@@ -267,11 +227,9 @@ python3 tools/phnix_ota/create_firmware_manifest.py \
 
 ## Zusätzliche Sollwerte im Vollmodus
 
-`--software-code` und `--display-version` dürfen zusammen mit `--full`
-angegeben werden. Sie werden dann nicht als Override benutzt, sondern als
-zusätzliche Erwartungswerte. Weicht die BIN davon ab, bricht das Tool ab.
+`--software-code` und `--display-version` dürfen zusammen mit `--full` angegeben werden. Sie dienen dann als zusätzliche Erwartungswerte. Weicht die BIN davon ab, bricht das Tool ab.
 
-## Cortex-M-Plausibilisierung im Vollmodus
+## Cortex-M-Plausibilisierung
 
 Vor der Identitätsextraktion prüft `--full` zusätzlich:
 
@@ -281,23 +239,21 @@ Reset Vector          -> Thumb-Adresse innerhalb des Images
 Image Base            -> 0x08050000
 ```
 
-## Vollprüfung unmittelbar vor einem Update
+## Vollprüfung unmittelbar vor dem Update
 
-Die Firmwareidentität kann vor einem echten Lauf nochmals gegen das vorhandene
-Manifest geprüft werden:
+Unter Linux:
 
 ```bash
 ./foxair-updater update FW3.4.json --full --confirm
 ```
 
-Diese Vollprüfung findet vor ADB- und Busaktivität statt.
+Unter Windows wird dieser Full-Abgleich von der Windows-Sicherheitshülle automatisch unmittelbar vor einem echten Update durchgeführt.
 
-Unter Windows v0.1.4 wird dieser Full-Abgleich von der Windows-Sicherheitshülle automatisch unmittelbar vor einem echten Update durchgeführt. Auch das ändert nichts daran, dass der Windows-Firmware-Schreibpfad noch nicht live validiert wurde.
+Der V3.3→V3.4-Live-Lauf bestätigt, dass der Full-Abgleich mit einem realen erfolgreichen Versionswechsel zusammen funktioniert. Er beweist nicht, dass beliebige andere Firmware-/Hardwarekombinationen kompatibel sind.
 
-## Warum diese Trennung beim OTA wichtig ist
+## Warum die Trennung beim OTA wichtig ist
 
-Beim Mainboard-OTA sind mindestens drei verschiedene Informationsquellen zu
-unterscheiden:
+Beim Mainboard-OTA gibt es mindestens drei verschiedene Informationsquellen:
 
 ```text
 1. Angebots-/Handshake-Metadaten
@@ -309,14 +265,18 @@ unterscheiden:
    -> C357 / lokale Dateiprüfung
 
 3. tatsächlich laufende Firmwareidentität
-   -> stammt aus dem laufenden Mainboard-Firmwarecode
+   -> stammt aus dem laufenden Mainboard-Firmwarecode / C544
 ```
 
-## `0033` ist nicht die Firmwareversion
+Ein passendes Manifest bestätigt Punkt 1 und 2. Ob die neue Firmware tatsächlich übernommen wurde, wird erst nach dem OTA über den terminalen Mainboardstatus und die neue laufende Firmwareidentität bestätigt.
 
-Der oberste JSON-Code `0033` ist eine Protokollkonstante für einen
-Mainboard-OTA-Auftrag. Er darf nicht mit `wire_version = 0033` für Firmware
-V3.3 verwechselt werden.
+## `0033` kann zwei verschiedene Bedeutungen haben
+
+Der oberste JSON-Code `0033` ist eine Protokollkonstante für einen Mainboard-OTA-Auftrag.
+
+Davon getrennt kann `wire_version = "0033"` die Firmwareversion V3.3 bedeuten.
+
+Beide Werte dürfen nicht verwechselt werden.
 
 ## Referenzmanifest
 
@@ -326,17 +286,12 @@ Das bestätigte V3.3-Referenzmanifest liegt unter:
 firmware_manifests/FW3.3.json
 ```
 
-Für neue Firmwarestände ist ein sinnvoller erster, vollständig lokaler Schritt:
+Für neue Firmwarestände ist der sinnvolle erste Schritt:
 
 ```bash
 ./foxair-updater manifest DATEI.bin --full --show
 ```
 
-oder unter Windows der gleichnamige GUI-Schritt **Vorschau aus Firmware (Full / Show)**.
+oder unter Windows **Vorschau aus Firmware (Full / Show)**.
 
-Erst wenn die erkannten Werte plausibel sind, kann anschließend mit demselben
-Analysemotor eine echte Manifestdatei erzeugt werden:
-
-```bash
-./foxair-updater manifest DATEI.bin --full
-```
+Erst wenn die erkannten Werte plausibel sind, eine Manifestdatei erzeugen und anschließend einen Dry-Run durchführen.
