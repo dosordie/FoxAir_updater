@@ -1,16 +1,17 @@
 # PHNIX OTA Update-Ablauf – Kurzreferenz
 
-Stand: 25. August 2026
+Stand: 29. August 2026
 
-Diese Datei fasst den aktuell bekannten PHNIX-/FoxAir-Mainboard-Updatepfad kompakt zusammen. Sie ist als schnelle Referenz gedacht und trennt bewusst zwischen:
+Diese Datei fasst den aktuell bekannten und inzwischen teilweise **live bestätigten** PHNIX-/FoxAir-Mainboard-Updatepfad kompakt zusammen. Sie trennt bewusst zwischen:
 
-- **Upload der Firmwaredatei vom Host auf das LTE-Modem** und
-- **eigentlicher Firmwareübertragung vom LTE-Modem zum Mainboard über RS485/C5A8**.
+- Upload der Firmwaredatei vom Host auf das LTE-Modem und
+- eigentlicher Firmwareübertragung vom LTE-Modem zum Mainboard über RS485/C5A8.
 
 > [!IMPORTANT]
-> Ein per ADB auf das LTE-Modem kopiertes Firmwareimage bedeutet noch **nicht**, dass Firmwaredaten zum Mainboard geschrieben wurden. Die eigentliche Mainboard-Datenübertragung beginnt erst später mit **C5A8**.
+> Ein per ADB auf das LTE-Modem kopiertes Firmwareimage bedeutet noch **nicht**, dass Firmwaredaten zum Mainboard geschrieben wurden. Die eigentliche Mainboard-Datenübertragung beginnt erst mit **C5A8**.
 
----
+> [!NOTE]
+> Der vollständige Pfad **V3.3 → V3.4** wurde auf realer Hardware erfolgreich durchgeführt. Beobachtet wurden kompletter C5A8-Transfer, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließend C544-Version `0034`.
 
 ## 1. Software-Schichten unter Windows
 
@@ -18,23 +19,13 @@ Diese Datei fasst den aktuell bekannten PHNIX-/FoxAir-Mainboard-Updatepfad kompa
 FoxAir_Updater.exe
         │
         ▼
-foxair_updater_app.py
-  └─ GUI / lesbare Statusanzeige
-        │
-        ▼
-foxair_updater_gui.py
-  └─ baut den eigentlichen Aufruf
+Windows-GUI / Statusdarstellung
         │
         ▼
 phnix_windows_controller_wrapper.py
-  └─ Windows-Sicherheitswrapper
         │
         ▼
-phnix_local_ota_controller_hardened.py
-        │
-        ▼
-phnix_local_ota_controller_core.py
-  = gemeinsamer OTA-Controller
+gemeinsamer phnix_local_ota_controller.py
         │
         ▼
 ADB → LTE-Modem → phnixIot4G → RS485 → Mainboard
@@ -42,16 +33,14 @@ ADB → LTE-Modem → phnixIot4G → RS485 → Mainboard
 
 Der Windows-Wrapper und die GUI ergänzen Host-Sicherheitsprüfungen und Darstellung. Der eigentliche OTA-/RS485-Ablauf bleibt im gemeinsamen Controller und im Originaldienst `phnixIot4G`.
 
----
-
 ## 2. Kurz zusammengefasst
 
 ```text
-Windows GUI
+Windows/Linux Host
  ↓
 Manifest/Firmware prüfen
  ↓
-alten LTE-Cache sichern
+alten LTE-Cache optional sichern
  ↓
 LTE-/ADB-Preflight
  ↓
@@ -61,15 +50,15 @@ Firmware per ADB nach /data/phnix_local_ota/... hochladen
  ↓
 lokalen HTTP-Server bereitstellen
  ↓
-Original phnixIot4G kontrolliert für den OTA-Ablauf verwenden
+Original phnixIot4G kontrolliert für OTA verwenden
  ↓
 C350 Versionsangebot
  ↓
-C36E1
+C36E Status 1
  ↓
 C357 Größe + MD5
  ↓
-C36E2
+C36E Status 2
  ↓
 phnixIot4G liest Firmware lokal per HTTP + MD5
  ↓
@@ -79,28 +68,26 @@ C371 ACKs
  ↓
 Mainboard Staging-MD5
  ↓
-C36E3
+C36E Status 3
  ↓
-interner Erase + Copy + MD5
+Erase + Copy + MD5 + Commit/Promotion
  ↓
-C36E5
+C36E Status 5
  ↓
-Commit / Loader / neue Firmware
+board_ota_step 12
+ ↓
+neue Firmware / C544-Version
 ```
 
-Für ein vollständiges Update eines Images in der Größenordnung von V3.3 sollte als **Planungswert derzeit etwa 10–15 Minuten Gesamtdauer** angesetzt werden. Die eigentliche C5A8-Übertragung macht davon den größten Anteil aus. Details und Herleitung stehen in Abschnitt 13.
+Für die bestätigte V3.4-Datei dauerte der vollständige beobachtete Ablauf rund **35 Minuten**. Die reine C5A8-Phase dauerte **28:56 Minuten**.
 
----
+## 3. Host-/Preflight
 
-## 3. Reihenfolge im Detail
-
-### 3.1 Host-/Windows-Preflight
-
-Vor einem echten Update passiert auf dem Windows-PC zunächst:
+Vor einem echten Update:
 
 1. Manifest laden.
-2. Firmwaredatei vollständig analysieren.
-3. Firmwareidentität und Manifest vergleichen, u. a.:
+2. Firmwaredatei analysieren.
+3. Firmwareidentität und Manifest vergleichen:
    - Software-Code,
    - Display-/Wire-Version,
    - Target-SSID,
@@ -108,88 +95,66 @@ Vor einem echten Update passiert auf dem Windows-PC zunächst:
    - MD5,
    - SHA-256,
    - Image-Base.
-4. Eventuell vorhandenen LTE-Firmware-Cache unter
-   `/cache/phnixIot_device_OTA`
-   lokal sichern.
+4. Eventuell vorhandenen LTE-Firmware-Cache lokal sichern.
 5. ADB-/LTE-Preflight durchführen:
    - ADB erreichbar,
    - richtiger `phnixIot4G`-Build,
    - Watchdogs vorhanden,
    - benötigte Werkzeuge vorhanden,
    - `OTA_INFO` plausibel,
-   - kein aktiver Resume-Zustand,
-   - genügend Speicher auf `/data` und `/cache`.
+   - kein unerwarteter Resume-Zustand,
+   - genügend Speicher,
+   - normaler LTE-/MQTT-Zustand.
 
----
+## 4. Runtime-Helfer und Firmwarebereitstellung
 
-### 3.2 Runtime-Helfer installieren
-
-Der Host kopiert:
-
-```text
-phnix_ota_runtime_hook
-```
-
-nach:
+Der Host kopiert den buildgebundenen Runtime-Helfer nach:
 
 ```text
 /data/phnix_ota_runtime_hook
 ```
 
-auf dem LTE-Modem.
-
-Der Helfer wird später benutzt, um den bekannten Originaldienst `phnixIot4G` über die validierten Hook-/Breakpoint-Stellen durch den OTA-Ablauf zu führen.
-
----
-
-### 3.3 Eigentliche Firmwaredatei auf das LTE-Modem hochladen
-
-Erst jetzt wird das Firmwareimage vom PC per ADB auf das LTE-Modem übertragen.
-
-Beispiel:
+Die Firmware wird per ADB lokal auf dem LTE-Modem bereitgestellt, z. B.:
 
 ```text
-PC:
-phnixIot_device_OTA
-
-        │ adb push
-        ▼
-
-LTE:
 /data/phnix_local_ota/phnixIot_device_OTA.bin
 ```
 
-Danach wird die Datei auf dem LTE-Modem lokal per HTTP angeboten, z. B.:
+und dort über Loopback-HTTP angeboten:
 
 ```text
 http://127.0.0.1:8081/phnixIot_device_OTA.bin
 ```
 
-**Wichtig:** Bis hierhin wurde noch keine Firmware zum Mainboard übertragen.
+**Bis hierhin wurde noch keine Firmware zum Mainboard übertragen.**
 
----
+## 5. MQTT während des Updates
 
-## 4. Mainboard-Handshake
+Im aktuellen Normalbetrieb bleibt MQTT **verbunden**.
 
-### 4.1 C350 – Firmwareangebot
+Die frühere `iptables`-Isolation ist nur noch optional (`--isolate-mqtt` / `--update-no-mqtt`, Windows: **Erweitert → MQTT bei Update aus**).
 
-Der Originaldienst sendet über RS485 ein C350-Telegramm mit der angebotenen Firmwareidentität, insbesondere Software-Code und Version.
+Der Originaldienst besitzt einen Rebootpfad nach mehr als 1800 Sekunden intern erkanntem Aliyun/MQTT-Offlinezustand. Wichtig: Dieser Zähler beginnt erst, nachdem der Aliyun-SDK seinen Client intern als offline bewertet. Eine stille Firewall-DROP-Sperre kann davor mehrere 180-s-Keepalive-Zyklen benötigen.
 
-Für V3.3 beispielsweise:
+Es gibt keinen bekannten OTA-Sonderzweig, der diesen Rebootpfad während eines Mainboardupdates deaktiviert.
+
+## 6. C350 – Firmwareangebot
+
+C350 enthält Software-Code und angebotene Wire-Version.
+
+Beispiel V3.4:
 
 ```text
 Software-Code: 82400644
-Wire-Version:   0033
+Wire-Version:   0034
 ```
 
 ### Gleiche Version
 
-Wenn das Mainboard die Firmware bereits installiert hat:
-
 ```text
 C350
  ↓
-C36E = 0
+C36E Status 0
  ↓
 same-version
  ↓
@@ -201,30 +166,24 @@ Dann gilt:
 ```text
 kein C357
 kein C5A8
-keine Firmwareblöcke zum Mainboard
+keine Firmwaredaten zum Mainboard
 ```
 
-Die Firmwaredatei kann zu diesem Zeitpunkt bereits auf dem LTE-Modem liegen, wurde aber **nicht zum Mainboard übertragen**.
+Dieser V3.3→V3.3-Pfad wurde real bestätigt.
 
----
-
-### 4.2 C36E1 – neue/akzeptierte Version
-
-Wenn das Mainboard das angebotene Image als kompatibel und anders als die installierte Version akzeptiert:
+### Neue/akzeptierte Version
 
 ```text
 C350
  ↓
-C36E = 1
+C36E Status 1
 ```
 
 Danach folgt C357.
 
----
+## 7. C357 – Dateigröße und MD5
 
-## 5. C357 – Dateigröße und MD5
-
-C357 übermittelt die Metadaten des vollständigen Firmwareimages:
+C357 übermittelt:
 
 ```text
 Dateigröße
@@ -232,41 +191,28 @@ Dateigröße
 MD5
 ```
 
-Bei erfolgreicher Annahme antwortet das Mainboard:
+Bei erfolgreicher Annahme:
 
 ```text
-C36E = 2
+C36E Status 2
 ```
 
-Dabei wird der persistente OTA-Pending-Zustand im Mainboard gesetzt. Für V3.3 wurde der zugehörige EEPROM-Zustand bei `0x3F0` rekonstruiert.
+Der persistente OTA-Zustand wird vorbereitet.
 
----
+## 8. Lokaler HTTP-/MD5-Schritt im LTE-Modem
 
-## 6. Lokaler HTTP-Lese-/MD5-Schritt im LTE-Modem
-
-Nach C36E2 verwendet `phnixIot4G` seinen normalen OTA-Code:
+Nach Status 2 verwendet `phnixIot4G` seinen originalen Board-OTA-Code:
 
 ```text
-lokaler HTTP-Download
-http://127.0.0.1:8081/...
-        │
-        ▼
-Firmware lesen
-        │
-        ▼
-MD5 prüfen
-        │
-        ▼
-OTA_INFO aktualisieren
+Loopback-HTTP-Download
+→ Firmware lesen
+→ MD5 prüfen
+→ OTA_INFO aktualisieren
 ```
 
-Erst nach diesem Schritt beginnt die eigentliche Firmwaredatenübertragung zum Mainboard.
+Erst danach beginnt C5A8.
 
----
-
-## 7. C5A8 – eigentliche Firmwareübertragung zum Mainboard
-
-Die Firmware wird in Blöcke zerlegt und über RS485 mit C5A8 übertragen.
+## 9. C5A8 – eigentliche Firmwareübertragung
 
 Bekannt für V3.3:
 
@@ -281,227 +227,179 @@ Schematisch:
 ```text
 LTE / phnixIot4G          Mainboard
       │                       │
-      ├──── C5A8 Block 0 ────►│
+      ├──── C5A8 Block ──────►│
       │◄──── C371 ACK ────────┤
-      │                       │
-      ├──── C5A8 Block 1 ────►│
+      ├──── C5A8 Block ──────►│
       │◄──── C371 ACK ────────┤
-      │                       │
       └──── ... ─────────────►│
 ```
 
-Das Mainboard schreibt die Daten zunächst in den Staging-Bereich:
+Das Mainboard schreibt zunächst in den Staging-Bereich ab ungefähr:
 
 ```text
-0x080A1000 ...
+0x080A1000
 ```
 
----
+### 100 % Fortschritt
 
-## 8. C371 – Blockquittung
+Wenn `offset == length`, sind alle Firmwaredaten übertragen.
 
-Jeder erfolgreich verarbeitete C5A8-Block wird mit C371 quittiert.
+> **Das ist noch nicht der terminale Firmwareerfolg.**
 
-Beim letzten Block signalisiert die Abschlussquittung, dass der vollständige Datenstrom angekommen ist und der LTE-Offset der Firmwarelänge entspricht.
+Der Fortschrittsbalken darf bei 100 % stehen bleiben, während das Mainboard weiterarbeitet.
 
----
+## 10. C371 – Blockquittung
 
-## 9. Staging-MD5
+Jeder erfolgreich verarbeitete C5A8-Block wird mit C371 quittiert. Beim letzten Block zeigt die Abschlussquittung an, dass der vollständige Datenstrom angekommen ist.
 
-Nach dem letzten Firmwareblock prüft das Mainboard das vollständige Staging-Image.
+## 11. Staging-MD5 und C36E Status 3
+
+Nach dem letzten Firmwareblock prüft das Mainboard das Staging-Image:
 
 ```text
 MD5 #1 über Staging
         │
-        ├─ Fehler → C36E4
+        ├─ Fehler → C36E Status 4
         │
-        └─ OK     → C36E3
+        └─ OK     → C36E Status 3
 ```
 
-**C36E3 ist noch nicht der endgültige Firmwareerfolg.**
+**Status 3 ist kein Fehler und kein sicherer Stopppunkt.**
 
-Es bedeutet: vollständiges Image angekommen und Staging-MD5 erfolgreich.
+Im realen V3.3→V3.4-Lauf erschien Status 3 rund **2 Sekunden nach dem letzten C5A8-Block**.
 
----
+## 12. Promotion / Commit
 
-## 10. Interne Promotion im Mainboard
-
-Danach erfolgt die interne Promotion:
+Nach Status 3 läuft das Mainboard selbstständig weiter:
 
 ```text
 Staging-Image
 0x080A1000 ...
-        │
-        ▼
+        ↓
 Zielbereich löschen
 0x08050000 ...
-        │
-        ▼
-Firmware in Zielbereich kopieren
-        │
-        ▼
+        ↓
+Firmware kopieren
+        ↓
 MD5 #2 über Zielbereich
-        │
-        ▼
-Commit / EEPROM
+        ↓
+Descriptor / Commit / Handoff
 ```
 
 Bei Erfolg:
 
 ```text
-C36E5
+C36E Status 5
 ```
 
 Bei Fehler:
 
 ```text
-C36E6
+C36E Status 6
 ```
 
-**C36E5 ist der relevante erfolgreiche Promotion-/Commit-Abschluss.**
+Status 5 ist der relevante erfolgreiche Promotion-/Commit-Abschluss.
 
----
+Im Live-Lauf benötigte das Mainboard vom letzten C5A8 bis Status 5 rund **5 Minuten 16 Sekunden**.
 
-## 11. Loader / Handoff
+## 13. LTE-Abschluss und Board-Step 12
 
-Nach dem erfolgreichen Commit:
+Der Originaldienst verarbeitet Status 5, quittiert den Boardstatus und erreicht terminal wieder:
 
 ```text
-phnixIot4G Erfolgsablauf
- ↓
-board_ota_step → 12
- ↓
-Loader / Handoff
- ↓
-neue Mainboard-Firmware startet
+board_ota_step = 12
 ```
 
-Ein anschließendes C544 kann die neue Mainboard-Identität liefern. Der exakte zeitliche Ablauf dieses ersten C544 nach einem echten Versionswechsel wurde bislang noch nicht live validiert.
+Der aktuelle Updater wertet **Status 5 / Board-Step 12** als terminalen Mainboard-Erfolg.
 
----
+Nach diesem Ergebnis erhält der normale LTE-/Cloudzustand bis zu **120 Sekunden** zur Normalisierung.
 
-## 12. Die wichtigste Trennung
+## 14. Neue Firmwareidentität
+
+Nach dem erfolgreichen Live-Lauf meldete C544:
 
 ```text
-ADB-Upload:
-Windows-PC
-  ↓
-LTE-Modem /data/phnix_local_ota/...
-
-≠
-
-Mainboard-Firmwaretransfer:
-LTE-Modem / phnixIot4G
-  ↓
-RS485 C5A8
-  ↓
-Mainboard-Staging-Flash
+Softwarecode: 82400644
+Version:       0034
 ```
 
-Daher gilt:
+Die erste neue C544-Versionsmeldung wurde ungefähr eine Minute nach Status 5 beobachtet.
 
-> **Eine Firmwaredatei auf dem LTE-Modem ist noch kein begonnenes Mainboard-Flashing.**
->
-> Der tatsächliche Firmwaredatenpfad zum Mainboard beginnt mit den C5A8-Blöcken.
+Damit wurde der tatsächliche Start/aktive Betrieb der neuen V3.4 zusätzlich bestätigt.
 
----
+## 15. Reale V3.3→V3.4-Zeiten
 
-## 13. Geschätzte Update-Dauer
+| Ereignis | Zeitpunkt |
+|---|---|
+| C350 | 00:51:18 |
+| C36E Status 2 | 00:51:19 |
+| erster C5A8 | 00:51:20 |
+| letzter C5A8 bestätigt | 01:20:16 |
+| C36E Status 3 | 01:20:18 |
+| C36E Status 5 | 01:25:32 |
+| Board-Step 12 / terminaler Erfolg | 01:25:34 |
+| C544 Version `0034` | 01:26:33 |
 
-Für ein vollständiges Mainboard-Update mit einer Firmwaredatei in der Größenordnung der bekannten V3.3-Datei sollte derzeit konservativ mit ungefähr:
+Zusammenfassung:
 
 ```text
-ca. 10–15 Minuten Gesamtdauer
+C5A8-Transfer:            ca. 28:56 min
+letzter C5A8 → Status 3:  ca. 2 s
+letzter C5A8 → Status 5:  ca. 5:16 min
+vollständige Beobachtung: ca. 35 min
 ```
 
-gerechnet werden.
+Die frühere technische Schätzung von 10–15 Minuten war damit deutlich zu niedrig und gilt nicht mehr als Planungswert.
 
-Diese Zahl ist **eine technische Schätzung und noch kein live gemessener Wert eines erfolgreich abgeschlossenen Versionswechsels**.
+## 16. Statuscodes
 
-### Rechenbasis für V3.3
-
-Bekannt sind:
-
-```text
-Firmwaregröße:      287598 Byte
-C5A8-Nutzdaten:     168 Byte pro Block
-C5A8-Blöcke:        1712
-OTA-Service-UART:   9600 Baud, 8N1
-```
-
-Bei 9600 Baud und 8N1 stehen theoretisch maximal ungefähr:
-
-```text
-960 Byte/s Zeichenrate auf der seriellen Leitung
-```
-
-zur Verfügung, weil jedes Byte mit Start- und Stopbit ungefähr 10 Bit auf der Leitung benötigt.
-
-Ein C5A8-Frame besteht nicht nur aus den 168 Firmwarebytes, sondern zusätzlich aus Protokollheader, Längen-/Adressfeldern und CRC. Dazu kommt nach jedem Block die C371-Quittung in Gegenrichtung.
-
-Allein der serielle C5A8-/C371-Datenverkehr für 1712 Blöcke ergibt deshalb bereits eine theoretische Mindestdauer in der Größenordnung von:
-
-```text
-ca. 5½–6 Minuten
-```
-
-selbst wenn jeder Block ohne zusätzliche Wartezeit direkt quittiert und der nächste Block sofort gesendet würde.
-
-In der Praxis kommen zusätzlich hinzu:
-
-- RS485-Richtungswechsel und Frame-Abstände,
-- Flash-Programmierung der 168 Byte jedes C5A8-Blocks in den Stagingbereich,
-- Verarbeitung und Quittierung jedes Blocks,
-- mögliche Wiederholungen einzelner Frames,
-- C350-/C357-Handshake,
-- lokaler HTTP-Lese- und MD5-Schritt im LTE-Modem,
-- Staging-MD5,
-- Löschen des Ziel-Flashbereichs,
-- Kopieren von Staging nach `0x08050000`,
-- zweiter MD5-Lauf,
-- EEPROM-/Commit-Schritte,
-- Loader/Handoff,
-- Host-Preflight, ADB-Uploads und abschließende Statusprüfung.
-
-Daher ist als praktischer Planungswert derzeit sinnvoll:
-
-```text
-C5A8-Transferphase: grob etwa 6–8 Minuten
-Gesamter Updateablauf: vorsichtshalber etwa 10–15 Minuten einplanen
-```
-
-> [!NOTE]
-> Die Dauer darf **nicht als Erfolgskriterium oder Timeout** interpretiert werden. Ein Update ist erst anhand der protokollierten Zustände und des erfolgreichen Promotion-/Commit-Pfads abgeschlossen, nicht weil eine bestimmte Zeit vergangen ist.
-
-Sobald ein echter Versionswechsel auf realer Hardware vollständig durchgeführt wurde, sollte dieser Abschnitt mit den real gemessenen Zeitpunkten für C350, C357, erstes/letztes C5A8, C36E3, C36E5 und den ersten bestätigten Start der neuen Firmware ergänzt werden.
-
----
-
-## 14. Statuscodes als Kurzreferenz
-
-| C36E | Bedeutung im bekannten V3.3-Pfad |
+| C36E | Bedeutung im bekannten V3.3/Mainboardpfad |
 |---:|---|
 | 0 | kein Update / gleiche oder nicht akzeptierte Firmware |
 | 1 | C350 akzeptiert |
 | 2 | C357 akzeptiert |
-| 3 | vollständiges Staging-Image + MD5 erfolgreich |
+| 3 | Staging vollständig + Staging-MD5 erfolgreich; Promotion läuft weiter |
 | 4 | Staging-/Datenprüfung fehlgeschlagen |
 | 5 | Promotion / finaler Commit erfolgreich |
 | 6 | Promotion / Commit fehlgeschlagen |
 
----
+## 17. Wichtigste Sicherheitsgrenze
 
-## 15. Sicherheitsgrenze der aktuellen Erkenntnisse
+- ADB-Upload auf das LTE-Modem ist noch kein Mainboard-Flash.
+- C5A8 markiert den Beginn der eigentlichen Firmwaredatenphase.
+- Vor C5A8 kann ein kontrollierter Recoverypfad zulässig sein.
+- Ab dem ersten C5A8 bleibt der Originaldienst autoritativ.
+- Ein Monitoring-/ADB-Fehler darf nach begonnenem Transfer keinen generischen Restore erzwingen.
+- C36E Status 3 ist kein terminaler Erfolg und kein sicherer Stopppunkt.
+- Erst Status 5 / Board-Step 12 ist terminaler Mainboard-Erfolg.
 
-Statisch und durch bestehende Tests gut belegt sind insbesondere:
+## 18. Evidenzgrad
 
-- C350/C36E-Handshake,
-- C357-Größe/MD5,
-- C5A8-Blockformat,
-- C371-ACK-Verhalten,
-- Staging-Pfad,
-- zweistufige MD5-Prüfung,
-- C36E3 vs. C36E5,
-- Promotion-/Commit-Struktur.
+**Live bestätigt für GL9 / Softwarecode `82400644`, V3.3 → V3.4:**
 
-Ein echter vollständiger Versionswechsel auf realer Hardware mit anschließend bestätigtem Start der neuen Firmware wurde bislang noch nicht vollständig live validiert. Diese Datei beschreibt daher den aktuell rekonstruierten und implementierten Ablauf, nicht eine bereits für alle Fehlerfälle bewiesene Recovery-Garantie.
+- C350/C36E-Handshake;
+- C357;
+- kompletter C5A8-Transfer;
+- C371-ACKs;
+- Status 3 nach Staging-Prüfung;
+- selbstständige Promotionphase;
+- Status 5;
+- Board-Step 12;
+- neue C544-Version `0034`;
+- Rückkehr des normalen Betriebs.
+
+**Statisch bzw. in Simulation zusätzlich rekonstruiert:**
+
+- konkrete Flashbereiche;
+- zweistufige MD5-Struktur;
+- Copy-/Descriptor-/Commitdetails;
+- Cancel-/Rollback- und Fehlerpfade.
+
+Nicht in gleicher Tiefe live getestet sind andere Mainboardfamilien, andere Softwarecodes und reale Unterbrechungen in kritischen Flash-/Promotionphasen.
+
+## 19. Weiterführende Dokumente
+
+- [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
+- [`PHNIX_phnixIot4G_board_ota_completion.md`](PHNIX_phnixIot4G_board_ota_completion.md)
+- [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdogs_reset_counters.md)
+- [`../HowTo/PHNIX_UPDATER_ENDANWENDER.md`](../HowTo/PHNIX_UPDATER_ENDANWENDER.md)
