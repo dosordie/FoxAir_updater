@@ -1,13 +1,13 @@
 # PHNIX-Gleichversionstest mit V3.3
 
-> [!NOTE]
-> Die Windows-GUI bietet den Gleichversionstest inzwischen unter **Erweitert** an und verwendet dafür weiterhin den gemeinsamen Controller. Öffentliche Windows-Versionen stehen unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases).
->
-> Der Gleichversionstest wurde auf realer Hardware bereits im Linux-/Raspberry-Pi-Pfad bestätigt. **Unter Windows wurde dieser Test noch nicht live ausgeführt**. Dort sind bislang ADB-Verbindung, Originalstatus und Backup real bestätigt. Ein echtes Versionsupdate ist ebenfalls weiterhin ungetestet.
+Stand: 29. August 2026
 
-Dieser Test bietet dem Mainboard über den originalen `phnixIot4G`-Dienst die
-bereits installierte Firmware V3.3 mit der internen Kennung `0033` an. Er darf
-keine Firmwaredaten übertragen.
+> [!NOTE]
+> Der Gleichversionstest ist heute ein **Entwicklungs-/Abnahmewerkzeug**. Er ist nicht mehr Bestandteil der normalen Windows-Endanwender-GUI.
+>
+> Der Pfad wurde auf realer Hardware bestätigt. Zusätzlich wurde inzwischen auch ein vollständiger Versionswechsel **V3.3 → V3.4** erfolgreich durchgeführt. Der Gleichversionstest ist deshalb nicht mehr die höchste erreichte Live-Teststufe, bleibt aber für Regressionen des frühen Handshakes nützlich.
+
+Dieser Test bietet dem Mainboard über den originalen `phnixIot4G`-Dienst die bereits installierte Firmware V3.3 mit der internen Kennung `0033` an. Er darf keine Firmwaredaten übertragen.
 
 Der erwartete Busablauf ist:
 
@@ -18,21 +18,37 @@ C350 (82400644 / 0033)
 → Ende
 ```
 
-`C36E Status 0` bedeutet in dieser Phase: Ziel/Build wird nicht als neues
-Update angenommen. Bei der bekannten Anlage ist der identische Build der
-erwartete Grund. Der Test beweist keine Installation und löst keine erneute
-Installation von V3.3 aus.
+`C36E Status 0` bedeutet in dieser Phase: Ziel/Build wird nicht als neues Update angenommen. Bei der bekannten Anlage ist der identische Build der erwartete Grund.
+
+Der Test beweist keine Neuinstallation von V3.3 und löst keine C5A8-Datenphase aus.
+
+## Live-Bestätigung
+
+Der V3.3→V3.3-Pfad wurde real ausgeführt. Dabei bestätigte der Ablauf:
+
+```text
+same-version
+c357_sent = false
+c5a8_sent = false
+```
+
+Das Mainboard erkannte die bereits installierte Firmware und beendete den Vorgang vor der Firmwaredatenphase.
+
+Dieser Test war außerdem hilfreich, um einen früheren rein hostseitigen Windows-State-Pfadfehler aufzudecken. Dieser lag **nach** dem bereits sauber terminal beendeten Mainboardablauf und änderte nichts am tatsächlichen C350-/C36E-Verhalten.
 
 ## Eingebaute Sicherungen
 
-Vor dem Angebot prüft der Launcher Firmwaregröße und MD5, Originaldienst,
-Build-Hash, OTA-Zustand und Supervisoren. `OTA_INFO` und Statistikdatei werden
-zweifach gesichert: auf dem ausführenden Rechner und im LTE-Modem.
+Vor dem Angebot prüft der Launcher bzw. Controller unter anderem:
 
-Während des Tests sind Cloudzugang und Supervisoren kontrolliert gesperrt.
-Der Originaldienst wird an `C357` und `C5A8` überwacht. Nur die vollständige
-Kette `C350 → C36E/0`, gefolgt von einer bytegleichen Wiederherstellung beider
-Dateien, gibt den Dienst wieder frei.
+- Firmwaregröße und MD5;
+- Originaldienst und Build-Hash;
+- OTA-Zustand;
+- Supervisoren/Watchdogs;
+- erwartete Zielidentität.
+
+`OTA_INFO` und Statistikdatei werden für den Test gesichert.
+
+Der Test überwacht insbesondere, dass weder C357 noch C5A8 erreicht werden.
 
 Diese Abweichungen führen in einen Schutz-Halt:
 
@@ -40,14 +56,14 @@ Diese Abweichungen führen in einen Schutz-Halt:
 - `C357` wird erreicht;
 - `C5A8` wird erreicht;
 - die Gerätekennung passt nicht;
-- eine Zustandsdatei ist nicht bytegleich wiederhergestellt;
+- eine Zustandsdatei ist nicht korrekt wiederhergestellt;
 - ein Zeitlimit läuft ab.
 
-## Zuerst auf der VM
+## VM-/Simulatorlauf
+
+Beispiel:
 
 ```bash
-cd /home/lte/phnix-ota-lab
-./phnix-ota-sim start --scenario success
 python3 phnix_local_ota_controller.py \
   --adb ./phnix-sim-adb \
   same-version-test \
@@ -58,7 +74,7 @@ python3 phnix_local_ota_controller.py \
   --state-dir same-version-state
 ```
 
-Der erfolgreiche Abschluss enthält:
+Ein erfolgreicher Abschluss enthält sinngemäß:
 
 ```text
 "event": "same-version-complete"
@@ -68,16 +84,11 @@ Der erfolgreiche Abschluss enthält:
 "persistent_state_restored": true
 ```
 
-## Live-Test vom Raspberry Pi aus
+## Live-Test vom Raspberry Pi / Backend aus
 
-Der Liveaufruf verwendet den regelmäßig ausgeführten MQTT-Yield-Loop bei
-`0x1FE40` als Parser-Trampolin. Dieser Punkt wird unabhängig von einer neu
-eintreffenden Cloudnachricht erreicht. Die Cloud wird vor dem Einsprung
-gesperrt; am Haltepunkt werden UART-Leerlauf und Board-Schritt 12 erneut
-geprüft. Das GDB-Skript arbeitet linear und wartet nacheinander auf Yield-Loop,
-C350 und C36E. Es setzt keine im Hintergrund weiterlaufenden Breakpoint-Befehle
-ein.
-Der passive Logger muss bereits laufen.
+Der Livepfad verwendet den originalen `phnixIot4G`-Dienst und die bekannte Parser-/Yield-Injection des Controllers.
+
+Beispiel:
 
 ```bash
 python3 phnix_local_ota_controller.py \
@@ -91,26 +102,48 @@ python3 phnix_local_ota_controller.py \
   --state-dir phnix-ota-state
 ```
 
-Die Ausgabe besteht aus JSON-Zeilen. Diese Ereignisse werden inzwischen sowohl
-vom Linux-Weg als auch von der Windows-GUI verwendet. Wichtige Ereignisse sind
-`preflight`, `state-backed-up`, `firmware-staged`, `same-version-status`,
-`same-version-complete` und `original-state-released`.
+Der passive Buslogger muss für diesen speziellen Labortest tatsächlich laufen.
 
-## Windows-GUI
+Wichtige Ereignisse sind unter anderem:
 
-In der Windows-Version befindet sich der Test unter **Erweitert**. Benötigt werden:
+```text
+preflight
+state-backed-up
+firmware-staged
+same-version-status
+same-version-complete
+original-state-released
+```
 
-- passendes V3.3-Manifest und die dazugehörige Firmwaredatei;
-- funktionierende lokale oder Remote-ADB-Verbindung;
-- ein tatsächlich laufender passiver RS485-Logger;
-- aktivierte Bestätigung **Passiver RS485-Logger läuft tatsächlich**.
+## Windows
 
-Die GUI verwendet dieselben Bestätigungswerte wie der bekannte Live-Test. Seit v0.1.4 sichert die Windows-Sicherheitshülle zusätzlich den ursprünglichen LTE-Firmware-Cache und stellt ihn nach einem erfolgreichen Gleichversionstest wieder her, analog zum Linux-Launcher.
+Frühere Windows-Versionen stellten den Gleichversionstest zeitweise separat unter **Erweitert** bereit.
 
-> [!WARNING]
-> Diese Windows-Ausführung ist noch **nicht live bestätigt**. Für den nächsten realen Windows-Test sollte weiterhin V3.3 → V3.3 verwendet werden, bevor irgendein echter Versionswechsel in Betracht gezogen wird.
+Im aktuellen Endanwenderstand v0.3.9 ist dieser separate Test **nicht mehr in der normalen GUI sichtbar**. Der normale Firmware-Update-Pfad selbst wurde jedoch real mit V3.3→V3.3 bis zur Gleichversionsablehnung geprüft.
 
-Bei `guarded-hold` darf der Anwender nicht selbst Prozesse fortsetzen oder
-Schutzregeln entfernen. Zuerst werden Status, Zustandsdateien und Loggerdaten
-ausgewertet. Der Launcher beziehungsweise die Windows-Sicherheitshülle lässt den
-Originaldienst in diesem Fall absichtlich nicht unkontrolliert weiterlaufen.
+Für weitere Regressionstests bleibt die Backend-/Labfunktion erhalten. Endanwender sollen für normale Updates den regulären Firmware-Update-Dialog verwenden und nicht den Labortest nachbauen.
+
+## Verhältnis zum echten Versionswechsel
+
+Der Gleichversionstest validiert:
+
+- frühen C350-Handshake;
+- Erkennung einer bereits installierten Version;
+- sicheren Abschluss ohne C357/C5A8;
+- Restore-/Cleanup-Verhalten dieses speziellen Testpfads.
+
+Er validiert nicht selbst:
+
+- C5A8-Datenübertragung;
+- Staging-MD5;
+- Mainboard-Promotion;
+- Status 5;
+- Boot einer neuen Firmware.
+
+Diese späteren Schritte wurden inzwischen separat durch den realen **V3.3→V3.4-Live-Lauf** bestätigt:
+
+[`../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
+
+## Bei `guarded-hold`
+
+Bei einem `guarded-hold` nicht selbst Prozesse fortsetzen, Schutzregeln entfernen oder einen neuen Updateauftrag starten. Zuerst Status, Zustandsdateien und Loggerdaten auswerten und danach den vorgesehenen Recoverypfad verwenden.
