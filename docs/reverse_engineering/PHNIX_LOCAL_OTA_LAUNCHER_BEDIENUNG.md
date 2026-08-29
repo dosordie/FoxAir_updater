@@ -1,334 +1,299 @@
-# Lokaler PHNIX-OTA-Launcher – einfache Bedienung
+# Lokaler PHNIX-OTA-Launcher – technische Bedienung
 
-Stand: 2026-08-23
+Stand: 29. August 2026
 
-Für gefahrlose Komplett- und Fehlertests steht zusätzlich der
-[OTA-Simulator auf der Offline-VM](PHNIX_OTA_VM_SIMULATOR.md) zur Verfügung.
-Der vorbereitete erste Busversuch ist separat im
-[Cancel-Probe-Testplan](PHNIX_CANCEL_PROBE_MAINBOARD_TESTPLAN.md) beschrieben.
+Diese Datei beschreibt die technische Bedienung des gemeinsamen lokalen PHNIX-OTA-Controllers. Für normale Endanwender ist unter Windows die GUI und unter Linux/Raspberry Pi der Launcher `./foxair-updater` vorgesehen.
 
-## Wichtiger Status
+> [!IMPORTANT]
+> Der vollständige Pfad **V3.3 → V3.4** wurde auf realer Hardware erfolgreich durchgeführt. Beobachtet wurden kompletter C5A8-Transfer, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließend C544-Version `0034`.
+>
+> Der Controller bleibt buildspezifisch auf den untersuchten Originaldienst begrenzt. Andere Hardware-/Firmwarekombinationen sind nicht automatisch freigegeben.
 
-Der Launcher ist ein **experimentelles Laborwerkzeug** für genau den geprüften
-Build von `phnixIot4G`. Vorprüfungen, Dienst-Restart, Debugger-Attach und alle
-benötigten Breakpoints wurden auf dem realen LTE-Modem getestet. Ein aktiver
-Firmwaretransfer an ein echtes Mainboard wurde mit diesem Launcher noch nicht
-ausgeführt.
-
-Der aktive Modus darf erst verwendet werden, wenn:
-
-- eine ruhige RS485-Phase bestätigt ist;
-- stabile Stromversorgung besteht;
-- ein Bediener den gesamten Vorgang überwacht;
-- für einen nichtterminalen Fehler ein Recoveryplan vorhanden ist.
-
-Der Launcher besitzt absichtlich keinen automatischen, unbestätigten Cancel.
-Bei einem nichtterminalen Fehler hält er Dienst, Cloud und Watchdogs in einem
-geschützten Zustand an, statt unkontrolliert in den Normalbetrieb zurückzugehen.
+Für Simulator-/Fehlertests steht zusätzlich der [OTA-Simulator](PHNIX_OTA_VM_SIMULATOR.md) zur Verfügung.
 
 ## Dateien
 
-- `tools/phnix_ota/phnix_local_ota_controller.py`: Bedienung auf dem Raspberry Pi
-- `tools/phnix_ota/phnix_ota_runtime_hook`: buildgebundener Helfer auf dem LTE-Modem
+- `tools/phnix_ota/phnix_local_ota_controller.py` – gemeinsamer OTA-Controller;
+- `tools/phnix_ota/phnix_ota_runtime_hook` – buildgebundener Runtime-Helfer;
+- `tools/phnix_ota/create_firmware_manifest.py` – Manifestanalyse/-erzeugung.
 
-## 1. Dateien auf den Raspberry Pi kopieren
-
-Auf dem Pi müssen folgende Dateien liegen:
-
-```text
-phnix_local_ota_controller.py
-phnix_ota_runtime_hook
-FW3.3.bin
-FW3.3.json
-```
-
-Die erwartete Firmware besitzt:
-
-```text
-Größe: 287598 Byte
-MD5:   CEB6A4BF386FF644E23E410023E74673
-```
-
-## 2. Runtime-Helfer wird automatisch verwaltet
-
-Der Benutzer muss den Runtime-Helfer nicht mehr manuell installieren. Bei
-`run --execute` und beim Gleichversionstest führt der Controller automatisch
-folgende Schritte aus:
-
-1. lokale Datei und Buildbindung prüfen;
-2. als `/data/.phnix_ota_runtime_hook.new` übertragen;
-3. SHA-256 vor der Aktivierung vergleichen;
-4. Rechte auf `755` setzen;
-5. die bisherige Datei atomar durch `/data/phnix_ota_runtime_hook` ersetzen;
-6. den SHA-256 der aktiven Kopie erneut vergleichen;
-7. nach einem sicher bestätigten Ende wieder vollständig löschen.
-
-Standardmäßig muss `phnix_ota_runtime_hook` neben dem Python-Controller liegen.
-Ein späteres Programmpaket oder Windows-Frontend kann mit
-`--runtime-helper DATEI` einen anderen gebündelten Pfad angeben.
-
-Der Helfer akzeptiert ausschließlich den verifizierten Originaldienst mit:
+Der Runtime-Helfer akzeptiert ausschließlich den verifizierten Originaldienst:
 
 ```text
 Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
 SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
 ```
 
-## 3. Nur lesende Vorprüfung
+## Empfohlener Endanwenderzugang
+
+### Windows
+
+GUI aus dem aktuellen GitHub Release verwenden:
+
+https://github.com/dosordie/FoxAir_updater/releases
+
+### Linux / Raspberry Pi
 
 ```sh
-python3 phnix_local_ota_controller.py preflight \
-  --manifest FW3.3.json --firmware FW3.3.bin
+cd ~/FoxAir_updater
+./foxair-updater status
+./foxair-updater check FW3.4.json
+./foxair-updater update FW3.4.json --confirm
 ```
 
-Erwartetes Ergebnis:
+Details:
 
-- `ok: true`
-- ADB-Zustand `device`
-- Originaldienst läuft
-- Service-SHA stimmt
-- zwei `helloworld`-Watchdogs werden erkannt
-- OTA_INFO-CRC ist gültig
-- `offset == 0` und `length == 0`
-- genügend Platz in `/data` und `/cache`
+- [`../HowTo/PHNIX_UPDATER_ENDANWENDER.md`](../HowTo/PHNIX_UPDATER_ENDANWENDER.md)
+- [`../../updater/linux/README.md`](../../updater/linux/README.md)
 
-## 4. Ungefährliche Debuggertests
+## 1. Read-only Vorprüfung
 
-Nur Attach, Threadliste und sofortiges Detach:
+Direkter Controller-Aufruf:
 
 ```sh
-adb shell /data/phnix_ota_runtime_hook attach-test
+python3 tools/phnix_ota/phnix_local_ota_controller.py \
+  preflight \
+  --manifest FW3.4.json \
+  --firmware FW3.4.bin
 ```
 
-Alle benötigten Breakpoints im angehaltenen Prozess setzen und sofort wieder
-entfernen:
+Geprüft werden unter anderem:
+
+- ADB-Zustand `device`;
+- Originaldienst und Build-Hash;
+- Watchdogs;
+- benötigte Werkzeuge;
+- OTA_INFO und CRC;
+- Dateigröße/Hash/Manifest;
+- Speicherplatz;
+- normaler LTE-/MQTT-Zustand.
+
+## 2. Runtime-Helfer
+
+Bei einem echten Lauf verwaltet der Controller den Runtime-Helfer automatisch:
+
+1. lokale Datei und Buildbindung prüfen;
+2. als `/data/.phnix_ota_runtime_hook.new` übertragen;
+3. SHA-256 prüfen;
+4. Rechte setzen;
+5. atomar als `/data/phnix_ota_runtime_hook` aktivieren;
+6. aktive Kopie erneut prüfen;
+7. nach sicherem terminalem Ende wieder entfernen.
+
+Der Helfer wird nicht dauerhaft installiert.
+
+## 3. Dry-Run
 
 ```sh
-adb shell /data/phnix_ota_runtime_hook breakpoint-test
+python3 tools/phnix_ota/phnix_local_ota_controller.py run \
+  --manifest FW3.4.json \
+  --firmware FW3.4.bin
 ```
 
-Diese Tests injizieren kein `0033` und senden keine OTA-Frames.
+Ohne `--execute` wird kein Firmwaretransfer gestartet.
 
-## 5. Kompletter Trockenlauf
-
-```sh
-python3 phnix_local_ota_controller.py run \
-  --manifest FW3.3.json --firmware FW3.3.bin
-```
-
-Ohne `--execute` werden weder Modem- noch Buszustand verändert.
-
-## 6. Aktiver Start – noch nicht für unbeaufsichtigte Nutzung
+## 4. Vollupdate
 
 ```sh
-python3 phnix_local_ota_controller.py run \
+python3 tools/phnix_ota/phnix_local_ota_controller.py run \
   --manifest FW3.4.json \
   --firmware FW3.4.bin \
   --execute \
   --confirm PHNIX-FULL-UPDATE
 ```
 
-Der Vollupdate-Aufruf ist absichtlich doppelt bestätigt. Er darf erst mit einer
-analysierten, zum Mainboard passenden neuen Firmware und nach einer eigenen
-Live-Freigabe verwendet werden. Der Gleichversionstest benutzt weiterhin das
-separate Kommando `same-version-test` und kann dadurch nicht versehentlich in
-einen vollständigen Transfer übergehen. Ein externer Buslogger ist für den
-normalen Vollupdate-Aufruf nicht erforderlich; Status und Sicherheitsprüfungen
-kommen direkt vom Originaldienst und Launcher.
+Der normale Vollupdatepfad:
 
-Der Ablauf:
+1. prüft Firmware/Manifest und Originalzustand;
+2. installiert/verifiziert den Runtime-Helfer;
+3. sichert relevante persistente Ausgangsdaten;
+4. kopiert die geprüfte Firmware auf das LTE-Modem;
+5. stellt sie lokal über `127.0.0.1:8081` bereit;
+6. pausiert die externen `helloworld`-Watchdogs während der kontrollierten Hookphase;
+7. führt den Originaldienst in den lokalen `0033`-OTA-Pfad;
+8. lässt den originalen C350-/C357-/C5A8-/C371-/C36E-Ablauf arbeiten;
+9. beobachtet den persistenten Firmwareoffset;
+10. lässt nach begonnenem Transfer den Originaldienst autoritativ weiterarbeiten;
+11. wartet auf terminalen Status 5 / Board-Step 12;
+12. gibt dem normalen LTE-/Cloudzustand danach bis zu 120 Sekunden zur Normalisierung;
+13. entfernt temporäre Helfer/Artefakte und prüft den Originalzustand.
 
-1. prüft, installiert und verifiziert den Runtime-Helfer;
-2. sichert OTA_INFO und Statistik auf dem Pi;
-3. kopiert die geprüfte Firmware per USB auf das Modem;
-4. stellt sie lokal über `127.0.0.1:8081` bereit;
-5. blockiert MQTT auf `rmnet_data0`, Port 1883;
-6. pausiert beide `helloworld`-Watchdogs;
-7. verwendet `gdbserver`, der alle 13 Threads erkennt;
-8. erlaubt während `launcher_armed` nur den Run-Step-Override `7 -> 11`;
-9. aktiviert die Publish-Stubs erst nach akzeptiertem Original-`0033`;
-10. bestätigt lokal ausschließlich `0023`, `0053` und `0083`;
-11. zeigt den vom Originaldienst gemeldeten Fortschritt rein beobachtend an;
-12. beendet den Hook erst nach dem echten terminalen Übergang auf
-    `board_ota_step == 12`;
-13. löscht Helfer, Firmwareablage und temporäre Zustandsdateien;
-14. prüft danach erneut Originaldienst, dessen SHA-256, beide Watchdogs und die
-    MQTT-Cloudverbindung sowie das Fehlen des Runtime-Helfers.
+## 5. MQTT-Verhalten
 
-## Konsolenausgabe
-
-An einem normalen Terminal zeigt der Launcher standardmäßig eine kurze,
-farbige Benutzeransicht:
-
-- grün: erfolgreich geprüfte Meilensteine und sicherer Abschluss;
-- cyan: laufende Updatephase;
-- gelb: Warnung, die geprüft werden muss;
-- rot: Fehler, Guarded Hold oder notwendige manuelle Wiederherstellung.
-
-Beispiel eines erfolgreichen simulierten Vollupdates:
+Der aktuelle Standard ist:
 
 ```text
-[OK] Vorpruefung erfolgreich
-[OK] Lokaler Update-Helfer geprueft
-[OK] Update-Helfer sicher auf das LTE-Modem kopiert
-[OK] Sicherheitskopie des Ausgangszustands erstellt
-[OK] Firmware auf das LTE-Modem kopiert
-[..] Update gestartet
-[..] Firmware wird zum Mainboard uebertragen
-[..] Fortschritt:  25 % (71.899 / 287.598 Byte)
-[..] Fortschritt:  50 % (143.799 / 287.598 Byte)
-[..] Fortschritt: 100 % (287.598 / 287.598 Byte)
-[OK] Firmware-Update erfolgreich abgeschlossen
-[OK] Update-Helfer vom LTE-Modem entfernt
-[OK] Originaldienst, Ueberwachung und Cloud-Verbindung laufen
+MQTT bleibt verbunden
 ```
 
-Der Fortschritt stammt nicht aus einer geschätzten Laufzeit, sondern aus einem
-CRC-gültigen persistenten OTA-Offset des Originaldienstes. Eine neue Zeile
-erscheint bei mindestens einem Prozent Änderung oder spätestens nach fünf
-Sekunden. Unvollständige, CRC-ungültige oder unplausible Zwischenwerte werden
-nicht angezeigt. Sie lösen während C5A8 ausdrücklich keinen Eingriff aus: Ab
-dem ersten Firmwareblock steuert und bewertet ausschließlich der Originaldienst
-die Übertragung.
-
-Für Protokolldateien oder Softwareintegration bleibt die vollständige
-JSON-Ausgabe erhalten:
+Die frühere vollständige MQTT-Isolierung ist nur noch optional:
 
 ```sh
-python3 phnix_local_ota_controller.py --output json ...
+--isolate-mqtt
 ```
 
-Farben lassen sich mit `--no-color` abschalten. `--output human` erzwingt die
-kurze Ansicht auch bei umgeleiteter Ausgabe.
+Alias:
 
-## 7. Guarded Hold
+```sh
+--update-no-mqtt
+```
 
-Bei einem Fehler vor Beginn der Firmwareübertragung oder einem unerwarteten
-Ende der kontrollierenden Laufzeitumgebung wird nicht automatisch aufgeräumt.
-Der Status lautet:
+Unter Windows entspricht dies **Erweitert → MQTT bei Update aus**.
+
+### Warum die Isolation nicht mehr Standard ist
+
+`phnixIot4G` besitzt einen eigenen Rebootpfad, wenn `get_ALI_Connt_State()` länger als 1800 Sekunden offline meldet.
+
+Wichtig: Der 1800-s-Zähler beginnt nicht zwingend mit dem Einsetzen einer Firewallregel. Eine stille `iptables DROP`-Blockade kann vom Aliyun-MQTT-SDK zunächst noch als intern verbunden behandelt werden. Erst nach mehreren fehlenden 180-s-Keepalive-Zyklen kippt der SDK-Zustand auf offline; **danach** beginnt der PHNIX-1800-s-Zähler.
+
+Es gibt keinen bekannten OTA-Sonderzweig, der den Rebootpfad während eines Mainboardupdates deaktiviert.
+
+Der reale V3.3→V3.4-Lauf benötigte bereits knapp 29 Minuten für C5A8 und weitere rund fünf Minuten bis Status 5. Deshalb bleibt MQTT im Normalbetrieb verbunden.
+
+## 6. Fortschrittsanzeige
+
+Während C5A8 verwendet der Controller den CRC-gültigen persistenten OTA_INFO-Offset:
+
+```text
+offset / length
+```
+
+Unvollständige oder CRC-ungültige Momentaufnahmen während gleichzeitiger Dateischreibvorgänge sind kein Grund, in den laufenden Transfer einzugreifen.
+
+> [!WARNING]
+> **100 % = Datenübertragung vollständig, nicht Update vollständig.**
+
+Realer Ablauf:
+
+```text
+100 % C5A8
+→ C36E Status 3
+→ Mainboard Flash/Promotion
+→ C36E Status 5
+→ Board-Step 12
+→ neue C544-Version 0034
+```
+
+Gemessen beim V3.3→V3.4-Lauf:
+
+```text
+C5A8:                     ca. 28:56 min
+letzter C5A8 → Status 3:  ca. 2 s
+letzter C5A8 → Status 5:  ca. 5:16 min
+bis neuer C544-Version:   rund 35 min Gesamtbeobachtung
+```
+
+## 7. Sicherheitsgrenze vor/nach C5A8
+
+### Vor dem ersten C5A8
+
+Ein kontrollierter Restore-/Recoverypfad kann abhängig vom exakten Zustand noch zulässig sein.
+
+### Ab dem ersten C5A8
+
+Der Originaldienst ist autoritativ.
+
+Der Controller legt einen `transfer-started`-Marker an. Ein generisches `restore original` wird danach absichtlich verweigert.
+
+Das ist wichtig, weil das Mainboard ab diesem Punkt Flashdaten im Stagingbereich besitzt und spätere Promotionzustände selbstständig durchlaufen kann.
+
+`C36E Status 3` ist ausdrücklich **kein** sicherer Stop-/Restorepunkt.
+
+## 8. Monitoring-/ADB-Verlust
+
+Ein Verlust der Host-/ADB-Beobachtung nach begonnenem C5A8 darf nicht dazu führen, den Originaldienst zu stoppen oder automatisch einen Restore zu erzwingen.
+
+Nach Reconnect wird der bestehende Zustand read-only geprüft. Es wird kein zweiter OTA-Auftrag gestartet.
+
+## 9. Guarded Hold
+
+Vor C5A8 kann bei einem nicht eindeutig sicheren Fehler ein geschützter Halt auftreten:
 
 ```json
 {"phase":"guarded-hold","terminal":false,"recovery_required":true}
 ```
 
-Dann gelten folgende Regeln:
+Dann nicht blind Prozesse fortsetzen, Schutzregeln entfernen oder einen zweiten Updateauftrag starten. Zuerst Status und Logs auswerten.
 
-- LTE-Modem und Wärmepumpe nicht stromlos machen;
-- nicht unüberlegt `stop --force` verwenden;
-- Cloud-Sperre und pausierte Watchdogs zunächst bestehen lassen;
-- Zustand von Mainboard, OTA_INFO und Bus auswerten;
-- einen bestätigten Cancel `C36A -> C36C Status 1` oder einen anderen bewusst
-  gewählten Recoveryweg durchführen.
+Nach begonnenem C5A8 gilt diese generische Vor-C5A8-Strategie nicht mehr; der Originaldienst bleibt autoritativ.
 
-In Guarded Hold bleibt der Runtime-Helfer absichtlich auf dem Modem. Ein
-vorzeitiges Löschen würde den diagnostizierbaren Recoveryzustand beschädigen.
+## 10. Gleichversionstest
 
-`stop --force` ist nur ein manueller Notausgang. Er beweist keinen sicheren
-Cancel und darf deshalb nicht Bestandteil eines automatischen Ablaufs sein.
-
-## 8. Cancel-/Recovery-Kommando
-
-Der Controller besitzt jetzt eine mehrstufig geprüfte Cancel-Schnittstelle.
-Ein lesender Trockenlauf ist:
+Der separate V3.3-Gleichversionstest bleibt als Labor-/Regressionstest erhalten:
 
 ```sh
-python3 phnix_local_ota_controller.py cancel
+python3 tools/phnix_ota/phnix_local_ota_controller.py \
+  same-version-test \
+  --manifest FW3.3.json \
+  --firmware FW3.3.bin \
+  --execute \
+  --confirm PHNIX-C350-SAME-V33 \
+  --logger-confirm PASSIVE-LOGGER-RUNNING
 ```
 
-Im VM-Simulator kann der vollständige Vertrag ausgeführt werden:
+Der reale V3.3→V3.3-Test endete erwartungsgemäß mit C36E Status 0 vor C357/C5A8.
+
+In der normalen Windows-Endanwender-GUI ist dieser separate Labortest nicht mehr sichtbar.
+
+## 11. Status lesen
 
 ```sh
-python3 phnix_local_ota_controller.py \
-  --adb ./phnix-sim-adb \
-  cancel --execute --confirm CANCEL-PHNIX-OTA
+python3 tools/phnix_ota/phnix_local_ota_controller.py status
 ```
 
-Sicheres Aufräumen erfolgt ausschließlich, wenn gemeinsam bestätigt sind:
+Für den lesbaren Originalzustandscheck kann je nach Frontend/Wrapper der gemeinsame Statuspfad verwendet werden. Geprüft werden insbesondere:
 
-- C36A wurde tatsächlich gesendet;
-- C36C meldet Status 1;
-- `cancel_pending` ist gelöscht;
-- der Fehlerreport-/Recoverypfad erreicht Board-Step 12;
-- Normalbetrieb wurde bestätigt.
+- Originaldienst/Pfad/SHA;
+- Prozess- und Debuggerzustand;
+- lokale OTA-Marker;
+- Cloud-/MQTT-Sperrregeln;
+- MQTT-Verbindung;
+- Watchdogs;
+- lokaler Firmware-Webserver;
+- OTA_INFO/CRC.
 
-C36C Status 1 allein reicht ausdrücklich nicht. Der reale LTE-Runtime-Helfer
-weist `cancel` derzeit absichtlich zurück, bis die notwendigen Breakpoints am
-Originaldienst praktisch validiert sind. Damit ist das Kommando momentan nur
-im VM-Simulator aktiv ausführbar.
-
-## 9. Status lesen
+## 12. Restore
 
 ```sh
-python3 phnix_local_ota_controller.py status
+python3 tools/phnix_ota/phnix_local_ota_controller.py \
+  --adb adb \
+  run --restore original
 ```
 
-Während C5A8 dient ein CRC-gültiger OTA_INFO-Offset ausschließlich der Anzeige.
-Der Launcher greift aufgrund des Offsets nicht in die Originalübertragung ein.
+Nur verwenden, wenn der Controller bestätigt, dass noch **kein C5A8-Transfer begonnen** hat.
 
-### Leserlicher Originalzustands-Check
+Ab `transfer-started` verweigert der Helfer den Eingriff absichtlich.
 
-Für die normale Kontrolle auf Raspberry Pi oder Windows-Frontend ist kein
-Manifest erforderlich:
+## 13. Konsolenausgabe
+
+- grün: erfolgreich geprüfter Meilenstein;
+- cyan: laufende Phase;
+- gelb: Warnung;
+- rot: Fehler/Guarded Hold/manueller Recoverybedarf.
+
+JSON für Integration:
 
 ```sh
-python3 phnix_local_ota_controller.py --adb adb run --check status
+python3 tools/phnix_ota/phnix_local_ota_controller.py --output json ...
 ```
 
-Der Befehl verändert nichts und prüft leserlich:
-
-- Originaldienst, Pfad, SHA-256, Prozesszustand und `TracerPid`;
-- GDB/GDB-Server und aktive lokale OTA-Marker;
-- MQTT-Sperrregeln und Cloudverbindung;
-- beide Original-Watchdogs und den lokalen Firmware-Webserver;
-- CRC der OTA_INFO sowie Hashes von OTA_INFO und Statistik.
-
-### Originalzustand wiederherstellen
+Farben abschalten:
 
 ```sh
-python3 phnix_local_ota_controller.py --adb adb run --restore original
+--no-color
 ```
 
-Der Befehl beendet übrig gebliebene Debugger/Helfer, setzt einen nur lokal
-vorbereiteten Persistenzzustand zurück, entfernt Cloudguards, setzt Dienst und
-Watchdogs fort und beendet den lokalen Webserver. Abschließend löscht er auch
-`/data/phnix_ota_runtime_hook` und eine eventuell unvollständige `.new`-Datei.
-Fehlt der Helfer bereits, wird zunächst die lokal mitgelieferte und geprüfte
-Version für die Wiederherstellung installiert und danach ebenfalls gelöscht.
-Danach wird automatisch der vollständige Originalzustands-Check ausgeführt.
+## 14. Live-Beleg
 
-Sicherheitsgrenze: Sobald der Helfer den ersten C5A8-Firmwareblock beobachtet
-hat, legt er einen `transfer-started`-Marker an. Dann verweigert
-`--restore original` jeden Eingriff. Ab diesem Zeitpunkt bleibt ausschließlich
-der Originaldienst für Abschluss oder Fehlerbehandlung zuständig.
+Der erfolgreiche V3.3→V3.4-Lauf ist separat dokumentiert:
 
-Wurde der OTA-Parser bereits aufgerufen, aber C5A8 noch nicht erreicht, setzt
-der Helfer zusätzlich `injection-started`. Eine Wiederherstellung darf den
-angehaltenen Prozess dann nicht einfach fortsetzen, weil sonst ein begonnenes
-C350 verzögert gesendet werden könnte. Stattdessen werden Persistenz und Guards
-wiederhergestellt und der Originaldienst kontrolliert durch eine frische,
-unveränderte Prozessinstanz ersetzt.
+[`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
 
-## 10. Laborartefakte wieder entfernen
+Dort sind Firmwarehashes, Buszeitpunkte, Status 3/5, Board-Step 12, Prozessbeobachtung und C544-Version dokumentiert.
 
-Nur nach einem sicheren terminalen Zustand oder wenn kein aktiver OTA gestartet
-wurde:
+## 15. Weiterführende Dokumente
 
-```sh
-adb shell rm -f /data/phnix_ota_runtime_hook
-adb shell rm -rf /data/phnix_local_ota /tmp/phnix_ota_hook
-adb shell rm -f /tmp/phnix_ota_status.json
-```
-
-Danach prüfen:
-
-```sh
-adb shell pidof phnixIot4G
-adb shell cat /proc/$(adb shell pidof phnixIot4G)/status
-adb shell netstat -nt
-adb shell netstat -lnt
-adb shell iptables -S INPUT
-adb shell iptables -S OUTPUT
-```
-
-Erwartet werden `TracerPid: 0`, zwei laufende Watchdogs, eine wiederhergestellte
-Cloudverbindung, kein Listener auf Port 8081 und keine OTA-Regel für Port 1883.
+- [`PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md`](PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md)
+- [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdogs_reset_counters.md)
+- [`../HowTo/FIRMWARE_MANIFEST.md`](../HowTo/FIRMWARE_MANIFEST.md)
+- [`../HowTo/PHNIX_UPDATER_ENDANWENDER.md`](../HowTo/PHNIX_UPDATER_ENDANWENDER.md)
