@@ -2,20 +2,22 @@
 
 Stand: 2026-08-24
 
-> [!NOTE]
-> Für normale Endanwender steht inzwischen zusätzlich eine Windows-GUI unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases) zur Verfügung. Dort sind ADB-Verbindung, Originalstatus und Backup real getestet.
+> [!IMPORTANT]
+> **Historisches Entwicklungsdokument.** Dieses Runbook beschreibt den Sicherheits- und Teststand vom 24. August 2026 **vor** dem ersten vollständigen Live-Firmwarewechsel.
 >
-> Dieses Runbook ist weiterhin ein **separates Entwicklungs-/Laborverfahren** und wird durch die Windows-GUI nicht ersetzt. Ein echter Firmware-Versionswechsel ist weder unter Windows noch allgemein bereits live bestätigt.
+> Inzwischen wurde V3.3 → V3.4 auf realer Hardware vollständig und erfolgreich durchgeführt, einschließlich C5A8, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließender C544-Version `0034`.
+>
+> Die Aussagen weiter unten wie „nicht gestartet“, „noch ausstehend“ oder „späterer Realtest“ sind deshalb **historischer Kontext und keine aktuelle Projektstatusbeschreibung**. Für den aktuellen Endanwenderpfad siehe [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md) und den Live-Bericht [`../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md).
 
-## Status
+## Status zum damaligen Stand
 
-Der Test ist vorbereitet, aber **nicht scharfgeschaltet und nicht gestartet**.
+Der Test war vorbereitet, aber **nicht scharfgeschaltet und nicht gestartet**.
 Es wurde kein neuer Helfer auf das LTE-Modem übertragen und kein Livekommando
-ausgeführt. Die Logging-Software kann unabhängig fertiggestellt werden.
+ausgeführt. Die Logging-Software konnte unabhängig fertiggestellt werden.
 
 ## Testgrenze
 
-Erlaubt ist später ausschließlich:
+Erlaubt war damals ausschließlich:
 
 ```text
 C350 → C36E Status 1
@@ -25,7 +27,7 @@ C36A → C36C Status 1
 LTE-intern zurück zu Step 12
 ```
 
-Verboten bleiben:
+Verboten blieben in dieser Teststufe:
 
 ```text
 C5A8-Firmwaredaten
@@ -37,7 +39,7 @@ Cloud-OTA parallel zum lokalen Test
 
 ## Vorbereiteter lesender Preflight
 
-Vor dem späteren Freigabetermin wird eine Kopie von
+Vor dem späteren Freigabetermin wurde eine Kopie von
 `tools/phnix_ota/pre_c5a8_logger_checklist.example.json` ausgefüllt. Danach:
 
 ```sh
@@ -61,7 +63,7 @@ Sendefreigabe.
 
 ## Loggerpflichten
 
-Die ausgefüllte Checkliste muss bestätigen:
+Die ausgefüllte Checkliste musste bestätigen:
 
 - Mitschnitt läuft bereits vor dem Test;
 - Logger ist physisch und softwareseitig rein passiv;
@@ -114,7 +116,7 @@ Verbotener C5A8-Anfang bei Defaultblockgröße:
 63 10 C5 A8 00 57 A8 00 63 ...
 ```
 
-## Rollen beim Test
+## Rollen beim damaligen Test
 
 | Rolle | Aufgabe |
 |---|---|
@@ -123,10 +125,9 @@ Verbotener C5A8-Anfang bei Defaultblockgröße:
 | Updater | Preflight, Cloudguard, Originaldienst-Hook, Statusausgabe |
 | Recovery | bei unvollständigem Beweis Guards erhalten und Zustand auslesen |
 
-Eine Person kann mehrere Rollen übernehmen, aber Logger und Updater müssen
-getrennte Statusanzeigen besitzen.
+Eine Person konnte mehrere Rollen übernehmen, Logger und Updater sollten jedoch getrennte Statusanzeigen besitzen.
 
-## Ablauf am späteren Termin
+## Geplanter Ablauf am damaligen Termin
 
 1. Wärmepumpe mindestens fünf Minuten stabil im Normalbetrieb beobachten.
 2. Logger starten und mindestens 60 Sekunden normalen Busverkehr aufnehmen.
@@ -146,7 +147,7 @@ getrennte Statusanzeigen besitzen.
 16. Weitere fünf Minuten Normalbetrieb und Loggerverkehr beobachten.
 17. Testartefakte und Hashes dokumentieren.
 
-## Harte Stopbedingungen
+## Harte Stopbedingungen der damaligen Teststufe
 
 Kein automatisches Aufräumen, sondern `guarded-hold`, wenn:
 
@@ -160,23 +161,20 @@ Kein automatisches Aufräumen, sondern `guarded-hold`, wenn:
 - Logger ausfällt oder seine Datei nicht weiter wächst;
 - die Wärmepumpe auffälliges Verhalten zeigt.
 
-Bei `guarded-hold` bleiben Cloud gesperrt, Watchdogs pausiert und der
+Bei `guarded-hold` blieben Cloud gesperrt, Watchdogs pausiert und der
 Originaldienst angehalten, bis der Zustand eindeutig ausgelesen wurde.
 
-## Noch ausstehender bewusster Arming-Schritt
+## Damals noch ausstehender Arming-Schritt
 
-Wenn die Logging-Software fertig ist, werden unmittelbar vor dem Realtest:
+Zum damaligen Stand sollten unmittelbar vor dem Realtest:
 
 1. die ausgefüllte Loggercheckliste geprüft;
-2. der endgültige Live-Hook nochmals gegen den Originaldienst-Hash und alle
-   Breakpoint-Opcodes geprüft;
+2. der endgültige Live-Hook nochmals gegen den Originaldienst-Hash und alle Breakpoint-Opcodes geprüft;
 3. der Hook auf das LTE-Modem übertragen;
 4. ein reiner Breakpoint-Installations-/Entfernungstest ausgeführt;
-5. erst nach einer neuen Nachricht des Bedieners der einmalige Sendebefehl
-   freigegeben.
+5. erst nach einer neuen Bedienerfreigabe der einmalige Sendebefehl freigegeben werden.
 
-Damit kann die Vorbereitung jetzt abgeschlossen werden, ohne versehentlich den
-Realtest vor der Loggeraktualisierung zu starten.
+Diese Stufe wurde später durch weitere Tests und schließlich den vollständigen V3.3→V3.4-Live-Lauf überholt.
 
 ## Zugehörige Dateien
 
@@ -185,3 +183,4 @@ Realtest vor der Loggeraktualisierung zu starten.
 - [`firmware_backup_lte.md`](firmware_backup_lte.md)
 - [`../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md)
 - [`../reverse_engineering/PHNIX_CANCEL_PROBE_LIVE_RESULT.md`](../reverse_engineering/PHNIX_CANCEL_PROBE_LIVE_RESULT.md)
+- [`../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
