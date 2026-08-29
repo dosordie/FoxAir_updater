@@ -25,7 +25,7 @@ import foxair_updater_gui as base
 import release_check
 
 
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.9"
 REMOTE_CACHE_FIRMWARE = "/cache/phnixIot_device_OTA"
 REMOTE_CACHE_STAGE = "/cache/.phnixIot_device_OTA.manual-upload"
 
