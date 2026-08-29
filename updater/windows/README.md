@@ -1,34 +1,34 @@
-# Windows Updater v0.1.8
+# Windows Updater v0.3.9
 
-Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden gemeinsamen OTA-Backend** gebaut.
+Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden gemeinsamen OTA-Backend** gebaut. Die sicherheitsrelevante OTA-Logik wird nicht als separate Windows-Implementierung gepflegt.
 
 > [!IMPORTANT]
-> **Real getestet sind derzeit:** lokale/Remote-ADB-Verbindung, Originalstatus, das read-only LTE-Backup/Firmware-Download per `adb pull`, der Dry-Run und ein Firmware-Versionswechsel von V3.3 auf V3.4.
+> **Real bestätigt sind derzeit:** lokale und Remote-ADB-Verbindung, Originalstatus, read-only LTE-Backup/Firmware-Download, Dry-Run, V3.3→V3.3 bis zur sicheren Gleichversionsablehnung sowie ein vollständiger realer Mainboard-Firmwarewechsel **V3.3 → V3.4**.
 >
-> Zusätzlich wurde der normale **Firmware-Update**-Button über Remote-ADB real mit **V3.3 → V3.3** ausgeführt. Das Mainboard erkannte die bereits installierte Firmware und beendete den Ablauf sicher mit `same-version`; `C357` und `C5A8` wurden nicht erreicht und der Originalbetrieb wurde danach wieder bestätigt. Es wurden keine Firmwaredaten übertragen.
->
-> Beim Live-Test mit v0.1.7 trat **erst nach diesem sauber beendeten Same-Version-Ablauf** ein Windows-Hostfehler auf: Der Sicherheitswrapper suchte den terminalen `run-state.json` in einem anderen lokalen Verzeichnis als dem von der GUI an den Controller übergebenen `--state-dir`. Dieser Host-Auswertungsfehler ist in v0.1.8 korrigiert. Andere Firmwarestände und Hardwarevarianten als der bestätigte Wechsel V3.3 → V3.4 sind noch nicht vollständig getestet.
+> Beim V3.3→V3.4-Lauf wurden die vollständige C5A8-Datenübertragung, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließend die neue C544-Version `0034` beobachtet. Andere Firmwarestände und Hardwarevarianten sind weiterhin nicht vollständig live validiert.
 
 Öffentliche Windows-Versionen stehen als Portable-ZIP und Setup-EXE auf der normalen GitHub-Releases-Seite bereit:
 
 https://github.com/dosordie/FoxAir_updater/releases
 
+Release-Details zu v0.3.9:
+
+[`../../docs/RELEASE_NOTES_WINDOWS_v0.3.9.md`](../../docs/RELEASE_NOTES_WINDOWS_v0.3.9.md)
+
 ## Windows SmartScreen beim ersten Start
 
 Die Windows-Builds sind derzeit **nicht mit einem kommerziellen Code-Signing-Zertifikat signiert**. Windows SmartScreen kann deshalb beim ersten Start des Setup oder der EXE die Meldung **„Der Computer wurde durch Windows geschützt“** anzeigen.
 
-Wenn die Datei bewusst von der oben genannten offiziellen GitHub-Releases-Seite geladen wurde:
+Wenn die Datei bewusst von der offiziellen GitHub-Releases-Seite geladen wurde:
 
 1. **Weitere Informationen** anklicken;
 2. anschließend **Trotzdem ausführen** wählen.
 
-Das SmartScreen-Fenster ist kein Fehler des FoxAir Updaters. Eine Datei aus einer anderen oder unbekannten Quelle sollte dagegen nicht einfach freigegeben werden.
+Eine Datei aus einer anderen oder unbekannten Quelle sollte dagegen nicht einfach freigegeben werden.
 
-## Wichtig: keine Refaktorierung der OTA-Logik
+## Architektur: gemeinsame OTA-Logik
 
-Die sicherheitsrelevante gemeinsame OTA-Logik wird beim Windows-Build **nicht in eine zweite Implementierung übertragen und nicht für Windows umgeschrieben**.
-
-Der Build kopiert insbesondere:
+Der Build übernimmt insbesondere:
 
 ```text
 tools/phnix_ota/phnix_local_ota_controller.py
@@ -37,9 +37,7 @@ tools/phnix_ota/create_firmware_manifest.py
 tools/phnix_ota/phnix_ota_runtime_hook
 ```
 
-bytegleich in das Windows-Paket und prüft die Kopien mit `fc /b`.
-
-Seit v0.1.4 liegt davor zusätzlich eine kleine Windows-Sicherheitshülle. Darüber liegt nur eine Windows-UI-Schicht für die lesbare Statusdarstellung:
+in das Windows-Paket. Die Windows-Schicht ergänzt Host-spezifische Bedienung, Statusdarstellung, Full-Abgleich und Cache-Sicherung, ohne einen zweiten OTA-Protokollkern einzuführen.
 
 ```text
 FoxAir_Updater.exe
@@ -55,64 +53,48 @@ private Python Runtime
 phnix_windows_controller_wrapper.py
         ↓
 phnix_local_ota_controller_core.py
-        ↑ bytegleiche Kopie von
-          tools/phnix_ota/phnix_local_ota_controller.py
+        ↑ gemeinsame OTA-Logik
 ```
 
-Der Wrapper bildet ausschließlich die Linux-Launcher-Funktionen nach, die **außerhalb** des eigentlichen Controllers liegen:
-
-- Full-Firmware-/Manifest-Abgleich unmittelbar vor einem echten Update;
-- Sicherung einer eventuell vorhandenen `/cache/phnixIot_device_OTA`;
-- Erhalt dieses Backups bei nicht sicher terminalem Updatezustand;
-- Wiederherstellung des Cachezustands nach erfolgreichem Same-Version-Test bzw. nach einem vom Controller freigegebenen Restore;
-- hostseitige Auswertung des terminalen Run-State nach einem vollständigen Updateaufruf.
-
-Die UI-Schicht interpretiert nur die bereits vorhandenen JSON-Ereignisse für den Benutzer. Entscheidungen über Preflight, Update, Guarded Hold, C5A8-Grenze und Zulässigkeit eines Restore verbleiben weiterhin im bestehenden gemeinsamen Controller.
+Entscheidungen über Preflight, OTA-Handshakes, C5A8-Grenze, Guarded Hold und Restore-Zulässigkeit verbleiben im gemeinsamen Controller.
 
 ## ADB
 
 **ADB wird nicht mitgeliefert.**
 
-Die GUI zeigt für eine direkte USB-Verbindung zuerst den benötigten **SIMCom Windows USB-Treiber** und danach die offiziellen Android SDK Platform Tools an.
-
 Die GUI bietet:
 
 - Link zum SIMCom Windows USB Driver V1.0.2;
-- automatische Suche nach einer bereits vorhandenen `adb.exe`;
+- automatische Suche nach einer vorhandenen `adb.exe`;
 - manuelle Auswahl der `adb.exe`;
-- Link zur offiziellen Google-Seite für Android SDK Platform Tools;
-- Link zur zentralen LTE-/USB-Anleitung;
-- `adb devices -l`;
-- bei `offline` einen einmaligen automatischen `adb reconnect`;
-- manuellen `adb reconnect`;
+- Link zu den offiziellen Android SDK Platform Tools;
+- Link zur LTE-/USB-Anleitung;
+- `adb devices -l`-Prüfung;
+- automatischen und manuellen `adb reconnect`;
 - optionalen **Remote-ADB-Modus über einen Raspberry Pi**.
 
 SIMCom-Treiber:
 
 https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip
 
-Offizielle ADB-Downloadseite:
+Android Platform Tools:
 
 https://developer.android.com/tools/releases/platform-tools?hl=de#downloads
 
 LTE-/USB-Anleitung:
 
-https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md
+[`../../docs/HowTo/firmware_backup_lte.md`](../../docs/HowTo/firmware_backup_lte.md)
 
 ## Remote ADB über Raspberry Pi
 
-Dieser Modus ist für Spezialfälle gedacht, in denen das LTE-Modem per USB an einem Raspberry Pi hängt, die Windows-GUI aber auf einem anderen Rechner läuft.
-
-Auf dem Raspberry Pi kann der ADB-Server kurzfristig im lokalen LAN freigegeben werden:
+Auf dem Raspberry Pi kann der ADB-Server kurzfristig im lokalen LAN bereitgestellt werden:
 
 ```bash
 adb kill-server
 adb -a -P 5038 nodaemon server
 ```
 
-Der zweite Befehl bleibt im Vordergrund. Zum Beenden einfach **Strg+C** drücken.
-
-In der Windows-GUI anschließend auswählen:
+In der Windows-GUI anschließend:
 
 ```text
 Remote – ADB-Server auf Raspberry Pi
@@ -126,33 +108,20 @@ Die GUI setzt für ihre gestarteten Prozesse:
 ADB_SERVER_SOCKET=tcp:<IP_DES_PI>:5038
 ```
 
-Dadurch verwenden GUI, Windows-Sicherheitswrapper, gemeinsamer Controller und `adb pull`/`push`-Aufrufe denselben entfernten ADB-Server, **ohne Änderung am gemeinsamen OTA-Code**.
+Auch im Remote-Modus wird unter Windows eine lokale `adb.exe` als Client benötigt. Der Remote-Port sollte nur kurzfristig in einem vertrauenswürdigen LAN offen sein.
 
-Auch im Remote-Modus wird auf Windows weiterhin eine lokale `adb.exe` als ADB-Client benötigt. Der Remote-Port sollte nur kurzfristig in einem vertrauenswürdigen LAN offen sein.
+Die Verbindungswerte werden über `QSettings("FoxAir", "FoxAir Updater")` gespeichert. Dazu gehören unter anderem ADB-Modus, Raspberry-Pi-IP/Port, ADB-Pfad und Backup-Ziel.
 
-### Persistenz von IP und Port
-
-Die Verbindungswerte werden über `QSettings("FoxAir", "FoxAir Updater")` gespeichert. v0.1.7 hatte dabei einen Ladefehler: Beim Start wurden die Signale der Radio-/Eingabefelder ausgelöst, bevor die gespeicherte IP und der gespeicherte Port vollständig eingelesen waren. Dadurch konnte die IP wieder leer und der Port auf den Defaultwert gesetzt werden.
-
-v0.1.8 liest die gespeicherten Werte zuerst vollständig ein und blockiert während des Einsetzens die Writeback-Signale. Danach bleiben insbesondere erhalten:
-
-- lokaler/Remote-ADB-Modus;
-- Raspberry-Pi-IP;
-- ADB-Server-Port;
-- ADB-Pfad;
-- Backup-Zielordner;
-- zuletzt verwendeter ADB-, Firmware- und Manifest-Ordner.
-
-## Funktionen der GUI v0.1.8
+## Funktionen der GUI v0.3.9
 
 ### Verbindung
 
 - lokaler oder Remote-ADB-Modus;
-- ADB-Pfad auswählen und lokal merken;
+- ADB-Pfad auswählen und speichern;
 - ADB-Gerät prüfen;
-- `offline` erkennen und einmal `adb reconnect` versuchen;
-- Remote-Host und Port lokal merken;
-- erfolgreiche Verbindung grün, `offline` orange und Fehler rot darstellen.
+- `offline` erkennen und Reconnect versuchen;
+- Remote-Host und Port speichern;
+- Status farblich verständlich darstellen.
 
 ### Backup / Firmware Downloader
 
@@ -165,27 +134,26 @@ Der Backup-Pfad wurde real getestet und verwendet ausschließlich read-only `adb
 /data/phnixIot4G
 ```
 
-Firmware, OTA_INFO und Statistik sind vorausgewählt; der Originaldienst kann zusätzlich angehakt werden.
-
-Die Registerkarte bietet:
-
-- frei wählbaren Zielordner;
-- **Backup erstellen**;
-- **Zielordner öffnen**, um den tatsächlich verwendeten Sicherungsordner direkt im Windows-Explorer zu kontrollieren.
-
-Der Button **Zielordner…** ist nur ein Ordner-Auswahldialog und zeigt deshalb nicht wie ein normaler Explorer-Browser den Ordnerinhalt an.
+Firmware, OTA_INFO und Statistik sind vorgesehen; der Originaldienst kann zusätzlich gesichert werden. Das Backup verändert die Dateien auf dem LTE-Modem nicht.
 
 ### Status / Recovery
 
-Der Originalzustand kann über den bestehenden Controller geprüft werden. Erfolgreiche Einzelprüfungen und der Gesamtstatus werden grün, Fehler rot dargestellt.
+Der Originalzustand wird read-only geprüft. Dazu gehören unter anderem:
 
-Restore bleibt an die Sicherheitsentscheidung des bestehenden Controllers gebunden. Sobald die C5A8-Grenze überschritten wurde, darf die Windows-Hülle diese Entscheidung nicht umgehen.
+- Originaldienst läuft;
+- erwartete SHA-256 des Dienstes;
+- kein Debugger;
+- keine lokale OTA-Injection;
+- keine verbliebene Cloud-/MQTT-Sperre;
+- Watchdogs laufen;
+- MQTT/Cloud verbunden;
+- temporärer lokaler OTA-Zustand bereinigt.
+
+Restore bleibt an die Sicherheitsentscheidung des Controllers gebunden. Sobald der erste C5A8-Firmwareblock begonnen hat, darf die Windows-Hülle diese Grenze nicht umgehen.
 
 ### Firmware Update / Dry-Run
 
-Die GUI verwendet für den eigentlichen OTA-Ablauf weiterhin den bytegleichen gemeinsamen Controller-Core.
-
-Vor einem echten Update führt die Windows-Sicherheitshülle zusätzlich automatisch denselben Full-Abgleich durch, den der Linux-Launcher mit `--full` anbietet. Verglichen werden unter anderem:
+Vor einem echten Update führt die Windows-Sicherheitshülle einen Full-Abgleich von Firmware und Manifest durch. Verglichen werden unter anderem:
 
 ```text
 schema
@@ -200,194 +168,132 @@ sha256
 image_base
 ```
 
-Erst wenn diese Prüfung erfolgreich ist, wird der ursprüngliche LTE-Firmware-Cache gesichert und anschließend der gemeinsame Controller mit `PHNIX-FULL-UPDATE` gestartet.
+Erst nach erfolgreicher Prüfung wird der gemeinsame Controller mit der expliziten Freigabe `PHNIX-FULL-UPDATE` gestartet.
 
-Die vorhandenen Controller-Ereignisse werden zusätzlich als lesbarer Ablauf angezeigt:
+Die GUI übersetzt die technischen JSON-Ereignisse in lesbare Phasen und lässt das Rohprotokoll weiterhin sichtbar und speicherbar.
 
-- **grüne Punkte** für erfolgreiche Prüfungen und sicher bestätigte Zustände;
-- **gelbe Punkte** für Warte-/Transferzustände und erwartete Warnungen wie gleiche Firmware;
-- **rote Punkte** für Fehler, Guarded Hold oder notwendigen manuellen Recovery-Schritt.
+## MQTT während des Updates
 
-Beispiele für lesbare Zustände sind:
+Seit v0.3.9 bleibt MQTT beim normalen Vollupdate **standardmäßig verbunden**.
 
-```text
-● Firmwaredatei und Manifest sind konsistent.
-● ADB-Verbindung zum LTE-Modem ist bereit.
-● Geprüfter PHNIX-Originaldienst ist aktiv und unverändert.
-● OTA-Statusdatei ist gültig und CRC-geprüft.
-● Vorprüfung vollständig bestanden.
-● Firmware wurde auf dem LTE-Modem bereitgestellt.
-● Gleiche Firmware erkannt – keine Firmwaredaten übertragen.
-● Originaldienst, Watchdogs und Cloud/MQTT sind im normalen Betriebszustand.
-```
-
-Das technische Rohprotokoll mit allen JSON-Zeilen bleibt unverändert darunter erhalten und kann weiterhin gespeichert werden.
-
-Abschluss-Popups unterscheiden unter anderem:
-
-- **Dry-Run erfolgreich – nichts wurde verändert**;
-- **Update nicht durchgeführt – gleiche Firmware**;
-- **Firmwareupdate erfolgreich**;
-- **Update sicher angehalten / Guarded Hold**;
-- **Firmwareupdate wegen Fehler abgebrochen**;
-- **Wiederherstellung erfolgreich/fehlgeschlagen**.
-
-### Same-Version-Host-State-Fix in v0.1.8
-
-Der normale Updateaufruf übergibt von der GUI einen stabilen `--state-dir`. v0.1.7 startete den Controller mit diesem Pfad, suchte nach Exit 0 aber im separaten Wrapper-Defaultpfad nach dem terminalen `run-state.json`. Ein korrekt abgeschlossenes `same-version` konnte deshalb nachträglich mit
+Unter **Erweitert** existiert die persistente Checkbox:
 
 ```text
-FEHLER: Terminaler Host-Run-State des Updates fehlt
+MQTT bei Update aus
 ```
 
-und Exit-Code 2 erscheinen.
+- **aus** = Standard; kein `--isolate-mqtt`, MQTT bleibt verbunden;
+- **an** = `--isolate-mqtt`, frühere MQTT-Isolierung für besondere Testfälle.
 
-v0.1.8 verwendet für Start und Abschlussprüfung denselben effektiven `--state-dir`. Vor dem Controllerstart wird außerdem eine Momentaufnahme vorhandener Run-State-Dateien erstellt; nur ein neu angelegter oder veränderter Run-State zählt anschließend als aktueller Abschlussbeweis. Damit kann auch kein alter erfolgreicher Lauf versehentlich wiederverwendet werden.
+Die Isolation ist nicht der empfohlene Normalbetrieb. Der Originaldienst besitzt einen eigenen Rebootpfad, wenn der Aliyun-MQTT-Client intern länger als 1800 Sekunden offline ist.
 
-#### Einmalige Bereinigung nach dem bekannten v0.1.7-Fall
+Wichtig: Diese 1800 Sekunden beginnen nicht zwingend beim Einsetzen einer `iptables DROP`-Regel. Der Aliyun-SDK kann mehrere 180-s-Keepalive-Zyklen benötigen, bevor der interne Clientzustand überhaupt auf offline wechselt. Erst danach beginnt der PHNIX-Offlinezähler. Es gibt keinen bekannten OTA-Sonderzweig, der diesen Rebootmechanismus während des Mainboardupdates deaktiviert.
 
-Nur wenn das Log eindeutig bestätigt:
+## Fortschritts- und Abschlusslogik
 
-```text
-phase=same-version
-c357_sent=false
-c5a8_sent=false
-state_restored=true
-services-restored ok=true
-```
-
-und erst danach der Host-Run-State-Fehler kam, kann der liegengebliebene **lokale** Marker entfernt werden:
-
-```powershell
-Remove-Item "$env:LOCALAPPDATA\FoxAir Updater\windows-wrapper-state\original-cache\cache.pending"
-```
-
-Die historischen `phnix-ota-state`-Ordner nicht löschen. Auf dem LTE-Modem ist für diesen bestätigten Same-Version-Fall keine manuelle Löschung erforderlich.
-
-Bei einem unbekannten Zustand oder einem bereits begonnenen C5A8-Transfer darf dieser Marker nicht blind gelöscht werden.
-
-### Fortschrittsbalken
-
-Ein Fortschrittsbalken ist vorhanden. Sobald der Controller während der C5A8-Phase eine gültige `OTA_INFO` mit `offset > 0` und `length > 0` meldet, zeigt die GUI:
-
-```text
-67 % – 192.000 / 287.598 Byte
-```
-
-Die Prozentzahl wird ausschließlich aus den vom Originaldienst gemeldeten `offset/length`-Werten berechnet. Bei einer Gleichversionsablehnung bleibt der Balken bewusst bei 0 und zeigt **Keine Übertragung – gleiche Firmware**, weil keine C5A8-Firmwaredaten gesendet wurden.
+Während C5A8 zeigt die GUI den vom Originaldienst gemeldeten `offset/length`-Fortschritt.
 
 > [!WARNING]
-> 100 % bezeichnet vollständig übertragene Firmwaredaten. Die anschließende Mainboard-Verarbeitung und Prüfung des normalen LTE-/Cloudzustands werden als eigene Phasen angezeigt.
+> **100 % bedeutet nur: alle Firmwaredaten wurden übertragen.** Es bedeutet noch nicht, dass das Mainboard bereits geflasht, promoted und neu gestartet ist.
 
-### Manifest
-
-Die GUI verwendet weiterhin unverändert:
+Der reale V3.3→V3.4-Lauf zeigte:
 
 ```text
-create_firmware_manifest.py
+C5A8 vollständig übertragen
+→ C36E Status 3
+→ Mainboard-Verarbeitung / Flash / Promotion
+→ C36E Status 5
+→ Board-Step 12
+→ neuer normaler Mainboard-/C544-Verkehr mit Version 0034
 ```
 
-Der empfohlene Ablauf entspricht der Linux-Funktionalität:
+Gemessene Zeiten:
+
+- C5A8-Transfer: ca. **28:56 min**;
+- letzter C5A8 → Status 3: ca. **2 s**;
+- letzter C5A8 → Status 5: ca. **5:16 min**;
+- bis zur ersten neuen C544-Versionsmeldung insgesamt rund **35 min**.
+
+Erst **Status 5 / Board-Step 12** ist der terminale Mainboard-Erfolg.
+
+Nach diesem terminalen Ergebnis wartet der Controller bis zu **120 Sekunden** auf einen vollständig normalen LTE-/Cloudzustand. Damit wird ein erfolgreich geflashtes Mainboard nicht vorschnell als Fehler bewertet, nur weil MQTT unmittelbar danach noch nicht in `netstat` sichtbar ist.
+
+## ADB-Verlust während eines laufenden Updates
+
+Nach begonnenem C5A8 bleibt der originale `phnixIot4G`-Dienst autoritativ. Ein Windows-/ADB-Monitoringfehler darf den Transfer nicht aktiv stoppen oder einen generischen Restore erzwingen.
+
+Die GUI kann nach einem ADB-Verbindungsverlust read-only reconnecten und den bestehenden OTA-Zustand erneut prüfen. Dabei wird kein zweiter Updateauftrag gestartet.
+
+## Manifest
+
+Empfohlener Windows-Ablauf:
 
 1. originale Firmwaredatei auswählen;
 2. **Vorschau aus Firmware (Full / Show)** ausführen;
-3. die automatisch erkannten und berechneten Werte prüfen;
-4. **Manifest automatisch erzeugen (Full)** verwenden.
+3. erkannte Werte prüfen;
+4. **Manifest automatisch erzeugen (Full)** verwenden;
+5. Manifest im Firmware-Update-Tab auswählen;
+6. Dry-Run/Prüfung vor dem echten Update durchführen.
 
-Intern entsprechen diese beiden Aktionen:
+Die Firmwaredatei muss keine `.bin`-Endung besitzen und wird durch die Analyse nicht verändert.
 
-```text
-create_firmware_manifest.py --firmware FIRMWARE --full --show
-create_firmware_manifest.py --firmware FIRMWARE --full --output FIRMWARE.json
-```
+Details:
+[`../../docs/HowTo/FIRMWARE_MANIFEST.md`](../../docs/HowTo/FIRMWARE_MANIFEST.md)
 
-Die Firmwaredatei muss **keine `.bin`-Endung** besitzen. Der Dateidialog zeigt daher standardmäßig alle Dateien an. Die originale Firmware wird nicht verändert.
+## Was real bestätigt ist
 
-Wenn die automatische Firmwareanalyse nicht möglich ist, bleibt als letzter Fallback **Manifest manuell erzeugen** mit Software-Code, Display-Version und Target-SSID erhalten.
+Auf realer Hardware wurden bestätigt:
 
-### Protokoll
+- lokale und Remote-ADB-Verbindung;
+- Originalstatus;
+- read-only Backup/Firmware-Download;
+- Dry-Run;
+- V3.3→V3.3 bis zur sicheren Gleichversionsablehnung ohne C5A8;
+- vollständiger V3.3→V3.4-Transfer mit C5A8;
+- C36E Status 3 und Status 5;
+- terminaler Board-Step 12;
+- anschließende C544-Versionsmeldung `0034`;
+- Rückkehr des normalen LTE-/MQTT-Zustands;
+- Mainboard-OTA-Vorgangszähler-Wartung.
 
-Das Protokoll kann gespeichert oder mit **Protokoll leeren** direkt in der GUI geleert werden.
+Nicht automatisch auf andere PHNIX-Mainboards, Softwarecodes oder Firmwarekombinationen übertragbar ist die Aussage, dass jeder beliebige Updatepfad identisch funktioniert.
 
 ## Programmlogo
 
-Die Windows-Version verwendet dasselbe `app_icon.ico` wie `FoxAir_Control`.
+Die Windows-Version verwendet `app_icon.ico` aus `FoxAir_Control`. Der Build verifiziert den gepinnten Git-Blob vor Verwendung als EXE-, Fenster- und Setup-Icon.
 
-Der Build lädt die Datei direkt aus dem öffentlichen `FoxAir_Control`-Repository und prüft anschließend mit `git hash-object`, dass exakt der gepinnte Git-Blob
-
-```text
-0ae281034216f69c4f18dbdb55cc70d8b78e47e1
-```
-
-verwendet wird. Das Logo wird als EXE-Icon, Fenster-Icon und Setup-Icon verwendet.
-
-## Validierungsstand
-
-Ein echter Versionswechsel von V3.3 auf V3.4 wurde auf realer Hardware erfolgreich durchgeführt und anschließend am Mainboard als V3.4 bestätigt. Andere Firmwarestände und Hardwarevarianten sind noch nicht vollständig getestet.
-
-Für Windows sind ADB, Remote-ADB, Originalstatus, Backup und Dry-Run bestätigt. Der vollständige Windows-Sicherheitswrapper wurde außerdem real bis zum terminalen V3.3→V3.3-Same-Version-Zustand ausgeführt. Dabei zeigte sich in v0.1.7 der oben dokumentierte rein hostseitige State-Pfad-Fehler nach dem bereits sauber beendeten OTA-Ablauf; die Korrektur ist in v0.1.8 automatisiert getestet.
-
-## GitHub Actions: Build und Release getrennt
+## GitHub Actions: Build und Release
 
 ### Windows Updater Build
 
-`.github/workflows/windows-build.yml` läuft nach relevanten Änderungen auf `main` beziehungsweise manuell. Dieser Workflow ist nur zum Bauen und Testen gedacht und veröffentlicht **kein GitHub Release**.
-
-Die Actions-Artefakte enthalten:
-
-- den Portable-Ordner als ein von GitHub einmal gepacktes ZIP;
-- die Setup-EXE.
-
-Dadurch gibt es beim Actions-Download kein ZIP-in-ZIP mehr.
+`.github/workflows/windows-build.yml` baut und testet relevante Windows-Änderungen, veröffentlicht aber kein öffentliches GitHub Release.
 
 ### Release Windows
 
-Für eine öffentliche Version unter **GitHub Releases** gibt es den separaten Workflow:
+Öffentliche Windows-Releases werden über den separaten Workflow erstellt:
 
 ```text
 Actions → Release Windows → Run workflow
 ```
 
-Dort wird nur die Zielversion eingetragen, zum Beispiel:
+Die Zielversion wird als `x.y.z` angegeben. Der Workflow synchronisiert die Versionsnummer in GUI, Portable-Build und Inno-Setup, baut Portable und Setup, erzeugt den Tag und veröffentlicht das GitHub Release.
+
+Beispiel für v0.3.9:
 
 ```text
-0.1.8
+Tag:     windows-v0.3.9
+Release: FoxAir Updater Windows v0.3.9
+Assets:
+  FoxAir_Updater_Portable_v0.3.9.zip
+  FoxAir_Updater_Setup_v0.3.9.exe
 ```
-
-Optional kann festgelegt werden, ob das Release als Prerelease markiert wird.
-
-Der Workflow:
-
-1. setzt die eingegebene Version synchron in GUI-Einstieg, Basis-GUI, Portable-Build und Inno-Setup-Datei;
-2. prüft die Python-Syntax der Windows-GUI-Dateien;
-3. baut Portable und Setup;
-4. prüft, dass beide Release-Dateien vorhanden sind;
-5. committed eine eventuell geänderte Versionsnummer nach `main`;
-6. erzeugt den Tag `windows-v<Version>`;
-7. veröffentlicht ein normales GitHub Release mit Portable-ZIP und Setup-EXE.
-
-Beispiel:
-
-```text
-Tag:     windows-v0.1.8
-Release: FoxAir Updater Windows v0.1.8
-```
-
-Release-Assets:
-
-```text
-FoxAir_Updater_Portable_v0.1.8.zip
-FoxAir_Updater_Setup_v0.1.8.exe
-```
-
-Diese Dateien sind bei einem öffentlichen Repository auch ohne GitHub-Anmeldung über die normale Releases-Seite herunterladbar.
 
 ## Portable Build
 
-Voraussetzungen auf dem **Build-PC**:
+Voraussetzungen auf dem Build-PC:
 
 - Windows x64;
-- installierte Python-Version mit `py` Launcher;
+- Python mit `py` Launcher;
 - Git;
 - Internetzugriff beim ersten Build.
 
@@ -397,50 +303,30 @@ Aus dem Repository-Root:
 updater\windows\build_windows_portable.bat
 ```
 
-Der Build:
-
-1. installiert PySide6/PyInstaller für den Build-PC;
-2. lädt und verifiziert das FoxAir-Control-Programmlogo;
-3. baut `FoxAir_Updater.exe` aus `foxair_updater_app.py` als PyInstaller-One-Folder-Anwendung;
-4. kopiert den gemeinsamen Controller bytegleich als `phnix_local_ota_controller_core.py`;
-5. legt davor den Windows-Sicherheitswrapper unter dem von der GUI erwarteten Controller-Dateinamen ab;
-6. prüft Wrapper und gemeinsamen Backend-Code mit `fc /b`;
-7. lädt von `python.org` die offizielle Python-3.11.9-Embeddable-Runtime;
-8. prüft die gepinnte MD5 `6d9aa08531d48fcc261ba667e2df17c4`;
-9. prüft Wrapper, Controller-Core und Manifest-Tool mit dieser privaten Runtime und erzeugt das Portable-ZIP.
-
-Ergebnis:
-
-```text
-dist/FoxAir_Updater/
-dist/FoxAir_Updater_Portable_v0.1.8.zip
-```
-
 Der Endanwender benötigt **keine Python-Installation**. ADB ist ausdrücklich nicht Bestandteil des Pakets.
 
 ## Setup bauen
 
-Nach erfolgreichem Portable-Build wird zusätzlich **Inno Setup 6** benötigt.
+Nach erfolgreichem Portable-Build wird zusätzlich Inno Setup 6 benötigt:
 
 ```bat
 updater\windows\build_windows_setup.bat
 ```
 
-Ergebnis:
-
-```text
-updater/windows/installer/Output/FoxAir_Updater_Setup_v0.1.8.exe
-```
-
-Das Setup installiert denselben Inhalt wie die Portable-Version nach `Program Files`. Laufzeitdaten und OTA-State werden von der GUI bzw. der Windows-Sicherheitshülle in das lokale Benutzer-Anwendungsdatenverzeichnis geschrieben, nicht in `Program Files`.
+Das Setup installiert denselben Inhalt wie die Portable-Version nach `Program Files`. Laufzeitdaten und OTA-State werden im Benutzer-Anwendungsdatenverzeichnis gespeichert.
 
 ## Entwicklungsstart ohne Packaging
-
-Für GUI-Entwicklung können Basis-GUI und Erweiterung direkt aus dem Repository gestartet werden, wenn PySide6 installiert ist:
 
 ```bat
 py -m pip install -r updater\windows\requirements-build.txt
 py updater\windows\foxair_updater_app.py
 ```
 
-Im Entwicklungsmodus läuft die GUI über denselben Windows-Backendpfad wie das Release: Windows-Sicherheitswrapper → gehärtete gemeinsame Safety-Schicht → gemeinsamer Controller-Core. Damit werden Entwicklung und ausgelieferte Version nicht mit unterschiedlichen Sicherheitswegen getestet.
+Im Entwicklungsmodus läuft die GUI über denselben Windows-Backendpfad wie das Release.
+
+## Technische Referenzen
+
+- [`../../docs/RELEASE_NOTES_WINDOWS_v0.3.9.md`](../../docs/RELEASE_NOTES_WINDOWS_v0.3.9.md)
+- [`../../docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](../../docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
+- [`../../docs/reverse_engineering/PHNIX_phnixIot4G_watchdogs_reset_counters.md`](../../docs/reverse_engineering/PHNIX_phnixIot4G_watchdogs_reset_counters.md)
+- [`../../docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](../../docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)
