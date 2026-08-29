@@ -2,15 +2,16 @@
 
 Stand: 2026-08-24
 
-> [!NOTE]
-> Für Endanwender steht inzwischen zusätzlich eine Windows-GUI unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases) zur Verfügung. Dort sind ADB-Verbindung, Originalstatus und Backup real getestet.
+> [!IMPORTANT]
+> **Historisches Entwicklungsdokument.** Diese Datei beschreibt den Projektstand vom 24. August 2026, als der echte Firmware-Schreibpfad noch nicht freigegeben war.
 >
-> Die hier beschriebene Pre-C5A8-Generalprobe bleibt ein **separater Labor-/Entwicklungspfad**. Die Windows-GUI ersetzt diesen Test nicht. Ein echter Firmware-Versionswechsel ist weiterhin nicht live bestätigt.
+> Inzwischen wurde **V3.3 → V3.4** auf realer Hardware vollständig und erfolgreich durchgeführt, einschließlich C5A8, Status 3, Status 5 / Board-Step 12 und anschließender C544-Version `0034`.
+>
+> Aussagen weiter unten wie „noch nicht implementierter Realmodus“ oder „bleiben spätere Risikostufen“ sind deshalb bewusst als historischer Entwicklungsstand zu lesen. Aktueller Endanwenderpfad: [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md). Live-Nachweis: [`../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md).
 
-## Ziel
+## Ziel der damaligen Stufe
 
-Diese Stufe prüft den vollständigen Metadatenhandshake und den bereits live
-bestätigten Cancelpfad, ohne einen Firmwareblock zu senden:
+Diese Stufe prüfte den vollständigen Metadatenhandshake und den bereits live bestätigten Cancelpfad, ohne einen Firmwareblock zu senden:
 
 ```text
 C350
@@ -23,11 +24,11 @@ C36A
 → Originaldienst Step 12
 ```
 
-`C5A8` muss während des gesamten Tests exakt nullmal auftreten.
+`C5A8` musste während des gesamten Tests exakt nullmal auftreten.
 
-## Aktueller Sperrstatus
+## Damaliger Sperrstatus
 
-Der implementierte Befehl heißt:
+Der implementierte Befehl hieß:
 
 ```sh
 python3 tools/phnix_ota/phnix_local_ota_controller.py \
@@ -38,13 +39,13 @@ python3 tools/phnix_ota/phnix_local_ota_controller.py \
   --confirm VM-PRE-C5A8-ONLY
 ```
 
-Er läuft ausschließlich, wenn das Ziel die Simulator-Markierung
-`/data/.phnix_ota_simulator` besitzt. Auf dem echten LTE-Modem ist dieser
-Befehl auch mit `--execute` und richtigem Bestätigungstext gesperrt.
+Er lief ausschließlich, wenn das Ziel die Simulator-Markierung
+`/data/.phnix_ota_simulator` besaß. Auf dem echten LTE-Modem war dieser Befehl
+auch mit `--execute` und richtigem Bestätigungstext gesperrt.
 
 ## Erfolgskriterien der VM
 
-Vor dem Cancel müssen gemeinsam nachgewiesen sein:
+Vor dem Cancel mussten gemeinsam nachgewiesen sein:
 
 ```text
 phase == pre-c5a8-hold
@@ -80,28 +81,28 @@ Normalbetrieb bestätigt
 | ein unerlaubtes C5A8 erscheint | guarded-hold | bestanden |
 | Cancel ohne terminale Bestätigung | guarded-hold | bestanden |
 
-Zusammen mit den vorhandenen Transfer-, Persistenz- und Cancel-Szenarien sowie
-den Unit-Tests ist damit die Softwareseite bis zur Realhardwaregrenze geprüft.
+Zusammen mit den damaligen Transfer-, Persistenz- und Cancel-Szenarien sowie den Unit-Tests war damit die Softwareseite bis zur damaligen Realhardwaregrenze geprüft.
 
-## Noch nicht implementierter Realmodus
+## Damals noch nicht implementierter Realmodus
 
-Der Realmodus wird erst nach einer neuen ausdrücklichen Freigabe aktiviert.
-Er benötigt zusätzlich:
+Zum Stand 24. August 2026 sollte der Realmodus erst nach neuer ausdrücklicher Freigabe aktiviert werden und unter anderem benötigen:
 
 1. verifizierten Originaldienst-Build;
 2. OTA_INFO mit gültiger CRC, Offset 0 und Länge 0;
 3. passende Firmwaregröße, MD5, Softwarecode, Version und Vector Table;
 4. kontrolliert getrennte Original-Cloud;
 5. bestätigte Sendepause des originalen LTE-Modems;
-6. passiven Logger mit Sonderbehandlung für C350, C357, C36E, C36A und C36C;
-7. harte Breakpoints/Guards an C5A8 und allen späteren Schreibphasen;
-8. Bedienerbeobachtung an der Wärmepumpe;
-9. stabile Versorgung für Wärmepumpe, LTE-Modem, Raspberry Pi und Logger;
-10. vorbereiteten Recoveryablauf, falls C36C oder Step 12 ausbleibt.
+6. passiven Logger für C350, C357, C36E, C36A und C36C;
+7. harte Breakpoints/Guards an C5A8 und späteren Schreibphasen;
+8. Bedienerbeobachtung;
+9. stabile Versorgung;
+10. vorbereiteten Recoveryablauf.
 
-## Abbruchregeln des späteren Realtests
+Diese Forderungen dokumentieren die damalige vorsichtige Teststufe. Der heutige normale Vollupdatepfad unterscheidet sich insbesondere dadurch, dass MQTT standardmäßig verbunden bleibt und der Originaldienst nach Beginn des Transfers autoritativ bleibt.
 
-Der Test bleibt angehalten und wird nicht automatisch aufgeräumt, wenn:
+## Abbruchregeln des damaligen Realtests
+
+Der Test sollte angehalten und nicht automatisch aufgeräumt werden, wenn:
 
 - SSID, Softwarecode, Version, Dateigröße oder MD5 abweichen;
 - C36E nicht Status 1 beziehungsweise 2 meldet;
@@ -112,23 +113,21 @@ Der Test bleibt angehalten und wird nicht automatisch aufgeräumt, wenn:
 - der Originaldienst Step 12 nicht erreicht;
 - Wärmepumpe oder Bus ungewöhnliches Verhalten zeigen.
 
-Erst der nachgewiesene Terminalzustand erlaubt die Wiederherstellung von
-Cloud, Watchdogs und Originalbetrieb.
+Erst der nachgewiesene Terminalzustand sollte die Wiederherstellung von Cloud, Watchdogs und Originalbetrieb erlauben.
 
-## Bedeutung für den vollständigen Firmwaretransfer
+## Bedeutung dieser historischen Teststufe
 
-Ein erfolgreicher Realtest dieser Stufe würde erstmals beweisen, dass das
-Originalprogramm mit unseren lokalen Firmwaremetadaten bis unmittelbar vor die
-Flash-schreibende Datenphase kommt und sich anschließend sicher abbrechen
-lässt. Er beweist noch nicht:
+Ein erfolgreicher Realtest dieser Stufe hätte damals erstmals bewiesen, dass das Originalprogramm mit lokalen Firmwaremetadaten bis unmittelbar vor die Flash-schreibende Datenphase kommt und sich anschließend sicher abbrechen lässt.
+
+Nicht Bestandteil dieser Stufe waren damals:
 
 - C5A8-Schreiben in den Staging-Flash;
-- vollständigen Dateitransfer;
+- vollständiger Dateitransfer;
 - Promotion/Copy nach `0x08050000`;
 - Boot der neuen Firmware;
 - Power-Loss- oder Loader-Recovery.
 
-Diese Punkte bleiben eigene, später separat freizugebende Risikostufen.
+Die ersten vier Punkte wurden später im vollständigen V3.3→V3.4-Live-Lauf praktisch weiter validiert; Power-Loss-/Loader-Recovery bleibt weiterhin eine eigene Risikoklasse.
 
 ## Zugehörige Dokumente
 
@@ -138,3 +137,4 @@ Diese Punkte bleiben eigene, später separat freizugebende Risikostufen.
 - [`PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md`](../reverse_engineering/PHNIX_LOGGER_REGISTER_UND_OTA_GUIDE.md)
 - [`PHNIX_CANCEL_PROBE_LIVE_RESULT.md`](../reverse_engineering/PHNIX_CANCEL_PROBE_LIVE_RESULT.md)
 - [`phnix_ota_sender.md`](phnix_ota_sender.md)
+- [`../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
