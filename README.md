@@ -11,7 +11,7 @@ Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 >
 > Ein Firmwareupdate bleibt ein Eingriff in das Mainboard. Im ungünstigsten Fall können Mainboard, LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
 >
-> **Nutzung ausschließlich auf eigenes Risiko.** Der Ersteller übernimmt, **soweit gesetzlich zulässig**, keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
+> **Nutzung ausschließlich auf eigenes Risiko.** Der Ersteller übernimmt, keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
 
 Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt [`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), das weiterhin für normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
 
@@ -20,10 +20,6 @@ Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt [
 Die Windows-Version ist inzwischen der hauptsächliche Entwicklungsweg des Projekts. Sie steht als **Portable-ZIP** und **Setup-EXE** auf der GitHub-Releases-Seite bereit:
 
 **[FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)**
-
-Release-Details zu v0.3.9:
-
-**[`docs/RELEASE_NOTES_WINDOWS_v0.3.9.md`](docs/RELEASE_NOTES_WINDOWS_v0.3.9.md)**
 
 ADB wird weiterhin **nicht mitgeliefert**. Die GUI verlinkt den SIMCom-USB-Treiber, die offiziellen Android Platform Tools und die LTE-/USB-Anleitung. Eine vorhandene `adb.exe` kann ausgewählt und gespeichert werden.
 
@@ -127,9 +123,6 @@ extern ausgewählte adb.exe
 PHNIX LTE-Modem
 ```
 
-Der Windows-Build verwendet die gemeinsamen Controller- und `updater/common`-Quellen und hält damit keine separate zweite OTA-Implementierung vor.
-
-Details zum Windows-Build und zur internen Architektur stehen unter [`updater/windows/README.md`](updater/windows/README.md).
 
 ### Remote ADB über Raspberry Pi
 
@@ -227,46 +220,6 @@ cd ~/FoxAir_updater
   --software-code 82400644 \
   --display-version V3.4 \
   --target-ssid 0063
-```
-
-Weitere Details:
-[`docs/HowTo/FIRMWARE_MANIFEST.md`](docs/HowTo/FIRMWARE_MANIFEST.md)
-
-## Technische Sicherheitsgrenze
-
-Der aktuelle Live-Pfad ist für genau den untersuchten Originaldienst `phnixIot4G` ausgelegt:
-
-```text
-Build-ID: af4dcae12639bedce833ee5efa5da009777b6319
-SHA-256:  7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7
-```
-
-Der frühe OTA-Vorhandshake und der eigentliche Firmwaretransfer werden bewusst unterschiedlich behandelt:
-
-- **Vor dem ersten C5A8** kann ein kontrollierter Guarded-Hold-/Recoverypfad verwendet werden.
-- **Ab dem ersten C5A8** ist der originale PHNIX-Dienst autoritativ; ein Monitoringfehler darf den Transfer nicht automatisch abbrechen.
-- `C36E Status 3` ist **kein sicherer Stopppunkt**.
-- Ein fehlendes `C37B/3` stoppt die anschließende Mainboard-Promotion nicht; das ACK gehört zur Status-/Retrylogik und ist kein Promotion-Gate.
-- **100 % C5A8 ist nicht terminal.** Erst Status 5 / Board-Step 12 bestätigt den Mainboardabschluss.
-
-Diese Erkenntnisse basieren auf der analysierten Mainboard-Firmware V3.3 und dem erfolgreichen V3.3→V3.4-Live-Lauf. Details befinden sich unter [`docs/reverse_engineering/`](docs/reverse_engineering/).
-
-## Repository-Struktur
-
-```text
-FoxAir_updater/
-├─ docs/
-│  ├─ reverse_engineering/  # Mainboard-, OTA- und LTE-Analyse
-│  └─ HowTo/                # Anwender- und Testanleitungen
-├─ firmware_manifests/      # geprüfte/analysierte Manifest-Metadaten
-├─ updater/
-│  ├─ common/               # gemeinsam genutzte Python-Module
-│  ├─ linux/                # Linux-/Raspberry-Pi-Installer
-│  └─ windows/              # Windows-GUI, Portable-/Setup-Build
-├─ tools/phnix_ota/         # OTA-Controller, Runtime-Helfer, Manifestwerkzeug
-├─ devtools/                # Simulatoren und Laborwerkzeuge
-├─ tests/                   # Regressionstests
-└─ foxair-updater           # Linux-Endanwender-Launcher
 ```
 
 ## Projektumfang
