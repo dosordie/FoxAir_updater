@@ -1,78 +1,91 @@
 # PHNIX `phnixIot4G` – `board_ota_step` State-Machine
 
-Stand: 2026-08-22
+Stand: 29. August 2026
 
-Grundlage: statische Analyse des bereitgestellten ARM-ELF `phnixIot4G`. Schwerpunkt ist die Board-OTA-Zustandsmaschine in `dtu_upgrade_pro()` (`0x1D5C0`) sowie alle direkten `set_board_ota_step()`-Aufrufer.
+Grundlage ist die statische Analyse des ARM-ELF `phnixIot4G`, ergänzt um den erfolgreichen realen V3.3→V3.4-Lauf. Schwerpunkt ist die Board-OTA-Zustandsmaschine in `dtu_upgrade_pro()` (`0x1D5C0`) sowie die direkten `set_board_ota_step()`-Übergänge.
+
+> [!IMPORTANT]
+> Der reale Lauf bestätigte die zentrale Abschlusssequenz: kompletter C5A8-Transfer → Step 12/Warten → C36E Status 3 → mehrere Minuten Board-Promotion → C36E Status 5 → Step 5/Erfolgsreport → terminal wieder Step 12. Anschließend meldete C544 die neue Version `0034`.
 
 ## 1. Globale Zustandsvariable
-
-`set_board_ota_step()` (`0x1D34C`) und `get_board_ota_step()` (`0x1D38C`) greifen auf:
 
 ```text
 ota_info @ 0x98A7C
 board_ota_step = ota_info + 0x18
+Adresse: 0x98A94
 ```
 
-also Byteadresse:
+Zugriff:
 
 ```text
-0x98A94
+set_board_ota_step() @ 0x1D34C
+get_board_ota_step() @ 0x1D38C
 ```
 
-Der Dispatcher `dtu_upgrade_pro()` arbeitet nur produktiv, wenn:
+`dtu_upgrade_pro()` arbeitet produktiv nur bei:
 
 ```text
 get_dtu_run_step() == 11
 ```
 
-ansonsten wird die Funktion sofort verlassen.
+## 2. Verwendete Step-Werte
 
-## 2. Tatsächlich verwendete `board_ota_step`-Werte
-
-Im analysierten Build werden die Werte
+Aktiv verwendet werden:
 
 ```text
 1, 3, 5, 6, 7, 8, 9, 10, 12
 ```
 
-aktiv geschrieben oder abgefragt.
+`12` ist mehrdeutig: Es ist sowohl neutraler/abgeschlossener Zustand als auch Wartezustand zwischen Transferaktionen und eingehenden Boardstatusmeldungen. Deshalb darf `board_ota_step == 12` allein nicht als „Update vollständig“ interpretiert werden.
 
-Für `0`, `2`, `4`, `11` gibt es in `dtu_upgrade_pro()` keinen eigenen Zustandsblock. `0` ist praktisch Initial-/Ruhezustand; `2`, `4`, `11` sind im untersuchten Pfad keine eigenständigen produktiven Zustände.
-
-## 3. Gesamtablauf
-
-Vereinfachte Hauptsequenz:
+## 3. Hauptpfad
 
 ```text
-Cloud/Board trigger
-    ↓
-step 1   Anfrage/Erlaubnis bei Cloud
-    ↓
-step 3   Firmwaredownload + MD5-Prüfung
-    ↓
-step 6   Firmwareblöcke via RS485 senden
-    ↓
-step 12  wartet auf Board-Ergebnis / Abschlusszustand
-    ↓
-step 5   Erfolg an Cloud melden
-oder
-step 10  Fehler an Cloud melden
-
-Sonderpfade:
-step 7   Cancel-/Abbruch-/Recovery-Pfad
-step 8   Rollback-Anforderung/-Antwort
-step 9   Rollback-Ergebnis an Cloud melden
+lokaler/Cloud OTA-Auftrag 0033
+        ↓
+step 1   Upgrade-Erlaubnis / Boardstatus melden
+        ↓
+step 3   Firmware laden + MD5 prüfen
+        ↓
+step 6   Firmwareblock via C5A8 senden
+        ↓
+step 12  auf Boardantwort / nächsten Zustand warten
+        ↕
+step 6   weitere C5A8-Blöcke
+        ↓
+Transfer vollständig
+        ↓
+step 12
+        ↓
+C36E Status 3
+        ↓
+step 12 bleibt Wartezustand; Mainboard promoted selbstständig
+        ↓
+C36E Status 5
+        ↓
+step 5   Erfolg melden
+        ↓
+step 12  terminaler Dienstzustand
 ```
 
-## 4. `step 1` – Cloud-Erlaubnis / Upgrade-Anfrage
+Fehler-/Sonderpfade:
 
-Block in `dtu_upgrade_pro()`:
+```text
+step 7   Cancel / Recovery
+step 8   Rollback-Steuerung
+step 9   Rollback-Ergebnis melden
+step 10  Upgradefehler melden
+```
+
+## 4. `step 1` – Upgrade-Erlaubnis / Statusreport
+
+Block:
 
 ```text
 0x1D750 ... 0x1D81C
 ```
 
-Ablauf:
+Kern:
 
 ```c
 if (board_ota_step == 1) {
@@ -81,27 +94,14 @@ if (board_ota_step == 1) {
 
     if (ota_info[0] == 0 && otaDeviceInfo.fileSize != 0) {
         board_ota_step = 3;
-        ota_info[0] = 2;
-        ota_info[0x16] = 1;
-        ota_info[0x15] = 0;
-        ota_info[0x10] = 0;
-        other_ota_flags[5] = 0;
-        other_ota_flags[4] = 0;
+        ...
     }
 }
 ```
 
-`board_request_upgrade()` (`0x1D4E4`) ruft:
+`board_request_upgrade()` führt den PHNIX-Report `0023` aus. Im lokalen Updater wird die notwendige Erfolgssemantik dieses Originalpfads kontrolliert bereitgestellt.
 
-```text
-ota_device_send_is_can_ota_to_phnix(otaDeviceInfo + 0x251)
-```
-
-auf.
-
-Semantik: PHNIX-Cloud wird gefragt, ob das Board-Upgrade erlaubt ist. Bei erfolgreichem Publish und vorhandenem `fileSize` geht die State-Machine auf `step 3`.
-
-## 5. `step 3` – Download der Board-Firmware
+## 5. `step 3` – Firmware laden und MD5 prüfen
 
 Block:
 
@@ -109,84 +109,27 @@ Block:
 0x1D820 ... 0x1D9D4
 ```
 
-### 5.1 Sonderfall Flag `other_ota +0x68 == 1`
-
-Bei:
+Normaler Pfad:
 
 ```text
-other_ota[0x68] == 1
+board_ota_http_download()
+→ Firmware nach /cache/phnixIot_device_OTA
+→ ota_check_device_otaFile_md5()
+→ Offset/MD5/Länge/Version persistieren
+→ board_ota_step = 6
 ```
 
-wird sofort:
+Nach mehr als zwei fehlgeschlagenen Download-/Prüfversuchen geht der Dienst auf:
 
 ```text
-board_ota_step = 7
-other_ota[0x68] = 0
+step 10
 ```
 
-und der Durchlauf beendet.
+und meldet den Fehler.
 
-### 5.2 Normaler Download
+Beim lokalen Updater stammt die Download-URL aus dem eingespeisten `0033`, zeigt aber auf den lokalen Loopback-HTTP-Server `127.0.0.1`.
 
-Ansonsten:
-
-```text
-0x1D860 -> board_ota_http_download()
-```
-
-`board_ota_http_download()`:
-
-```text
-ota_download_device_otaFile()
-  -> Download nach /cache/phnixIot_device_OTA
-
-wenn Download erfolgreich:
-    ota_check_device_otaFile_md5()
-
-wenn Download fehlschlägt:
-    ota_device_send_ota_FirmwareDownloadFailed()
-    return -1
-```
-
-Bei komplett erfolgreichem Download/MD5:
-
-```text
-sys_set_board_file_offset(0)
-sys_set_board_file_md5(...)
-sys_set_board_file_len(otaDeviceInfo.fileSize)
-sys_set_dev_otavercode(...)
-board_ota_step = 6
-ota_info[0] = 0
-other_ota[0x4C] = 3
-```
-
-Damit ist `step 3 -> step 6` der reguläre Übergang von Download zu RS485-Transfer.
-
-### 5.3 Downloadfehler / Retry
-
-Bei Fehler wird `ota_info+0x15` inkrementiert.
-
-Solange:
-
-```text
-retry <= 2
-```
-
-bleibt der Zustand in `step 3` und ein späterer Durchlauf versucht erneut.
-
-Nach mehr als zwei Fehlversuchen:
-
-```text
-ota_info+0x16 = 0
-ota_info+0x15 = 0
-ota_info+0x10 = 0
-ota_info[0] = 0
-board_ota_step = 10
-```
-
-Damit wird nach drei fehlgeschlagenen Downloadversuchen in den Fehlerreport-Zustand gewechselt.
-
-## 6. `step 6` – Board-Firmware via RS485 senden
+## 6. `step 6` – C5A8-Firmwaredaten senden
 
 Block:
 
@@ -194,7 +137,7 @@ Block:
 0x1D9D8 ... 0x1DA04
 ```
 
-Ablauf:
+Kern:
 
 ```c
 if (board_ota_step == 6) {
@@ -205,32 +148,62 @@ if (board_ota_step == 6) {
 }
 ```
 
-`set_update_board_bin_by_485()` (`0x1CE14`) ist damit der zentrale Übergang in den eigentlichen Firmwareblock-Transfer.
+`set_update_board_bin_by_485()` / `set_board_update_bin()` lesen die Firmware und erzeugen C5A8-Frames über den gemeinsamen UART-Sendeslot.
 
-Die darunterliegende Routine `set_board_update_bin()` baut die RS485-OTA-Frames, liest die Firmwaredatei, berechnet CRC und schickt über:
+Während des Transfers wechseln Step 6 und Step 12 entsprechend Sendung/Antwortverarbeitung. Deshalb ist Step 12 während C5A8 **nicht** automatisch terminal.
 
-```text
-uart485_send_data_to_board()
-```
-
-Firmwareblöcke Richtung Mainboard.
-
-Nach erfolgreichem Senden eines Transferabschnitts geht der Zustand auf `12`.
+Im realen V3.3→V3.4-Lauf dauerte die C5A8-Phase rund **28:56 Minuten**.
 
 ## 7. `step 12` – Warte-/Abschlusszustand
 
-`step 12` besitzt in `dtu_upgrade_pro()` keinen eigenen großen Block. Stattdessen wird er durch eingehende Boardantworten und Handler weitergeschaltet.
+Step 12 besitzt keinen eigenen großen Workerblock. Eingehende RS485-Handler treiben die Zustandsmaschine weiter.
 
-Der wichtigste Übergang liegt in `board_is_allow_upg_handle()`:
+Wichtigster heutiger Erkenntnisstand:
+
+- nach einem einzelnen C5A8 kann Step 12 nur „warte auf C371/Boardantwort“ bedeuten;
+- nach dem letzten C5A8 bedeutet Step 12 zunächst „Transfer vollständig, warte auf Boardstatus“;
+- C36E Status 3 bestätigt Staging/erste MD5-Stufe, ist aber nicht terminal;
+- erst C36E Status 5 kann aus dem passenden Step-12-Kontext Step 5 erzeugen;
+- nach erfolgreichem Step-5-Report kehrt der Dienst wieder auf Step 12 zurück.
+
+Deshalb braucht eine terminale Bewertung zusätzlich den beobachteten Status-/Phasenkontext.
+
+## 8. C36E Status 3
+
+Status 3 wird durch `board_is_allow_upg_handle()` verarbeitet und mit C37B/status 3 quittiert.
+
+Er bedeutet im bekannten Mainboardpfad:
 
 ```text
-wenn aktueller step == 12
-    -> board_ota_step = 5
+vollständiges Staging-Image
++
+Staging-MD5 erfolgreich
++
+Board-Promotion läuft weiter
 ```
 
-Das bedeutet: `12` ist der Zustand nach Datenübertragung, während auf das Board-Ergebnis / die Bestätigung des Upgradeabschlusses gewartet wird.
+Status 3 setzt **nicht** den finalen Erfolgspfad Step 5 in Gang.
 
-## 8. `step 5` – Erfolg an Cloud melden
+Im realen V3.3→V3.4-Lauf kam Status 3 rund **2 Sekunden nach dem letzten C5A8**.
+
+## 9. C36E Status 5 → `step 5`
+
+Im Status-5-Pfad von `board_is_allow_upg_handle()`:
+
+```text
+dtu_reply_recv_status(5)
+sys_set_board_file_offset(0)
+sys_set_board_file_len(0)
+...
+if current step == 12:
+    set_board_ota_step(5)
+```
+
+Damit ist Status 5 der Übergang in den LTE-Erfolgsreport.
+
+Der reale V3.3→V3.4-Lauf erreichte Status 5 rund **5:16 Minuten nach dem letzten C5A8**.
+
+## 10. `step 5` – Erfolg melden
 
 Block:
 
@@ -238,22 +211,21 @@ Block:
 0x1DA08 ... 0x1DA40
 ```
 
-Ablauf:
-
 ```text
 board_ota_rep()
-  -> ota_device_send_ota_finish()
+→ ota_device_send_ota_finish()
+→ Code 0053 / progress 100
 ```
 
-Bei erfolgreichem MQTT-Publish:
+Bei erfolgreicher Reportsemantik:
 
 ```text
 board_ota_step = 12
 ```
 
-Damit wird der Abschlussbericht einmal gesendet und danach wieder in den neutralen Abschluss-/Wartezustand gewechselt.
+Der aktuelle lokale Updater verwendet den erfolgreich durchlaufenen **Status-5-/Step-5-/Step-12-Abschluss** als terminalen Mainboarderfolg.
 
-## 9. `step 10` – Upgradefehler an Cloud melden
+## 11. `step 10` – Upgradefehler melden
 
 Block:
 
@@ -261,208 +233,61 @@ Block:
 0x1D70C ... 0x1D74C
 ```
 
-Ablauf:
-
 ```text
 sys_set_board_file_offset(0)
 board_upgrade_fail_rep()
-  -> ota_device_send_ota_Failed()
+→ ota_device_send_ota_Failed()
 ```
 
-Bei erfolgreichem Publish:
+Bei erfolgreicher Reportsemantik:
 
 ```text
 board_ota_step = 12
 ```
 
-`step 10` ist damit eindeutig der Fehlerreport-Zustand.
+Step 10 wird unter anderem nach endgültigem Downloadfehler und aus mehreren Board-/Cancelfehlerpfaden erreicht.
 
-Dieser Zustand wird u. a. gesetzt:
+## 12. `step 7` – Cancel/Recovery
 
-- nach >2 fehlgeschlagenen HTTP-/MD5-Downloadversuchen,
-- aus `board_is_allow_upg_handle()` bei bestimmten Boardfehlerantworten,
-- aus dem Cancel-/Recovery-Pfad.
+Step 7 wird unter anderem gesetzt durch:
 
-## 10. `step 7` – Cancel-/Abbruch-/Recovery-Pfad
+- `down_board_cancel_ota_handle()`;
+- `board_recv_cancel_upgrade_handle()`;
+- bestimmte `board_is_allow_upg_handle()`-Pfade.
 
-Block:
+Der Dienst sendet im Cancelpfad C36A und erwartet C36C. Danach kann ein Fehler-/Reportpfad folgen.
 
-```text
-0x1DA44 ... 0x1DB98
-```
+Für den aktuellen Updater gilt jedoch die härtere Sicherheitsgrenze: Ein generischer Host-Restore wird **ab begonnenem C5A8 nicht mehr als Recoveryinstrument benutzt**. Ab dann bleibt der Originaldienst autoritativ.
 
-Der Zustand wird gesetzt aus mehreren Quellen:
-
-- `down_board_cancel_ota_handle()`
-- `board_recv_cancel_upgrade_handle()`
-- `board_is_allow_upg_handle()`
-- Download-/Recovery-Sonderflag in `dtu_upgrade_pro()`
-
-Im Hauptblock werden mehrere globale Cancel-/Retryflags ausgewertet.
-
-### Cancel-Antwort aktiv
-
-Wenn:
+## 13. `step 8` / `step 9` – Rollback
 
 ```text
-other_ota[2] == 1
-other_ota[0x54] == 0
+step 8
+→ dtu_to_board(1/2/3)
+→ Rollback-/Backroll-Steuerung
+→ step 9
+→ board_verbackroll_result_repo()
+→ bei Erfolg step 12
 ```
 
-und ein Retrycounter `other_ota[0x58]` noch >0 ist:
-
-```text
-counter--
-other_ota[0x54] = 3
-reply_cancel_upgrade(1)
-```
-
-Wenn der Counter 0 erreicht:
-
-```text
-other_ota[2] = 0
-other_ota[0x58] = 0
-other_ota[1] = 0
-```
-
-### Kein aktiver Cancel mehr
-
-Wenn weder Cancelrequest noch Pending-Flag gesetzt ist:
-
-```text
-ota_info[0] = 0
-ota_info+0x16 = 0
-other_ota[5] = 0
-other_ota[4] = 0
-board_ota_step = 12
-board_ota_step = 10
-```
-
-Die unmittelbare Doppelzuweisung bedeutet effektiv:
-
-```text
-finaler Zustand = 10
-```
-
-also Übergang zum Fehlerreport.
-
-## 11. `step 8` – Rollback/Version-Backroll
-
-Block:
-
-```text
-0x1DB9C ... 0x1DC5C
-```
-
-Dieser Zustand wird u. a. von `board_reply_verbackroll_handle()` gesetzt.
-
-Der Block wertet `other_ota[3]`, `other_ota[0x50]` und `other_ota[6]` aus.
-
-### Rollback-Kommandos
-
-Je nach internem Resultcode wird:
-
-```text
-dtu_to_board(1)
-```
-
-oder
-
-```text
-dtu_to_board(2)
-```
-
-oder
-
-```text
-dtu_to_board(3)
-```
-
-aufgerufen.
-
-Für Resultcode `2` oder `3` folgt:
-
-```text
-board_ota_step = 9
-```
-
-Damit ist `step 8` der aktive Rollback-/Version-Backroll-Steuerzustand.
-
-## 12. `step 9` – Rollback-Ergebnis an Cloud melden
-
-Block:
-
-```text
-0x1DC60 ... 0x1DC98
-```
-
-Ablauf:
-
-```text
-board_verbackroll_result_repo()
-  -> ota_device_send_Initialization()
-```
-
-Bei erfolgreichem Publish:
-
-```text
-board_ota_step = 12
-```
-
-`step 9` ist daher eindeutig der Report-Zustand für das Rollback-/Initialisierungsergebnis.
-
-## 13. Externe Zustandsübergänge aus RS485-Handlern
-
-Die Boardantworten treiben die State-Machine wesentlich mit.
-
-### `board_recv_cancel_upgrade_handle()`
-
-Wenn ein Cancel-Reply vom Board erfolgreich erkannt wurde:
-
-```text
-board_ota_step = 7
-```
-
-### `board_reply_verbackroll_handle()`
-
-Nach Empfang einer Rollback-Antwort:
-
-```text
-board_ota_step = 8
-```
-
-Der Board-Resultcode wird zusätzlich in einem globalen Byte gespeichert.
-
-### `board_is_allow_upg_handle()`
-
-Diese Funktion ist der wichtigste RS485-seitige Zustandsumschalter und kann setzen:
-
-```text
-step 10  -> Fehler
-step 6   -> Datenübertragung
-step 1   -> Cloud-Erlaubnis erneut/anforderbar
-step 7   -> Cancel/Recovery
-step 5   -> Erfolg melden (wenn vorher step 12)
-```
-
-Damit ist der Pfad nicht rein linear; Mainboard-Antworten können den Transfer wiederholen, abbrechen oder in Success/Error-Reporting überführen.
+Diese Pfade sind statisch rekonstruiert, aber nicht Teil des erfolgreichen V3.3→V3.4-Normalpfads.
 
 ## 14. State-Tabelle
 
 | Step | Bedeutung | Hauptaktion | Typischer Folgezustand |
 |---:|---|---|---:|
-| 0 | Idle / uninitialisiert | keine eigene Aktion | 1/3/... durch externen Trigger |
-| 1 | Upgrade-Erlaubnis anfragen | `ota_device_send_is_can_ota_to_phnix()` | 3 |
-| 3 | Firmware herunterladen + MD5 | `board_ota_http_download()` | 6 oder 10 |
-| 5 | Upgrade-Erfolg melden | `ota_device_send_ota_finish()` | 12 |
+| 0 | Idle / uninitialisiert | keine eigene Aktion | extern |
+| 1 | Upgrade-Erlaubnis/Status | `board_request_upgrade()` | 3 |
+| 3 | Firmware laden + MD5 | `board_ota_http_download()` | 6 oder 10 |
+| 5 | Erfolg melden | `board_ota_rep()` | 12 |
 | 6 | Firmware an Board übertragen | `set_update_board_bin_by_485()` | 12 |
 | 7 | Cancel/Recovery | `reply_cancel_upgrade()` / Cleanup | 10 bzw. extern |
-| 8 | Rollback/Backroll-Steuerung | `dtu_to_board(1/2/3)` | 9 |
-| 9 | Rollback-Ergebnis melden | `ota_device_send_Initialization()` | 12 |
-| 10 | Upgradefehler melden | `ota_device_send_ota_Failed()` | 12 |
-| 12 | Wait/Done / auf Board-Ergebnis warten | keine direkte Hauptaktion | 5/8/... via RS485-Handler |
+| 8 | Rollback-Steuerung | `dtu_to_board()` | 9 |
+| 9 | Rollback-Ergebnis melden | `board_verbackroll_result_repo()` | 12 |
+| 10 | Upgradefehler melden | `board_upgrade_fail_rep()` | 12 |
+| 12 | Warte-/neutraler Abschlusszustand | keine direkte Hauptaktion | 6/5/8/... via Handler |
 
-## 15. Wichtige Kontrollfluss-Adressen
+## 15. Kontrollfluss-Adressen
 
 ```text
 board_ota_step storage         0x98A94
@@ -484,11 +309,33 @@ step 8 block                   0x1DB9C
 step 9 block                   0x1DC60
 ```
 
-## 16. Wichtigste Schlussfolgerungen
+## 16. Live-Bestätigung
 
-1. `0033` allein startet nicht sofort RS485-Firmwareverkehr. Die Metadaten landen zunächst in `otaDeviceInfo`; der eigentliche Transfer wird erst über die State-Machine erreicht.
-2. Der erste Datei-/Netzwerkaktive Zustand ist `step 3` (`board_ota_http_download()` bei `0x1D860`).
-3. Der erste eigentliche Firmware-RS485-Transfer beginnt in `step 6` beim Call `set_update_board_bin_by_485()` bei `0x1D9E8`.
-4. `step 12` ist kein klassischer Idle-State, sondern ein Abschluss-/Wartezustand, der durch eingehende Mainboardantworten weitergeschaltet wird.
-5. Die State-Machine ist bidirektional: Cloud-OTA-Kommandos und RS485-Boardantworten verändern gemeinsam den Ablauf.
-6. Downloadfehler werden bis zu drei Mal versucht; danach folgt `step 10` und ein Cloud-Fehlerreport.
+V3.3→V3.4:
+
+| Ereignis | Zeitpunkt |
+|---|---|
+| erster C5A8 | 00:51:20 |
+| letzter C5A8 | 01:20:16 |
+| C36E Status 3 | 01:20:18 |
+| C36E Status 5 | 01:25:32 |
+| terminaler Board-Step 12 | 01:25:34 |
+| C544 Version `0034` | 01:26:33 |
+
+Damit wurden die wesentlichen Zustände des normalen erfolgreichen Pfads nicht nur statisch, sondern auch dynamisch auf realer Hardware bestätigt.
+
+## 17. Wichtigste Schlussfolgerungen
+
+1. `0033` allein bedeutet noch keinen RS485-Firmwaretransfer.
+2. Die Firmwaredatenphase beginnt in Step 6 / C5A8.
+3. Step 12 ist kontextabhängig und nicht allein terminal.
+4. Status 3 ist Staging-Erfolg, kein finaler Erfolg.
+5. Status 5 führt aus dem passenden Step-12-Kontext in Step 5.
+6. Erst nach erfolgreichem Status-5-/Step-5-Abschluss und Rückkehr auf Step 12 ist der Dienstpfad terminal erfolgreich.
+7. Die neue C544-Version liefert anschließend einen unabhängigen praktischen Nachweis, dass die neue Firmware aktiv ist.
+
+## 18. Referenzen
+
+- [`PHNIX_phnixIot4G_board_ota_completion.md`](PHNIX_phnixIot4G_board_ota_completion.md)
+- [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
+- [`PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md`](PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md)
