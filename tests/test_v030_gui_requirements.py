@@ -55,9 +55,40 @@ class V030GuiRequirementsTests(unittest.TestCase):
         self.assertNotIn('QCheckBox("Passiver RS485-Logger läuft tatsächlich")', self.base)
 
     def test_mqtt_stays_connected_by_default_and_can_be_explicitly_isolated(self):
-        self.assertIn("self.isolate_mqtt = QCheckBox", self.base)
-        self.assertIn('update_args.append("--isolate-mqtt")', self.base)
-        self.assertIn("30-Minuten-Offline-Neustart", self.base)
+        update_ui = self.base.split("def _update(self):", 1)[1].split("def _status", 1)[0]
+        advanced_ui = self.base.split("def _advanced(self):", 1)[1].split("def _load", 1)[0]
+        update_run = self.base.split("def _update_run(self):", 1)[1].split("def _restore", 1)[0]
+
+        self.assertNotIn("self.isolate_mqtt", update_ui)
+        self.assertIn('QCheckBox("MQTT bei Update aus")', advanced_ui)
+        self.assertIn('value("isolate_mqtt", "false")', advanced_ui)
+        self.assertIn('setValue("isolate_mqtt", checked)', advanced_ui)
+        self.assertIn("etwa 30 Minuten", advanced_ui)
+        self.assertEqual(update_run.count('update_args.append("--isolate-mqtt")'), 1)
+        self.assertIn("if self.isolate_mqtt.isChecked():", update_run)
+        default_args = update_run.split("if self.isolate_mqtt.isChecked():", 1)[0]
+        self.assertNotIn('"--isolate-mqtt"', default_args)
+
+    def test_firmware_update_is_not_presented_as_experimental(self):
+        visible_sources = self.base + self.app + self.desktop + self.traffic + self.maintenance
+        for obsolete in (
+            "EXPERIMENTELL",
+            "Experimentell",
+            "experimentelles Firmwareupdate",
+            "Echter Versionswechsel noch nicht live validiert",
+            "Experimentelles Update",
+        ):
+            self.assertNotIn(obsolete, visible_sources)
+        self.assertIn('setWindowTitle(f"FoxAir Updater {APP_VERSION}")', self.base)
+        self.assertIn("Firmwareupdate – Nutzung auf eigenes Risiko", self.base)
+        self.assertIn("Risiko des Firmwareupdates verstanden.", self.base)
+        self.assertIn('"Firmwareupdate starten"', self.base)
+
+    def test_runtime_restore_wait_has_neutral_cloud_status(self):
+        self.assertIn('"runtime-restore-wait"', self.app + self.maintenance)
+        self.assertIn("normaler LTE-/Cloudzustand wird geprüft", self.app + self.maintenance)
+        self.assertNotIn("warte auf Wiederverbindung von MQTT", self.app + self.maintenance)
+        self.assertNotIn("Cloud wird wieder verbunden", self.app + self.maintenance)
 
     def test_maintenance_is_neutrally_named(self):
         self.assertIn("Wartung – Mainboard OTA-Vorgänge", self.maintenance)

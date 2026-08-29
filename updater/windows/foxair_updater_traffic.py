@@ -42,7 +42,7 @@ class MainWindow(operator.MainWindow):
 
     def _traffic_page(self):
         page = QWidget(); layout = QVBoxLayout(page)
-        note = QLabel("<b>Experimenteller Runtime-Trace.</b> Keine eigenen MQTT-/HTTP-Verbindungen, "
+        note = QLabel("<b>Read-only Runtime-Trace.</b> Keine eigenen MQTT-/HTTP-Verbindungen, "
                       "kein RS485-Zugriff und keine Änderung an <code>/data/phnixIot4G</code>. "
                       "Der flüchtige GDB-Hook wird nur für die exakt geprüfte Build-ID aktiviert. "
                       "<b>Achtung:</b> Der Originaldienst kann nach einem Trace zeitverzögert durch "

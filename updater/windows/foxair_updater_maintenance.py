@@ -24,7 +24,7 @@ CONFIRM_TOKEN = "PHNIX-STATISTICS-WRITE"
 
 
 class MainWindow(traffic.MainWindow):
-    """Thin experimental frontend for the shared statistics maintenance core."""
+    """Thin frontend for the shared statistics maintenance core."""
 
     def __init__(self):
         super().__init__()
@@ -137,7 +137,7 @@ class MainWindow(traffic.MainWindow):
             self.progress.setFormat(self._byte_progress_text(offset, length))
         elif event == "services-restored" and record.get("ok") is True:
             self.progress_text.setText(
-                "Firmwareupdate erfolgreich – Originaldienst, Watchdogs und Cloud/MQTT laufen wieder."
+                "Firmwareupdate erfolgreich – LTE-/Cloudzustand ist vollständig geprüft."
             )
             self.progress.setValue(100)
             self.progress.setFormat("100 % – Firmwareupdate erfolgreich abgeschlossen")
