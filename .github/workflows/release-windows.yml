@@ -186,7 +186,7 @@ jobs:
             - Read-only Backup, Dry-Run, Manifest-Full-Prüfung, Status/Recovery, LTE-/Modemdiagnose und Logexport sind integriert.
             - Die gemeinsame sicherheitsrelevante OTA-Logik bleibt im gemeinsamen Python-Controller-Core; Windows pflegt keinen separaten OTA-Protokollkern.
 
-            Weitere technische Details stehen in README.md und docs/RELEASE_NOTES_WINDOWS_v0.3.9.md.
+            Weitere technische Details stehen in README.md und unter docs/.
           files: |
             dist/FoxAir_Updater_Portable_v${{ inputs.version }}.zip
             updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ inputs.version }}.exe
