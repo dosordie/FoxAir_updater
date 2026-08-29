@@ -1,6 +1,6 @@
 # PHNIX `phnixIot4G` – Watchdogs, Error-Bits und Reset-Counter
 
-Stand: 2026-08-25
+Stand: 2026-08-29
 
 Grundlage: statische Analyse des ungestrippten ARM-ELF `phnixIot4G` (Build-ID `af4dcae12639bedce833ee5efa5da009777b6319`) plus Live-Beobachtung am realen FoxAir/PHNIX-LTE-Modem.
 
@@ -81,6 +81,84 @@ Vom LTE-Dienst aktiv ausgelöste vollständige Reboots
 ```
 
 Ein normales `kill phnixIot4G` gehört nicht dazu.
+
+### 2.1 Präzisierung des 1800-s-Cloud-Watchdogs nach dem V3.3->V3.4-Liveupdate
+
+Der erfolgreiche reale Mainboard-Update-Lauf V3.3 -> V3.4 dauerte deutlich länger als 30 Minuten, ohne dass `phnixIot4G` im kritischen Fenster neu gestartet wurde. Vom Preflight bis zum terminalen Mainboardstatus 5 wurde durchgehend derselbe Prozess beobachtet. Das widerspricht dem 1800-s-Rebootpfad nicht, sondern präzisiert dessen Startbedingung.
+
+Der relevante `TimerHandler()`-Pfad prüft nicht direkt, ob TCP-Pakete die Cloud erreichen. Er prüft:
+
+```text
+get_ALI_Connt_State()
+  -> IOT_MQTT_CheckStateNormal()
+  -> iotx_mc_check_state_normal()
+  -> interner MQTT-Clientzustand
+```
+
+Für den PHNIX-Timer gilt damit sinngemäß:
+
+```text
+MQTT-Clientzustand == normal/connected
+    -> Offline-Zähler = 0
+
+MQTT-Clientzustand != normal/connected
+    -> Offline-Zähler++
+    -> nach >1800 s: Active-Reset-t++, static_write_data(), system("reboot")
+```
+
+Im untersuchten Pfad ist **keine Abfrage von `board_ota_step`, `dtu_run_step` oder einem allgemeinen „OTA aktiv“-Flag** vor diesem 1800-s-Reboot sichtbar. Es gibt daher keinen statisch belegten Sonderzweig „Mainboard-OTA läuft -> Cloud-Reboot deaktivieren“.
+
+Entscheidend ist vielmehr, dass eine Paketblockade per `iptables DROP` den internen Aliyun-MQTT-Client nicht sofort in den Zustand „offline“ versetzt. Der bestehende Socket und der SDK-Zustand können zunächst weiter als verbunden gelten, obwohl Pakete verworfen werden.
+
+Der Aliyun-MQTT-Stack verwendet effektiv einen Keepalive von **180 s**. Zusätzlich ist im SDK ein eigener Keepalive-/Fehlerzähler vorhanden. Vereinfacht:
+
+```text
+Paketblockade beginnt
+    ↓
+MQTT-Clientzustand bleibt zunächst normal
+    ↓
+mehrere unbeantwortete Keepalive-Zyklen
+    ↓
+SDK setzt Clientzustand auf nicht-normal/disconnected
+    ↓
+ERST JETZT beginnt der PHNIX-Offline-Zähler Richtung 1800 s
+    ↓
+>1800 s später: aktiver Linux-Reboot
+```
+
+Statisch ist im MQTT-Zyklus ein Zähler sichtbar, der bei empfangenen Paketen zurückgesetzt und bei Keepalive-Vorgängen erhöht wird; erst nach mehreren erfolglosen Zyklen wird der Clientzustand auf einen Fehler-/Disconnectzustand gesetzt. Zusammen mit dem 180-s-Keepalive kann deshalb zwischen einer stillen `DROP`-Blockade und dem Start des eigentlichen PHNIX-1800-s-Zählers eine zusätzliche Verzögerung von mehreren Minuten liegen.
+
+Für die frühere lokale OTA-Isolation ergibt sich damit die korrigierte Interpretation:
+
+```text
+iptables DROP gesetzt
+    !=
+PHNIX-1800-s-Timer startet sofort
+```
+
+Sondern:
+
+```text
+iptables DROP gesetzt
+    -> Aliyun-SDK muss den Verbindungsverlust erst erkennen
+    -> danach beginnt der 1800-s-PHNIX-Offline-Zähler
+```
+
+Damit lässt sich der reale V3.3->V3.4-Lauf konsistent erklären: Die reine C5A8-Übertragung dauerte rund 28:56 min, bis Status 5 vergingen insgesamt weitere Minuten, der LTE-Dienst blieb dabei aber derselbe Prozess. Die stille MQTT-Blockade hatte den internen SDK-Zustand offenbar nicht früh genug auf „offline“ gebracht, um den nachgelagerten 1800-s-PHNIX-Watchdog noch während des Mainboard-Updates auszulösen.
+
+### Konsequenz
+
+Die frühere Kurzform:
+
+> „30 Minuten nach MQTT-Trennung rebootet das Modem.“
+
+ist zu ungenau.
+
+Präziser ist:
+
+> **Wenn der Aliyun-MQTT-Client vom SDK als nicht verbunden erkannt wird, zählt `phnixIot4G` 1800 Sekunden und fordert danach einen Linux-Reboot an. Eine stille Paketblockade kann mehrere MQTT-Keepalive-Zyklen benötigen, bevor der SDK-Zustand überhaupt auf offline wechselt.**
+
+Diese Präzisierung erklärt den erfolgreichen >30-minütigen Live-OTA-Lauf, ohne einen bisher unbelegten OTA-Sonderpfad im Originaldienst annehmen zu müssen.
 
 ---
 
@@ -176,7 +254,7 @@ Damit besteht in diesem Build eine **semantische Inkonsistenz zwischen Herstelle
 Praktisch sinnvoller Hinweis:
 
 ```text
-Bit 5: Herstellertext „Cloud connected error“; in TimerHandler an Board-Service-/485-Healthwatchdog gekoppelt.
+Bit 5: Herstellertext „Cloud connected error“; in TimerHandler an Board-Service/485-Healthwatchdog gekoppelt.
 ```
 
 ---
@@ -348,7 +426,9 @@ Aliyun verbunden    -> Clear_Error_Flag(10)
 Aliyun nicht online -> set_Error_Flag(10)
 ```
 
-Nach 1800 s durchgehendem Offlinezustand folgt zusätzlich der bekannte aktive Modem-Reboot und `Active-Reset-t++`.
+Nach 1800 s durchgehendem, vom SDK bereits als offline erkannten Zustand folgt zusätzlich der bekannte aktive Modem-Reboot und `Active-Reset-t++`.
+
+Wichtig ist die in Abschnitt 2.1 dokumentierte Präzisierung: Eine stille Paketblockade bedeutet nicht zwingend, dass `get_ALI_Connt_State()` sofort auf „offline“ wechselt. Der interne MQTT-SDK-Zustand kann erst nach mehreren Keepalive-Zyklen kippen; der PHNIX-1800-s-Zähler beginnt erst danach.
 
 Bit 10 ist daher der deutlich belastbarere echte aktuelle Cloud-/MQTT-Fehlerindikator als der Herstellertext von Bit 5.
 
@@ -420,6 +500,7 @@ Damit können die tatsächlichen Sekunden seit den letzten jeweiligen Ereignisse
 2. Die ~420-s-Mechanismen sind keine Reboot-Watchdogs, sondern gestufte Kommunikations-/Fehlerwatchdogs.
 3. Bit 10 ist der direkte aktuelle Aliyun/MQTT-Offlineindikator.
 4. Bit 5 trägt zwar den Herstellertext `Cloud connected error`, sein aktiver Timer-/Recoverypfad ist aber deutlich mit Board-Service/RS485 gekoppelt.
-5. Bit 6 wird bei jedem gesehenen Slave-`0x63`-Frame zurückgesetzt und überwacht damit den grundsätzlichen Mainboardtraffic.
-6. Bit 12 überwacht separat das Alter des letzten CRC-gültigen `0x63`-Frames.
-7. Der bekannte Text `Crc error` für Bit 7 ist nicht dasselbe wie der aktive Bit-12-Langzeitwatchdog; ein direkter Bit-7-Setter wurde im aktuellen RX-Pfad bisher nicht gefunden.
+5. Bit 6 wird bei jedem gesehenen Slave-`0x63`-Frame zurückgesetzt und ist daher ein Traffic-Alterungsindikator.
+6. Bit 12 wird nur durch CRC-gültige `0x63`-Frames zurückgesetzt und ist damit der strengere Kommunikationswatchdog.
+7. Der 1800-s-Cloud-Reboot hängt am **internen Aliyun-MQTT-Clientzustand**, nicht unmittelbar am Zeitpunkt einer Paketblockade. Bei stiller `DROP`-Isolation kann der SDK-Verbindungsverlust erst nach mehreren Keepalive-Zyklen erkennen; erst danach beginnt der PHNIX-1800-s-Zähler.
+8. Im untersuchten Rebootpfad ist kein spezieller Mainboard-OTA-Bypass sichtbar. Der >30-minütige reale V3.3->V3.4-Lauf lässt sich durch die verzögerte MQTT-Offline-Erkennung erklären, ohne einen solchen Sonderzweig annehmen zu müssen.
