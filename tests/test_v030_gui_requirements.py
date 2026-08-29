@@ -54,6 +54,11 @@ class V030GuiRequirementsTests(unittest.TestCase):
         self.assertNotIn('QPushButton("Gleichversionstest starten")', self.base)
         self.assertNotIn('QCheckBox("Passiver RS485-Logger läuft tatsächlich")', self.base)
 
+    def test_mqtt_stays_connected_by_default_and_can_be_explicitly_isolated(self):
+        self.assertIn("self.isolate_mqtt = QCheckBox", self.base)
+        self.assertIn('update_args.append("--isolate-mqtt")', self.base)
+        self.assertIn("30-Minuten-Offline-Neustart", self.base)
+
     def test_maintenance_is_neutrally_named(self):
         self.assertIn("Wartung – Mainboard OTA-Vorgänge", self.maintenance)
         self.assertNotIn("Experimentelle Wartung – Mainboard OTA-Vorgänge", self.maintenance)

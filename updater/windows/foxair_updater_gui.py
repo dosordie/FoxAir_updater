@@ -98,9 +98,9 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
 
         warning = QLabel(
-            "<b>EXPERIMENTELL – echter Versionswechsel noch nicht live validiert.</b><br>"
-            "Bisher wurde real nur V3.3 → V3.3 getestet; das Mainboard hat die gleiche "
-            "Version erwartungsgemäß abgelehnt. Nutzung auf eigenes Risiko."
+            "<b>EXPERIMENTELL – ein Versionswechsel V3.3 → V3.4 wurde live bestätigt.</b><br>"
+            "Andere Firmwarestände und Hardwarevarianten sind weiterhin nicht vollständig "
+            "validiert. Nutzung auf eigenes Risiko."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet(
@@ -309,10 +309,18 @@ class MainWindow(QMainWindow):
         self.dry.clicked.connect(self._dry)
         layout.addWidget(self.dry)
         self.risk = QCheckBox(
-            "Risiko eines noch nicht live validierten Versionswechsels verstanden."
+            "Risiko des experimentellen Firmwareupdates verstanden."
         )
         self.risk.toggled.connect(self._buttons)
         layout.addWidget(self.risk)
+        self.isolate_mqtt = QCheckBox(
+            "MQTT während des Updates trennen (optional, nicht empfohlen)"
+        )
+        self.isolate_mqtt.setToolTip(
+            "Standardmäßig bleibt die Cloudverbindung bestehen. Eine Trennung kann den "
+            "30-Minuten-Offline-Neustart des LTE-Dienstes auslösen."
+        )
+        layout.addWidget(self.isolate_mqtt)
         self.update_btn = QPushButton("FIRMWAREUPDATE STARTEN")
         self.update_btn.clicked.connect(self._update_run)
         layout.addWidget(self.update_btn)
@@ -940,12 +948,15 @@ class MainWindow(QMainWindow):
         ):
             return
         self.progress.setValue(0)
+        update_args = [
+            "run", "--manifest", str(manifest), "--execute", "--confirm",
+            "PHNIX-FULL-UPDATE", "--state-dir", str(self.state_dir),
+        ]
+        if self.isolate_mqtt.isChecked():
+            update_args.append("--isolate-mqtt")
         self._backend(
             "update",
-            [
-                "run", "--manifest", str(manifest), "--execute", "--confirm",
-                "PHNIX-FULL-UPDATE", "--state-dir", str(self.state_dir),
-            ],
+            update_args,
         )
 
     def _restore(self):

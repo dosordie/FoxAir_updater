@@ -353,9 +353,10 @@ Vor einem echten Update sollte dieser Dry-Run erfolgreich sein.
 ## 3. Vollständiges Firmwareupdate starten
 
 > [!WARNING]
-> Dieser Befehl startet den bislang **nicht mit einer anderen Firmwareversion live validierten**
-> Schreibpfad. Ein erfolgreicher Dry-Run beweist nicht, dass das anschließende echte Update
-> fehlerfrei abgeschlossen wird.
+> Der Schreibpfad wurde mit **V3.3 → V3.4** auf einer realen Anlage erfolgreich
+> bestätigt. Andere Firmware- und Hardwarevarianten bleiben experimentell. Ein
+> erfolgreicher Dry-Run beweist nicht, dass jedes anschließende Update fehlerfrei
+> abgeschlossen wird.
 
 Beispiel:
 
@@ -380,6 +381,31 @@ Der Controller führt dabei automatisch aus:
 9. Status und Fortschritt beobachten;
 10. nach sicher bestätigtem Abschluss Originaldienst, Watchdogs und Cloud prüfen;
 11. temporäre Firmwareablage, Marker und Runtime-Helfer wieder entfernen.
+
+MQTT bleibt beim normalen Vollupdate standardmäßig verbunden. Das verhindert,
+dass eine reale Übertragung von knapp 29 Minuten zusammen mit der anschließenden
+mehrminütigen Mainboard-Flashphase in den originalen 30-Minuten-Offline-
+Resetmechanismus läuft. Nach einem terminalen Mainboardergebnis wartet der
+Updater bis zu 120 Sekunden auf den vollständig normalen LTE-/Cloudzustand.
+
+Für einen besonderen Labortest kann die frühere MQTT-Isolierung explizit direkt
+am Controller aktiviert werden:
+
+```sh
+python3 tools/phnix_ota/phnix_local_ota_controller.py \
+  --adb adb run --manifest FW3.4.json \
+  --execute --confirm PHNIX-FULL-UPDATE \
+  --isolate-mqtt
+```
+
+Der kompatible Alias lautet `--update-no-mqtt`. Diese Option ist für normale
+Updates **nicht empfohlen**. In der Windows-GUI ist sie als nicht standardmäßig
+aktivierte Expertenoption sichtbar.
+
+Bei dem realen V3.3→V3.4-Lauf wurden rund 28:56 Minuten für die Datenübertragung
+und weitere 5:16 Minuten bis Status 5 gemessen. 100 % in der Fortschrittsanzeige
+bedeuten deshalb zunächst nur „alle Daten übertragen“. Das Update ist erst mit
+dem terminalen Mainboardstatus abgeschlossen.
 
 Ein externer Buslogger ist für den normalen Vollupdate-Aufruf nicht erforderlich.
 Bei einem ersten Test einer neuen Firmware kann er trotzdem als zusätzliche

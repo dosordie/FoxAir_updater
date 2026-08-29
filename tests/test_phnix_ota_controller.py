@@ -182,6 +182,25 @@ class OtaInfoTests(unittest.TestCase):
         self.assertEqual(restore.restore, "original")
         self.assertIsNone(restore.manifest)
 
+    def test_full_update_keeps_mqtt_connected_by_default(self):
+        default = build_parser().parse_args(["run", "--manifest", "FW3.4.json"])
+        isolated = build_parser().parse_args([
+            "run", "--manifest", "FW3.4.json", "--isolate-mqtt",
+        ])
+        alias = build_parser().parse_args([
+            "run", "--manifest", "FW3.4.json", "--update-no-mqtt",
+        ])
+        self.assertFalse(default.isolate_mqtt)
+        self.assertTrue(isolated.isolate_mqtt)
+        self.assertTrue(alias.isolate_mqtt)
+
+    def test_runtime_hook_only_blocks_mqtt_when_requested(self):
+        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        run = hook.split("run_hook() {", 1)[1].split("hold_hook() {", 1)[0]
+        self.assertIn('if test "$ISOLATE_MQTT" = 1; then', run)
+        self.assertIn("--dport 1883", run)
+        self.assertIn("--sport 1883", run)
+
     def test_full_runtime_hook_uses_proven_yield_loop_and_transfer_marker(self):
         hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         full = hook.split("make_gdb_script() {", 1)[1].split("run_hook() {", 1)[0]

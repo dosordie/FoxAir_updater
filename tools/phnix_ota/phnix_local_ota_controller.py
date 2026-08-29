@@ -52,6 +52,7 @@ REMOTE_RUN_ACTIVE = f"{REMOTE_HOOK_STATE}/run.active"
 REMOTE_TRANSFER_STARTED = f"{REMOTE_HOOK_STATE}/transfer-started"
 REMOTE_INJECTION_STARTED = f"{REMOTE_HOOK_STATE}/injection-started"
 REMOTE_ORIGINAL_SERVICE_OWNS = f"{REMOTE_HOOK_STATE}/original-service-owns"
+POST_UPDATE_RUNTIME_TIMEOUT = 120.0
 DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
 
 OUTPUT_MODE = "auto"
@@ -209,6 +210,10 @@ def _human_event(event: str, fields: dict) -> None:
         "hook-start": (CYAN, "[..] Update gestartet"),
         "same-version-complete": (GREEN, "[OK] Gleichversionstest erfolgreich beendet - keine Firmware geschrieben"),
         "complete": (GREEN, "[OK] Firmware-Uebertragung und Mainboard-Abschluss erfolgreich"),
+        "runtime-restore-wait": (
+            CYAN,
+            "[..] Mainboard ist fertig - warte auf den normalen LTE-/Cloudzustand",
+        ),
         "original-state-released": (GREEN, "[OK] LTE-Modem wieder im Originalzustand"),
         "services-restored": (GREEN, "[OK] Originaldienst, Ueberwachung und Cloud-Verbindung laufen"),
         "hook-stopped": (GREEN, "[OK] Update-Helfer sauber beendet"),
@@ -261,6 +266,30 @@ def verify_original_runtime(adb: AdbClient) -> dict:
         and result["runtime_helper_absent"]
     )
     return result
+
+
+def wait_for_original_runtime(adb: AdbClient, timeout: float = POST_UPDATE_RUNTIME_TIMEOUT) -> dict:
+    """Wait for service, watchdogs and MQTT after a terminal board result.
+
+    A real V3.3 -> V3.4 update needed about five minutes between the final
+    firmware block and C36E/status 5.  The MQTT socket was still absent two
+    seconds after that terminal result, although it recovered normally.  The
+    board phase therefore remains unbounded once accepted, while this bounded
+    grace period only verifies restoration of the LTE runtime afterwards.
+    """
+    deadline = time.monotonic() + timeout
+    latest = verify_original_runtime(adb)
+    if not latest["ok"]:
+        print_event(
+            "runtime-restore-wait",
+            timeout_seconds=timeout,
+            service_running=bool(latest.get("service_pid")),
+            mqtt_connected=bool(latest.get("mqtt_connection")),
+        )
+    while not latest["ok"] and time.monotonic() < deadline:
+        time.sleep(2)
+        latest = verify_original_runtime(adb)
+    return latest
 
 
 def original_runtime_status(adb: AdbClient) -> dict:
@@ -919,7 +948,7 @@ def run_same_version_test(args, adb: AdbClient) -> None:
             adb.shell(f"{REMOTE_HELPER} stop --status {REMOTE_STATUS}", check=False)
             remove_local_ota_artifacts(adb, remove_helper=True)
             print_event("original-state-released")
-            runtime = verify_original_runtime(adb)
+            runtime = wait_for_original_runtime(adb)
             if not runtime["ok"]:
                 raise OtaError(f"original LTE runtime was not fully restored: {runtime}")
             print_event("services-restored", **runtime)
@@ -962,11 +991,17 @@ def run_update(args, adb: AdbClient) -> None:
         f"--command {REMOTE_COMMAND} --status {REMOTE_STATUS} "
         "--allow-publish 0023,0053,0083"
     )
+    if args.isolate_mqtt:
+        helper_command += " --isolate-mqtt"
     # A terminal record from a previous run must never be interpreted as the
     # result of the helper that is about to start. This mirrors the guarded
     # same-version path and closes the start-up race seen on the real modem.
     adb.shell(f"rm -f {REMOTE_STATUS}")
-    print_event("hook-start", allowed_publish=["0023", "0053", "0083"])
+    print_event(
+        "hook-start",
+        allowed_publish=["0023", "0053", "0083"],
+        mqtt_mode="isolated" if args.isolate_mqtt else "connected",
+    )
     helper = adb.popen_shell(helper_command)
 
     phase_started = time.monotonic()
@@ -1051,7 +1086,7 @@ def run_update(args, adb: AdbClient) -> None:
             guarded_hold = True
             print_event(
                 "guarded-hold",
-                message="Active OTA was frozen fail-closed; cloud and watchdog guards remain active",
+                message="Active OTA was frozen fail-closed; protective guards remain active",
             )
         elif not safe_terminal:
             print_event(
@@ -1069,7 +1104,7 @@ def run_update(args, adb: AdbClient) -> None:
         if safe_terminal:
             remove_local_ota_artifacts(adb, remove_helper=True)
             print_event("hook-stopped")
-            runtime = verify_original_runtime(adb)
+            runtime = wait_for_original_runtime(adb)
             if not runtime["ok"]:
                 raise OtaError(f"original LTE runtime was not fully restored: {runtime}")
             print_event("services-restored", **runtime)
@@ -1187,6 +1222,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--handshake-timeout", type=float, default=20.0)
     run.add_argument("--block-timeout", type=float, default=25.0,
                      help="deprecated compatibility option; C5A8 is controlled by the original service")
+    run.add_argument(
+        "--isolate-mqtt", "--update-no-mqtt", dest="isolate_mqtt",
+        action="store_true",
+        help=(
+            "disconnect MQTT during the update (optional legacy isolation; "
+            "default keeps MQTT connected to avoid the modem's 30-minute offline reset)"
+        ),
+    )
     return parser
 
 

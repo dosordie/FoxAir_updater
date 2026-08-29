@@ -116,11 +116,11 @@ cleanup() {
             # dangerous than losing our observation channel.
             test -n "$PID" && kill -CONT "$PID" 2>/dev/null || true
             printf '{"phase":"original-service-active-unmonitored","terminal":false,"recovery_required":true,"original_service_authoritative":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
-            echo "ACCEPTED OTA CONTINUES UNDER ORIGINAL SERVICE; CLOUD AND WATCHDOGS REMAIN BLOCKED" >&2
+            echo "ACCEPTED OTA CONTINUES UNDER ORIGINAL SERVICE; WATCHDOGS REMAIN PAUSED; OPTIONAL MQTT ISOLATION IS PRESERVED" >&2
         else
             test -n "$PID" && kill -STOP "$PID" 2>/dev/null || true
             printf '{"phase":"guarded-hold","terminal":false,"recovery_required":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
-            echo "ACTIVE PRE-C5A8 OTA LEFT IN GUARDED HOLD; CLOUD AND WATCHDOGS REMAIN BLOCKED" >&2
+            echo "ACTIVE PRE-C5A8 OTA LEFT IN GUARDED HOLD; PROTECTIVE GUARDS REMAIN ACTIVE" >&2
         fi
         return
     fi
@@ -825,7 +825,9 @@ run_hook() {
     test "$ALLOW" = 0023,0053,0083 || fail "publish allow-list mismatch"
     test -r "$COMMAND" || fail "OTA command missing"
     verify
-    command -v iptables >/dev/null 2>&1 || fail "iptables missing; cloud cannot be isolated"
+    if test "$ISOLATE_MQTT" = 1; then
+        command -v iptables >/dev/null 2>&1 || fail "iptables missing; MQTT cannot be isolated"
+    fi
     mkdir -p "$STATE_DIR"
     backup_persistent_state
     rm -f "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED" "$ORIGINAL_SERVICE_OWNS"
@@ -834,8 +836,10 @@ run_hook() {
     trap cleanup EXIT INT TERM
     PID=$(service_pid)
     watchdog_pids > "$WATCHDOG_PIDS"
-    iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
-    iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
+    if test "$ISOLATE_MQTT" = 1; then
+        iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
+        iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
+    fi
     while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
     make_gdb_script
     printf '{"phase":"attaching","terminal":false}\n' > "$STATUS"
@@ -874,6 +878,7 @@ FORCE=0
 LIVE_CONFIRM=
 LOGGER_CONFIRM=
 JSON_STATUS=
+ISOLATE_MQTT=0
 while test $# -gt 0; do
     case "$1" in
         --status) STATUS=$2; shift 2 ;;
@@ -883,6 +888,7 @@ while test $# -gt 0; do
         --live-confirm) LIVE_CONFIRM=$2; shift 2 ;;
         --logger-confirm) LOGGER_CONFIRM=$2; shift 2 ;;
         --json) JSON_STATUS=$2; shift 2 ;;
+        --isolate-mqtt) ISOLATE_MQTT=1; shift ;;
         --force) FORCE=1; shift ;;
         *) fail "unknown argument: $1" ;;
     esac

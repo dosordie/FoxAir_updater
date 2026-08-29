@@ -3,14 +3,12 @@
 Experimentelles Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 
 > [!CAUTION]
-> ## Experimentell – echtes Versionsupdate noch nicht live validiert
+> ## Experimentell – V3.3 → V3.4 live validiert
 >
 > Dieses Projekt befindet sich weiterhin im **Entwicklungs- und Teststadium**.
-> Ein vollständiges Firmwareupdate von einer installierten Mainboard-Version auf eine andere Version wurde auf realer Hardware **noch nicht erfolgreich durchgeführt und bestätigt**.
+> Ein vollständiges Firmwareupdate von Mainboard V3.3 auf V3.4 wurde auf realer Hardware **erfolgreich durchgeführt und per RS485-Versionsmeldung bestätigt**.
 >
-> Der reale OTA-Ablauf wurde bislang mit **V3.3 → V3.3** getestet. Das Mainboard hat dieses Firmwareangebot erwartungsgemäß abgelehnt, weil V3.3 bereits installiert war. Dabei wurden keine Firmwareblöcke geschrieben.
->
-> Damit ist insbesondere **nicht nachgewiesen**, dass ein echtes Update wie **V3.3 → V3.4** bereits sicher oder vollständig funktionsfähig ist.
+> Zusätzlich wurde **V3.3 → V3.3** bis zur erwarteten Gleichversionsablehnung getestet. Andere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht vollständig live validiert.
 >
 > Bei der Verwendung kann etwas schiefgehen. Im ungünstigsten Fall können Mainboard, LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
 >
@@ -41,6 +39,7 @@ ADB wird weiterhin **nicht mitgeliefert**. Die GUI verlinkt den SIMCom-USB-Treib
 - Manifest-Erzeugung direkt aus einer Firmwaredatei;
 - automatischen Full-Abgleich von Manifest, Firmwareidentität, Größe, MD5 und SHA256;
 - lesbare Ablauf- und Fortschrittsanzeige für den Firmwareupdate-Pfad;
+- standardmäßig verbundene MQTT-Cloud während des Vollupdates sowie eine optionale, ausdrücklich nicht empfohlene MQTT-Isolierung für Labortests;
 - read-only Modem-, SIM-, LTE-, Cloud-/MQTT- und Mainboarddiagnose;
 - optionale detaillierte Modem-/Traffic-Diagnose unter **Erweitert**;
 - Wartungsfunktion für den Mainboard-OTA-Vorgangszähler;
@@ -80,11 +79,14 @@ Real getestet bzw. bestätigt sind unter anderem:
 - read-only LTE-Backup/Firmware-Download;
 - Dry-Run;
 - normaler Windows-Firmware-Update-Aufruf mit **V3.3 → V3.3** bis zur sicheren Gleichversionsablehnung;
+- vollständiger realer Versionswechsel **V3.3 → V3.4**, einschließlich C5A8-Übertragung, Status 5 und anschließender C544-Versionsbestätigung `0034`;
 - Mainboard-OTA-Vorgangszähler-Wartung einschließlich Sicherung, kontrolliertem Dienstneustart und Verifikation.
 
 Beim V3.3→V3.3-Test erkannte das Mainboard die bereits installierte Firmware und beendete den Ablauf vor C357/C5A8. Es wurden keine Firmwaredaten übertragen.
 
-Ein **echter Versionswechsel mit C5A8-Datenübertragung auf realer Hardware ist weiterhin nicht live bestätigt**.
+Beim V3.3→V3.4-Lauf dauerte die C5A8-Datenübertragung rund 28:56 Minuten;
+bis Status 5 vergingen danach weitere rund 5:16 Minuten. Details stehen in
+[`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md).
 
 ### Windows-Architektur
 
