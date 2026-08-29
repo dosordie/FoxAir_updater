@@ -1,8 +1,13 @@
 # PHNIX `phnixIot4G` – Abschluss des Board-OTA nach letztem C5A8-Block
 
-Stand: 2026-08-23
+Stand: 29. August 2026
 
-Diese Notiz rekonstruiert den statischen Abschluss des Board-OTA nach dem letzten Firmwareblock. Schwerpunkt ist der Pfad `board_ota_step 6 -> 12 -> 5 -> Cloud-Code 0053`.
+Diese Notiz rekonstruiert den Abschluss des Board-OTA nach dem letzten Firmwareblock. Die statische Analyse wurde inzwischen durch den erfolgreichen realen V3.3→V3.4-Lauf ergänzt.
+
+> [!IMPORTANT]
+> Live bestätigt wurden inzwischen die reale Reihenfolge **letzter C5A8 → C36E Status 3 → C36E Status 5 → Board-Step 12 → C544 Version `0034`**.
+>
+> Im Live-Lauf lagen zwischen letztem C5A8 und Status 3 rund **2 Sekunden**, zwischen letztem C5A8 und Status 5 rund **5 Minuten 16 Sekunden**.
 
 ## 1. Ende des C5A8-Transfers
 
@@ -16,7 +21,7 @@ In `dtu_upgrade_pro()`:
 0x1D9F8  set_board_ota_step(12)
 ```
 
-Damit gilt:
+Semantisch:
 
 ```c
 if (board_ota_step == 6) {
@@ -25,36 +30,42 @@ if (board_ota_step == 6) {
 }
 ```
 
-`0` bedeutet hier: kein weiterer Datenblock mehr zu senden / Datei ist vollständig abgearbeitet. Der Übergang auf Step 12 erfolgt also im Worker und nicht direkt im C371-ACK-Handler.
+`0` bedeutet hier: kein weiterer Datenblock mehr zu senden / Datei vollständig abgearbeitet. Der Übergang auf Step 12 erfolgt im Worker und nicht direkt im C371-ACK-Handler.
 
-Wichtig für dynamische Tests: Nach dem ACK des letzten Blocks noch mindestens einen weiteren Worker-Durchlauf zulassen, damit `set_update_board_bin_by_485()` den EOF-Zustand erkennt und Step 12 setzt.
+Wichtig: **100 % Offset bzw. der letzte C5A8 ist noch kein terminaler Firmwareerfolg.** Danach folgen mindestens Staging-Prüfung und Mainboard-Promotion.
 
-## 2. Step 12 ist ein Wartezustand
+## 2. Step 12 als Wartezustand
 
-Step 12 erzeugt in `dtu_upgrade_pro()` keinen eigenen Abschlussreport und setzt nicht automatisch Step 5. Der Worker läuft weiter und wartet auf ein eingehendes Board-Statusframe, das über `board_is_allow_upg_handle()` verarbeitet wird.
+Step 12 erzeugt in `dtu_upgrade_pro()` keinen eigenen Abschlussreport und setzt nicht automatisch Step 5. Der Worker wartet auf ein eingehendes Board-Statusframe, das über `board_is_allow_upg_handle()` verarbeitet wird.
 
-Aus Sicht des LTE-Prozesses wird der Cloud-Erfolgsabschluss durch Board-Status
-**5** ausgelöst. Die inzwischen analysierte V3.3-Mainboard-Firmware unterscheidet
-aber zwei Erfolgsstufen: Nach der Gesamtimage-MD5-Prüfung sendet sie zunächst
-Status **3**. Status **5** folgt erst nach dem späteren Descriptor-, Copy-/Slot-
-und Commit-/Handoff-Pfad. Status 5 bedeutet daher nicht lediglich „MD5 OK“.
+Die V3.3-Mainboard-Firmware unterscheidet zwei Erfolgsstufen:
+
+```text
+C36E Status 3
+= vollständiges Staging-Image / Staging-MD5 erfolgreich
+
+C36E Status 5
+= späterer Promotion-/Commit-Abschluss
+```
+
+Status 3 ist damit **kein Fehler und kein terminaler Erfolg**.
+
+Der reale V3.3→V3.4-Lauf bestätigte diese Zweistufigkeit praktisch.
 
 ## 3. Eingehendes C36E Status 5
 
-`unpack_mcu_modbus()` reicht für Register C36E nur den Datenbereich an
+`unpack_mcu_modbus()` reicht für Register C36E den Datenbereich an:
 
 ```text
 board_is_allow_upg_handle() @ 0x1BA04
 ```
 
-weiter.
-
 Der Handler liest:
 
 ```text
 data[1]   -> SSID low byte
-\data[3]   -> Board-OTA-Status
-\data[4:5] -> optionale Blockgröße, nur bei len == 6
+data[3]   -> Board-OTA-Status
+data[4:5] -> optionale Blockgröße, nur bei len == 6
 ```
 
 Für SSID `0x0063`, Status `5`, Blockgröße `168` ist ein synthetisch gültiges vollständiges FC10-Frame:
@@ -63,19 +74,7 @@ Für SSID `0x0063`, Status `5`, Blockgröße `168` ist ein synthetisch gültiges
 63 10 C3 6E 00 03 06 00 63 00 05 00 A8 24 D9
 ```
 
-CRC-Drahtfolge ist wie bei den anderen Modbusframes Low/High:
-
-```text
-24 D9
-```
-
-Die Bytes `data[0]` und `data[2]` werden im Handler nicht ausgewertet. Das obige Frame ist daher für den Emulator funktional ausreichend; ob das reale Mainboard dort exakt `00` sendet, ist aus dem LTE-Binary allein nicht beweisbar.
-
-Das reale V3.3-Mainboard baut C36E mit zwei Registern beziehungsweise vier
-Nutzbytes. Die hier gezeigte synthetische Variante mit drei Registern und sechs
-Nutzbytes wurde nur verwendet, um dem LTE-Handler zusätzlich die optionale
-Blockgröße 168 zu übergeben; sie ist handler-kompatibel, aber kein behaupteter
-Live-Mitschnitt.
+Diese sechs Nutzbytes sind handler-kompatibel, aber kein behaupteter Live-Mitschnitt. Das reale Mainboard verwendet den bekannten C36E-Aufbau mit zwei Registern/vier Nutzbytes.
 
 ## 4. Exakter Status-5-Pfad im Handler
 
@@ -114,19 +113,11 @@ if (board_status == 5) {
 }
 ```
 
-Damit ist Status 5 eindeutig der Board-Erfolgsabschluss.
+Damit ist Status 5 eindeutig der Board-Erfolgsabschluss im Originaldienst.
 
-Status 3 wird vom LTE-Prozess ebenfalls mit C37B/status 3 quittiert, löst aber
-noch nicht den Cloudabschluss `0053` aus. Für einen Mainboard-nahen Emulator
-sollte deshalb die reale Reihenfolge nachgebildet werden: finaler C371 mit
-`ackB=2`, C36E/status 3 nach erfolgreicher Gesamt-MD5-Prüfung und erst nach dem
-späteren Commit-/Handoff-Pfad C36E/status 5.
+## 5. DTU-Antwort auf Status 3/5: C37B
 
-## 5. DTU-Antwort auf Status 5: Register C37B
-
-`dtu_reply_recv_status()` bei `0x1AD30` baut ein FC10-Frame an Register `C37B`.
-
-Layout:
+`dtu_reply_recv_status()` bei `0x1AD30` baut ein FC10-Frame an Register C37B:
 
 ```text
 63 10 C3 7B 00 02 04
@@ -135,21 +126,7 @@ STATUS_HI STATUS_LO
 CRC_LO CRC_HI
 ```
 
-Für SSID `0x0063` und Status `5` ergibt sich vollständig:
-
-```text
-63 10 C3 7B 00 02 04 00 63 00 05 34 69
-```
-
-CRC:
-
-```text
-34 69
-```
-
-Damit sollte ein Emulator nach seinem C36E Status-5-Frame genau dieses DTU->Board-ACK sehen.
-
-Zum Vergleich:
+Bekannte Beispiele für SSID `0x0063`:
 
 ```text
 Status 3: 63 10 C3 7B 00 02 04 00 63 00 03 B4 6B
@@ -158,7 +135,11 @@ Status 5: 63 10 C3 7B 00 02 04 00 63 00 05 34 69
 Status 6: 63 10 C3 7B 00 02 04 00 63 00 06 74 68
 ```
 
-## 6. Step 5 -> Cloud-Erfolgsreport
+Status 3 wird quittiert, löst aber nicht den finalen Cloud-/Step-5-Abschluss aus.
+
+Aus der Mainboard-Firmwareanalyse folgt außerdem: Ein fehlendes C37B/3 ist **kein Promotion-Gate**; die Board-Promotion läuft unabhängig weiter.
+
+## 6. Step 5 → Erfolgsreport → Step 12
 
 In `dtu_upgrade_pro()`:
 
@@ -171,83 +152,117 @@ In `dtu_upgrade_pro()`:
 0x1DA38  BL set_board_ota_step
 ```
 
-`board_ota_rep()` ist nur ein Wrapper um:
+`board_ota_rep()` ruft:
 
 ```text
 ota_device_send_ota_finish() @ 0x191C0
 ```
 
-Der JSON-String im Binary lautet:
+auf.
+
+Das PHNIX-JSON lautet sinngemäß:
 
 ```json
 {"cmd":"CMD_OTA","code":"0053","param":{"deviceCode":"<redigiert>","progress":"100","ssid":"0063"}}
 ```
 
-Formatstring im Binary:
+Nach erfolgreicher Behandlung des Reports kehrt der Worker auf Step 12 zurück.
+
+Endsequenz aus Sicht des Dienstes:
 
 ```text
-{"cmd":"CMD_OTA","code":"0053","param":{"deviceCode":"%s","progress":"100","ssid":"%04x"}}
+C36E Status 5
+→ C37B Status-5-ACK
+→ Step 12 → Step 5
+→ Erfolgsreport 0053 / progress 100
+→ Step 5 → Step 12
 ```
 
-Gesendet wird über `ali_mqtt_push_OTA_msg()` auf dem Board-OTA-Topic `/<productKey>/<deviceName>/user/OTA_UPDATE`.
+Der aktuelle lokale Updater behandelt den terminalen **Status 5 / Board-Step 12** als erfolgreichen Mainboardabschluss.
 
-Wenn der Publish-Aufruf nicht negativ zurückkehrt, liefert `board_ota_rep()` Erfolg und der Worker setzt Step 12.
+## 7. Live-Validierung V3.3 → V3.4
 
-Endzustand:
+Der zuvor nur statisch/synthetisch rekonstruierte Abschluss wurde am 29. August 2026 auf realer Hardware bestätigt.
+
+Gemessener Ablauf:
+
+| Zeitpunkt | Ereignis |
+|---|---|
+| 01:20:16 | letzter C5A8-Firmwareblock bestätigt |
+| 01:20:18 | C36E Status 3 |
+| 01:25:32 | C36E Status 5 |
+| 01:25:34 | Runtime-Helfer: terminaler Erfolg, `board_ota_step=12` |
+| 01:26:33 | C544 meldet Softwarecode `82400644`, Version `0034` |
+
+Damit ist praktisch bestätigt:
+
+- Status 3 folgt nach vollständiger Datenübertragung/Staging-Prüfung;
+- Status 3 ist nicht terminal;
+- das Mainboard arbeitet danach mehrere Minuten selbstständig weiter;
+- Status 5 markiert den erfolgreichen Abschluss der Board-Promotion;
+- Board-Step 12 wird danach terminal erreicht;
+- die neue Firmware V3.4 ist anschließend aktiv und meldet sich über C544.
+
+Der Originaldienst blieb bis Status 5 derselbe Prozess.
+
+## 8. Bedeutung für Simulatoren
+
+Ein Mainboard-naher Simulator sollte mindestens folgende Reihenfolge nachbilden:
 
 ```text
-C36E status 5
- -> C37B ACK status 5
- -> board_ota_step 12 -> 5
- -> ota_info+0x16 = 0
- -> next worker iteration
- -> code 0053 / progress 100 to OTA_UPDATE
- -> board_ota_step 5 -> 12
+1. letzten C5A8 empfangen
+2. finalen C371-ACK erzeugen
+3. Transferende / Step 12 zulassen
+4. C36E Status 3 erzeugen
+5. Promotion-/Verarbeitungsphase simulieren
+6. C36E Status 5 erzeugen
+7. C37B Status-5-ACK erwarten
+8. terminalen Board-Step 12 zulassen
 ```
 
-## 7. Für den laufenden Work-Test
+Für schnelle Tests dürfen die realen fünf Minuten Promotionzeit komprimiert werden; die Zustandsreihenfolge darf dadurch nicht verändert werden.
 
-Empfohlene kontrollierte Abschlusssequenz:
-
-```text
-1. C5A8 block 1712 empfangen und bytegenau prüfen
-2. C371 ACK-Art 2 für block 1712 senden; LTE-Endoffset muss 287598 werden
-3. DTU mindestens einen weiteren Worker-Durchlauf geben
-4. beobachten: board_ota_step 6 -> 12
-5. C36E Status 3 senden und C37B Status-3-ACK beobachten
-6. erst nach simuliertem Commit-/Handoff-Pfad C36E Status 5 senden
-7. DTU muss C37B Status-5-ACK senden
-8. beobachten: board_ota_step 12 -> 5
-9. auf MQTT OTA_UPDATE muss Code 0053 / progress 100 erscheinen
-10. danach board_ota_step 5 -> 12
-```
-
-Wichtig: C36E Status 5 **vor** Step 12 räumt zwar Offset und Dateilänge auf und quittiert Status 5, setzt aber wegen der expliziten `if (board_ota_step == 12)`-Bedingung nicht Step 5. Für einen sauberen Emulatorlauf sollte Status 5 daher erst nach beobachtetem Transferende / Step 12 kommen.
-
-## 8. Sinnvolle Breakpoints
+## 9. Sinnvolle Breakpoints für Laboranalyse
 
 ```gdb
 b *0x1D9E8   # set_update_board_bin_by_485()
 b *0x1D9F8   # unmittelbar vor Step 6 -> 12
-b *0x1BE30   # Status-5-Pfad erkannt, vor C37B-ACK
+b *0x1BE30   # Status-5-Pfad erkannt
 b *0x1BE6C   # unmittelbar vor Step 12 -> 5
-b *0x1DA18   # vor Cloud-Erfolgsreport
-b *0x19250   # unmittelbar vor ali_mqtt_push_OTA_msg() für 0053
+b *0x1DA18   # vor Erfolgsreport
+b *0x19250   # vor ali_mqtt_push_OTA_msg() für 0053
 ```
 
-## 9. Evidenzgrad
+## 10. Evidenzgrad
 
-**Hoch / statisch direkt bewiesen:**
+**Statisch direkt bewiesen:**
 
-- Step 6 -> 12 bei Return 0 von `set_update_board_bin_by_485()`
-- Status 5 ruft `dtu_reply_recv_status(5)` auf
-- Status 5 löscht persistent Offset und Dateilänge
-- nur bei aktuellem Step 12 wird Step 5 gesetzt
-- Step 5 publiziert OTA-Code 0053 / progress 100
-- danach Rückkehr auf Step 12
-- C37B-Frameaufbau und CRC
-- V3.3-Mainboardpfad: Status 3 nach Gesamt-MD5, Status 5 erst nach späterem Commit-/Handoff-Pfad
+- Step 6 → 12 bei EOF von `set_update_board_bin_by_485()`;
+- Status 5 ruft `dtu_reply_recv_status(5)` auf;
+- Status 5 löscht Offset und Dateilänge;
+- nur bei Step 12 wird Step 5 gesetzt;
+- Step 5 führt den Erfolgsreport aus;
+- danach Rückkehr auf Step 12;
+- C37B-Frameaufbau;
+- Mainboardpfad Status 3 vor späterem Status 5.
 
-**Synthetisch, aber handler-kompatibel:**
+**Live bestätigt:**
 
-- C36E-Status-5-Frame mit `data[0]=0`, `data[2]=0` und Blockgröße 168. Diese beiden reservierten Bytes sind im Handler nicht semantisch geprüft.
+- kompletter C5A8-Transfer;
+- Status 3 nach letztem Datenblock;
+- mehrere Minuten Promotionphase;
+- Status 5;
+- terminaler Board-Step 12;
+- neue aktive C544-Version `0034`.
+
+**Weiterhin nicht aus diesem einen Lauf bewiesen:**
+
+- Verhalten beliebiger anderer Mainboardfamilien/Softwarecodes;
+- alle Fehlerpfade Status 4/6 auf realer Hardware;
+- Power-Loss-/Loader-Recovery während kritischer Promotionphasen.
+
+## 11. Referenzen
+
+- [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
+- [`PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md`](PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md)
+- [`PHNIX_phnixIot4G_board_ota_state_machine.md`](PHNIX_phnixIot4G_board_ota_state_machine.md)
