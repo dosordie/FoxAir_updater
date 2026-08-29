@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Windows release version, for example 0.1.8"
+        description: "Windows release version, for example 0.3.9"
         required: true
         type: string
       prerelease:
@@ -39,7 +39,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Version must use x.y.z, for example 0.1.8"
+            throw "Version must use x.y.z, for example 0.3.9"
           }
           git fetch origin main --tags
           $tag = "windows-v$env:VERSION"
@@ -172,19 +172,21 @@ jobs:
           name: FoxAir Updater Windows v${{ inputs.version }}
           prerelease: ${{ inputs.prerelease }}
           body: |
-            Experimentelle Windows-Version des FoxAir Updaters.
+            FoxAir Updater für Windows – Portable ZIP und Setup EXE.
 
-            - Portable ZIP und Setup EXE. Die Builds sind derzeit nicht kommerziell code-signiert; Windows SmartScreen kann deshalb beim ersten Start "Weitere Informationen" → "Trotzdem ausführen" verlangen.
-            - ADB ist nicht enthalten; die GUI verweist zuerst auf den SIMCom USB-Treiber und danach auf die offiziellen Android Platform Tools.
-            - Einfache read-only Updateprüfung gegen das neueste GitHub Release; Download/Installation erfolgen nicht automatisch.
-            - ADB-Pfad, Remote-ADB-Modus, Raspberry-Pi-IP/Port, Backup-Ziel und zuletzt verwendete Firmware-/Manifestordner werden persistent gespeichert.
-            - v0.1.8 korrigiert das Laden von Remote-IP/Port, sodass gespeicherte Werte beim Programmstart nicht mehr durch leere/default Werte überschrieben werden.
-            - v0.1.8 korrigiert den Windows-Same-Version-Abschluss: Wrapper und Controller verwenden für die Abschlussprüfung exakt denselben effektiven --state-dir; alte Run-State-Dateien werden nicht als aktueller Abschlussbeweis wiederverwendet.
-            - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi.
-            - Benutzerfreundliche Dry-Run-/OTA-Statusanzeige mit farbigen Prüfschritten und Fortschrittsbalken.
-            - Der Windows-/Remote-ADB-Pfad wurde real bis zur sicheren V3.3→V3.3-Gleichversionsablehnung bestätigt; dabei wurden keine Firmwaredaten übertragen.
-            - Ein echter Firmware-Versionswechsel mit C5A8-Datenübertragung ist weiterhin noch nicht live validiert.
-            - Die gemeinsame sicherheitsrelevante OTA-Logik bleibt im bytegleich übernommenen Python-Controller-Core.
+            - Ein vollständiger Mainboard-Firmwarewechsel V3.3 → V3.4 wurde auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt und anschließend über Status 5 / Board-Step 12 sowie C544-Version 0034 bestätigt.
+            - Andere Firmwarestände und Hardwarevarianten sind weiterhin nicht vollständig live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
+            - MQTT bleibt beim normalen Vollupdate standardmäßig verbunden. Die frühere MQTT-Isolierung ist nur noch optional unter „Erweitert → MQTT bei Update aus“ verfügbar.
+            - 100 % Fortschritt bedeutet vollständige C5A8-Datenübertragung; der Mainboardabschluss erfolgt erst mit C36E Status 5 / Board-Step 12.
+            - Nach dem terminalen Mainboardergebnis erhält der normale LTE-/Cloudzustand bis zu 120 Sekunden zur Normalisierung.
+            - Portable ZIP und Setup EXE sind derzeit nicht kommerziell code-signiert; Windows SmartScreen kann deshalb beim ersten Start „Weitere Informationen“ → „Trotzdem ausführen“ verlangen.
+            - ADB ist nicht enthalten; die GUI verweist auf den SIMCom USB-Treiber und die offiziellen Android Platform Tools.
+            - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi werden unterstützt.
+            - ADB-Pfad, Remote-ADB-Modus, Raspberry-Pi-IP/Port, Backup-Ziel und relevante GUI-Einstellungen werden persistent gespeichert.
+            - Read-only Backup, Dry-Run, Manifest-Full-Prüfung, Status/Recovery, LTE-/Modemdiagnose und Logexport sind integriert.
+            - Die gemeinsame sicherheitsrelevante OTA-Logik bleibt im gemeinsamen Python-Controller-Core; Windows pflegt keinen separaten OTA-Protokollkern.
+
+            Weitere technische Details stehen in README.md und docs/RELEASE_NOTES_WINDOWS_v0.3.9.md.
           files: |
             dist/FoxAir_Updater_Portable_v${{ inputs.version }}.zip
             updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ inputs.version }}.exe
