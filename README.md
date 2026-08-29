@@ -3,7 +3,7 @@
 Experimentelles Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 
 > [!CAUTION]
-> ## Experimentell – V3.3 → V3.4 live validiert
+> ##  V3.3 → V3.4 live validiert
 >
 > Dieses Projekt befindet sich weiterhin im **Entwicklungs- und Teststadium**.
 > Ein vollständiges Firmwareupdate von Mainboard V3.3 auf V3.4 wurde auf realer Hardware **erfolgreich durchgeführt und per RS485-Versionsmeldung bestätigt**.
