@@ -83,7 +83,7 @@ class MainWindow(QMainWindow):
         self.state_dir = data_dir() / "phnix-ota-state"
         self.state_dir.mkdir(parents=True, exist_ok=True)
 
-        self.setWindowTitle(f"FoxAir Updater {APP_VERSION} – EXPERIMENTELL")
+        self.setWindowTitle(f"FoxAir Updater {APP_VERSION}")
         self.resize(1100, 780)
         icon = root_dir() / "app_icon.ico"
         if icon.is_file():
@@ -98,14 +98,14 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
 
         warning = QLabel(
-            "<b>EXPERIMENTELL – ein Versionswechsel V3.3 → V3.4 wurde live bestätigt.</b><br>"
-            "Andere Firmwarestände und Hardwarevarianten sind weiterhin nicht vollständig "
-            "validiert. Nutzung auf eigenes Risiko."
+            "<b>Firmwareupdate – Nutzung auf eigenes Risiko</b><br>"
+            "Ein realer Versionswechsel von V3.3 auf V3.4 wurde erfolgreich durchgeführt. "
+            "Andere Firmwarestände und Hardwarevarianten sind noch nicht vollständig getestet. "
+            "Ein Firmwareupdate verändert die Mainboard-Firmware und kann bei einem Fehler zum "
+            "Ausfall des Geräts führen."
         )
         warning.setWordWrap(True)
-        warning.setStyleSheet(
-            "QLabel{background:#fff1e8;border:2px solid #c84b00;padding:9px}"
-        )
+        warning.setStyleSheet("QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px}")
         layout.addWidget(warning)
 
         self.tabs = QTabWidget()
@@ -308,19 +308,9 @@ class MainWindow(QMainWindow):
         self.dry = QPushButton("Vorprüfung / Dry-Run")
         self.dry.clicked.connect(self._dry)
         layout.addWidget(self.dry)
-        self.risk = QCheckBox(
-            "Risiko des experimentellen Firmwareupdates verstanden."
-        )
+        self.risk = QCheckBox("Risiko des Firmwareupdates verstanden.")
         self.risk.toggled.connect(self._buttons)
         layout.addWidget(self.risk)
-        self.isolate_mqtt = QCheckBox(
-            "MQTT während des Updates trennen (optional, nicht empfohlen)"
-        )
-        self.isolate_mqtt.setToolTip(
-            "Standardmäßig bleibt die Cloudverbindung bestehen. Eine Trennung kann den "
-            "30-Minuten-Offline-Neustart des LTE-Dienstes auslösen."
-        )
-        layout.addWidget(self.isolate_mqtt)
         self.update_btn = QPushButton("FIRMWAREUPDATE STARTEN")
         self.update_btn.clicked.connect(self._update_run)
         layout.addWidget(self.update_btn)
@@ -336,7 +326,7 @@ class MainWindow(QMainWindow):
         check_note = QLabel(
             "<b>Read-only-Prüfung:</b> Prüft das LTE-Modem auf normalen Originalbetrieb: "
             "Originaldienst läuft, Programmdatei/SHA stimmt, kein Debugger, keine lokale "
-            "OTA-Injection und keine Cloud-Sperre, Watchdogs laufen, MQTT/Cloud ist wieder "
+            "OTA-Injection und keine Cloud-Sperre, Watchdogs laufen, MQTT/Cloud ist "
             "verbunden und temporärer lokaler OTA-Zustand ist bereinigt. Es wird nichts verändert."
         )
         check_note.setWordWrap(True)
@@ -445,8 +435,24 @@ class MainWindow(QMainWindow):
     def _advanced(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        self.isolate_mqtt = QCheckBox("MQTT bei Update aus")
+        self.isolate_mqtt.setChecked(
+            str(self.settings.value("isolate_mqtt", "false")).lower()
+            in {"1", "true", "yes"}
+        )
+        self.isolate_mqtt.setToolTip(
+            "Optionaler Sicherheits-/Testmodus. Trennt MQTT während des Mainboard-Updates. "
+            "Nicht empfohlen, da der originale LTE-Dienst bei längerer Cloud-Trennung nach "
+            "etwa 30 Minuten einen Neustart auslösen kann."
+        )
+        self.isolate_mqtt.toggled.connect(self._isolate_mqtt_changed)
+        layout.addWidget(self.isolate_mqtt)
         layout.addStretch()
         return widget
+
+    def _isolate_mqtt_changed(self, checked):
+        self.settings.setValue("isolate_mqtt", checked)
+        self.settings.sync()
 
     def _load(self):
         saved = str(self.settings.value("adb", "") or "")
@@ -939,8 +945,11 @@ class MainWindow(QMainWindow):
         if (
             QMessageBox.warning(
                 self,
-                "Experimentelles Update",
-                "Echter Versionswechsel noch nicht live validiert.\n\nFortfahren?",
+                "Firmwareupdate starten",
+                "Ein Firmwareupdate verändert die Mainboard-Firmware und erfolgt auf eigenes "
+                "Risiko. Der Versionswechsel V3.3 → V3.4 wurde real erfolgreich getestet; "
+                "andere Firmwarestände oder Hardwarevarianten sind möglicherweise noch nicht "
+                "validiert.\n\nFirmwareupdate jetzt starten?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )

@@ -1,13 +1,13 @@
-# Windows Updater v0.1.8 (experimentell)
+# Windows Updater v0.1.8
 
 Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden gemeinsamen OTA-Backend** gebaut.
 
 > [!IMPORTANT]
-> **Real getestet sind derzeit:** lokale/Remote-ADB-Verbindung, Originalstatus, das read-only LTE-Backup/Firmware-Download per `adb pull` und der Dry-Run.
+> **Real getestet sind derzeit:** lokale/Remote-ADB-Verbindung, Originalstatus, das read-only LTE-Backup/Firmware-Download per `adb pull`, der Dry-Run und ein Firmware-Versionswechsel von V3.3 auf V3.4.
 >
 > Zusätzlich wurde der normale **Firmware-Update**-Button über Remote-ADB real mit **V3.3 → V3.3** ausgeführt. Das Mainboard erkannte die bereits installierte Firmware und beendete den Ablauf sicher mit `same-version`; `C357` und `C5A8` wurden nicht erreicht und der Originalbetrieb wurde danach wieder bestätigt. Es wurden keine Firmwaredaten übertragen.
 >
-> Beim Live-Test mit v0.1.7 trat **erst nach diesem sauber beendeten Same-Version-Ablauf** ein Windows-Hostfehler auf: Der Sicherheitswrapper suchte den terminalen `run-state.json` in einem anderen lokalen Verzeichnis als dem von der GUI an den Controller übergebenen `--state-dir`. Dieser Host-Auswertungsfehler ist in v0.1.8 korrigiert. Ein **echtes Firmwareupdate auf eine andere Mainboard-Version mit C5A8-Datenübertragung wurde unter Windows weiterhin noch nicht live durchgeführt und bestätigt**.
+> Beim Live-Test mit v0.1.7 trat **erst nach diesem sauber beendeten Same-Version-Ablauf** ein Windows-Hostfehler auf: Der Sicherheitswrapper suchte den terminalen `run-state.json` in einem anderen lokalen Verzeichnis als dem von der GUI an den Controller übergebenen `--state-dir`. Dieser Host-Auswertungsfehler ist in v0.1.8 korrigiert. Andere Firmwarestände und Hardwarevarianten als der bestätigte Wechsel V3.3 → V3.4 sind noch nicht vollständig getestet.
 
 Öffentliche Windows-Versionen stehen als Portable-ZIP und Setup-EXE auf der normalen GitHub-Releases-Seite bereit:
 
@@ -218,7 +218,7 @@ Beispiele für lesbare Zustände sind:
 ● Vorprüfung vollständig bestanden.
 ● Firmware wurde auf dem LTE-Modem bereitgestellt.
 ● Gleiche Firmware erkannt – keine Firmwaredaten übertragen.
-● Originaldienst, Watchdogs und Cloud/MQTT laufen wieder.
+● Originaldienst, Watchdogs und Cloud/MQTT sind im normalen Betriebszustand.
 ```
 
 Das technische Rohprotokoll mit allen JSON-Zeilen bleibt unverändert darunter erhalten und kann weiterhin gespeichert werden.
@@ -277,7 +277,7 @@ Ein Fortschrittsbalken ist vorhanden. Sobald der Controller während der C5A8-Ph
 Die Prozentzahl wird ausschließlich aus den vom Originaldienst gemeldeten `offset/length`-Werten berechnet. Bei einer Gleichversionsablehnung bleibt der Balken bewusst bei 0 und zeigt **Keine Übertragung – gleiche Firmware**, weil keine C5A8-Firmwaredaten gesendet wurden.
 
 > [!WARNING]
-> Die C5A8-Fortschrittsanzeige ist softwareseitig implementiert, konnte aber noch nicht an einem echten Windows-Versionswechsel beobachtet werden, weil ein solcher Transfer bislang nicht live ausgeführt wurde.
+> 100 % bezeichnet vollständig übertragene Firmwaredaten. Die anschließende Mainboard-Verarbeitung und Prüfung des normalen LTE-/Cloudzustands werden als eigene Phasen angezeigt.
 
 ### Manifest
 
@@ -321,11 +321,11 @@ Der Build lädt die Datei direkt aus dem öffentlichen `FoxAir_Control`-Reposito
 
 verwendet wird. Das Logo wird als EXE-Icon, Fenster-Icon und Setup-Icon verwendet.
 
-## Experimenteller Stand
+## Validierungsstand
 
-Ein echter Versionswechsel wurde weiterhin **nicht live bestätigt**. Bisher wurde auf realer Hardware V3.3 → V3.3 bis zur erwarteten Gleichversionsablehnung getestet; dabei wurden keine Firmwareblöcke geschrieben.
+Ein echter Versionswechsel von V3.3 auf V3.4 wurde auf realer Hardware erfolgreich durchgeführt und anschließend am Mainboard als V3.4 bestätigt. Andere Firmwarestände und Hardwarevarianten sind noch nicht vollständig getestet.
 
-Für Windows sind ADB, Remote-ADB, Originalstatus, Backup und Dry-Run bestätigt. Der vollständige Windows-Sicherheitswrapper wurde inzwischen ebenfalls real bis zum terminalen V3.3→V3.3-Same-Version-Zustand ausgeführt. Dabei zeigte sich in v0.1.7 der oben dokumentierte rein hostseitige State-Pfad-Fehler nach dem bereits sauber beendeten OTA-Ablauf. Die Korrektur ist in v0.1.8 automatisiert getestet; ein echter C5A8-Versionswechsel bleibt weiterhin ungetestet.
+Für Windows sind ADB, Remote-ADB, Originalstatus, Backup und Dry-Run bestätigt. Der vollständige Windows-Sicherheitswrapper wurde außerdem real bis zum terminalen V3.3→V3.3-Same-Version-Zustand ausgeführt. Dabei zeigte sich in v0.1.7 der oben dokumentierte rein hostseitige State-Pfad-Fehler nach dem bereits sauber beendeten OTA-Ablauf; die Korrektur ist in v0.1.8 automatisiert getestet.
 
 ## GitHub Actions: Build und Release getrennt
 

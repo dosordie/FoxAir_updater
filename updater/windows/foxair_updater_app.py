@@ -52,7 +52,7 @@ class MainWindow(base.MainWindow):
         self._update_signals.result.connect(self._release_check_result)
         self._update_signals.error.connect(self._release_check_error)
         super().__init__()
-        self.setWindowTitle(f"FoxAir Updater {APP_VERSION} – EXPERIMENTELL")
+        self.setWindowTitle(f"FoxAir Updater {APP_VERSION}")
 
         # QSettings already stores ADB mode/path, Pi address/port and the backup
         # target in the base GUI. Persist manual edits as well and remember the
@@ -568,6 +568,11 @@ class MainWindow(base.MainWindow):
             "c357": ("phase-c357", "ok", "Mainboard hat die Transfermetadaten angenommen."),
             "c5a8": ("phase-c5a8", "warn", "Firmwaredaten werden zum Mainboard übertragen."),
             "success-report": ("phase-success-report", "ok", "Mainboard meldet erfolgreichen Transferabschluss."),
+            "runtime-restore-wait": (
+                "phase-runtime-check",
+                "warn",
+                "Mainboard-Update abgeschlossen – normaler LTE-/Cloudzustand wird geprüft …",
+            ),
             "success": ("phase-success", "ok", "Firmwareupdate wurde erfolgreich abgeschlossen."),
             "same-version": ("phase-same", "warn", "Gleiche Firmware erkannt – keine Firmwaredaten übertragen."),
             "c350-same-version": ("phase-same", "warn", "Gleiche Firmware erkannt – keine Firmwaredaten übertragen."),
@@ -594,6 +599,17 @@ class MainWindow(base.MainWindow):
             self._set_step("firmware-staged", "ok", "Firmware wurde auf dem LTE-Modem bereitgestellt.")
         elif event == "hook-start":
             self._set_step("hook-start", "warn", "Updateablauf gestartet – Mainboard-Reaktion wird überwacht.")
+        elif event == "runtime-restore-wait":
+            self._set_step(
+                "runtime-restore-wait",
+                "warn",
+                "Mainboard-Update abgeschlossen – normaler LTE-/Cloudzustand wird geprüft.",
+            )
+            self.progress_text.setText(
+                "Mainboard-Update abgeschlossen – normaler LTE-/Cloudzustand wird geprüft …"
+            )
+            self.progress.setValue(100)
+            self.progress.setFormat("100 % – Firmwaredaten vollständig übertragen")
         elif event == "warning":
             message = str(record.get("message", "Warnung"))
             if "Gleiche Firmware" in message:
@@ -611,7 +627,7 @@ class MainWindow(base.MainWindow):
             self._set_step(
                 "services-restored",
                 "ok" if ok else "error",
-                "Originaldienst, Watchdogs und Cloud/MQTT laufen wieder."
+                "Originaldienst, Watchdogs und Cloud/MQTT sind im normalen Betriebszustand."
                 if ok
                 else "Originalbetrieb konnte nicht vollständig bestätigt werden.",
             )
