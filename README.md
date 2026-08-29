@@ -1,26 +1,29 @@
 # FoxAir Updater
 
-Experimentelles Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
+Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 
 > [!CAUTION]
-> ##  V3.3 → V3.4 live validiert
+> ## V3.3 → V3.4 live validiert
 >
-> Dieses Projekt befindet sich weiterhin im **Entwicklungs- und Teststadium**.
-> Ein vollständiges Firmwareupdate von Mainboard V3.3 auf V3.4 wurde auf realer Hardware **erfolgreich durchgeführt und per RS485-Versionsmeldung bestätigt**.
+> Ein vollständiges Firmwareupdate von Mainboard V3.3 auf V3.4 wurde auf realer Hardware **erfolgreich durchgeführt und anschließend über Status 5 / Board-Step 12 sowie die neue C544-Versionsmeldung `0034` bestätigt**.
 >
 > Zusätzlich wurde **V3.3 → V3.3** bis zur erwarteten Gleichversionsablehnung getestet. Andere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht vollständig live validiert.
 >
-> Bei der Verwendung kann etwas schiefgehen. Im ungünstigsten Fall können Mainboard, LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
+> Ein Firmwareupdate bleibt ein Eingriff in das Mainboard. Im ungünstigsten Fall können Mainboard, LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
 >
-> **Nutzung ausschließlich auf eigenes Risiko.** Jeder Anwender muss selbst entscheiden, ob er dieses experimentelle Werkzeug verwendet und die möglichen Folgen verantworten kann. Der Ersteller übernimmt, **soweit gesetzlich zulässig**, keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
+> **Nutzung ausschließlich auf eigenes Risiko.** Der Ersteller übernimmt, **soweit gesetzlich zulässig**, keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
 
 Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt [`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), das weiterhin für normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
 
-## Windows GUI v0.3.1
+## Windows GUI v0.3.9
 
 Die Windows-Version ist inzwischen der hauptsächliche Entwicklungsweg des Projekts. Sie steht als **Portable-ZIP** und **Setup-EXE** auf der GitHub-Releases-Seite bereit:
 
 **[FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)**
+
+Release-Details zu v0.3.9:
+
+**[`docs/RELEASE_NOTES_WINDOWS_v0.3.9.md`](docs/RELEASE_NOTES_WINDOWS_v0.3.9.md)**
 
 ADB wird weiterhin **nicht mitgeliefert**. Die GUI verlinkt den SIMCom-USB-Treiber, die offiziellen Android Platform Tools und die LTE-/USB-Anleitung. Eine vorhandene `adb.exe` kann ausgewählt und gespeichert werden.
 
@@ -39,28 +42,43 @@ ADB wird weiterhin **nicht mitgeliefert**. Die GUI verlinkt den SIMCom-USB-Treib
 - Manifest-Erzeugung direkt aus einer Firmwaredatei;
 - automatischen Full-Abgleich von Manifest, Firmwareidentität, Größe, MD5 und SHA256;
 - lesbare Ablauf- und Fortschrittsanzeige für den Firmwareupdate-Pfad;
-- standardmäßig verbundene MQTT-Cloud während des Vollupdates sowie eine optionale, ausdrücklich nicht empfohlene MQTT-Isolierung für Labortests;
+- standardmäßig verbundene MQTT-Cloud während des Vollupdates;
+- optionale MQTT-Isolierung unter **Erweitert → MQTT bei Update aus** für besondere Testfälle;
 - read-only Modem-, SIM-, LTE-, Cloud-/MQTT- und Mainboarddiagnose;
 - optionale detaillierte Modem-/Traffic-Diagnose unter **Erweitert**;
 - Wartungsfunktion für den Mainboard-OTA-Vorgangszähler;
 - Loganzeige und Logexport;
 - Portable- und Setup-Build ohne notwendige Python-Installation beim Anwender.
 
-### Neu bzw. überarbeitet in v0.3.1
+### Neu bzw. maßgeblich in v0.3.9
 
-- Die **OTA-Vorprüfung verlangt eine aktive MQTT-/Cloud-Verbindung**, bevor ein echtes Update gestartet wird. Hintergrund ist der originale PHNIX-Rebootmechanismus nach längerer Cloud-Offlinezeit.
-- Die Firmware-Update-Seite zeigt Fortschritt, übertragene Datenmenge und die seit Beginn der lokalen Cloud-Sperre **verstrichene Zeit** deutlicher an.
+- **V3.3 → V3.4 wurde real erfolgreich geflasht.** Die neue Firmware wurde nach dem vollständigen Ablauf als V3.4 / `0034` bestätigt.
+- MQTT bleibt bei einem normalen Vollupdate **standardmäßig verbunden**. Die frühere Firewall-Isolierung ist nur noch optional.
+- Die Option **MQTT bei Update aus** befindet sich unter **Erweitert**, ist standardmäßig aus und wird persistent gespeichert.
+- Die OTA-Vorprüfung verlangt weiterhin einen sauberen Originalzustand und eine aktive MQTT-/Cloud-Verbindung.
+- **100 % bedeutet nur: alle C5A8-Firmwaredaten übertragen.** Die anschließende Mainboard-Prüf-/Flash-/Promotionphase läuft weiter.
+- Erst **C36E Status 5 / Board-Step 12** gilt als terminaler Mainboard-Erfolg.
+- Nach dem terminalen Mainboardergebnis erhält der normale LTE-/Cloudzustand bis zu **120 Sekunden**, bevor die Abschlussprüfung fehlschlägt.
 - Bei einem kurzzeitigen ADB-Verbindungsverlust kann die GUI den vorhandenen OTA-Zustand erneut read-only prüfen, ohne einen zweiten Updatevorgang zu starten.
 - Nach begonnenem C5A8-Firmwaretransfer bleibt der originale `phnixIot4G`-Dienst autoritativ; ein reiner Windows-/ADB-Monitoringfehler darf den laufenden Transfer nicht aktiv stoppen.
-- Die Backup-Seite erklärt die einzelnen Sicherungsoptionen genauer.
-- Die Manifest-Seite beschreibt jetzt, wofür das Manifest benötigt wird und wie Firmwareidentität und Prüfsummen damit abgesichert werden.
-- Die Verbindungsseite wurde aufgeräumt und die Remote-ADB-Hilfe für Raspberry Pi optisch abgegrenzt.
-- `Modem Info / LTE Diagnose` bleibt normal sichtbar; nur die detaillierte `Modem Diagnose / Traffic`-Seite wird über **Erweitert** ein- oder ausgeblendet.
-- Der frühere separate Gleichversionstest und die zugehörige passive-Logger-Checkbox wurden aus der normalen Endanwender-GUI entfernt. Die Backend-/Lab-Funktionen bleiben erhalten.
-- Die getestete Mainboard-OTA-Zählerfunktion wird als **Wartung – Mainboard OTA-Vorgänge** geführt.
-- Modem- und Wartungsfunktionen werden während eines laufenden Firmwareupdates gesperrt, damit keine parallelen Eingriffe stattfinden.
+- Die frühere allgemeine **Experimentell**-Kennzeichnung wurde aus der Windows-Oberfläche entfernt. Der Risikohinweis für Firmwareupdates bleibt bestehen.
+- Der separate Gleichversionstest und die passive-Logger-Checkbox sind nicht mehr Bestandteil der normalen Endanwender-GUI; die Backend-/Lab-Funktionen bleiben für Entwicklung erhalten.
+
+### MQTT und der 30-Minuten-Rebootpfad
+
+Der Originaldienst besitzt einen eigenen Rebootmechanismus, wenn der Aliyun-MQTT-Client intern länger als 1800 Sekunden als offline gilt.
+
+Wichtig ist die genaue Bedeutung: Der 1800-s-Zähler startet **nicht zwingend in dem Moment, in dem Netzwerkpakete per Firewall geblockt werden**. Bei einer stillen `iptables DROP`-Sperre kann der Aliyun-SDK mehrere 180-s-Keepalive-Zyklen benötigen, bevor sein interner Clientzustand von „connected“ auf „offline“ wechselt. Erst danach läuft der PHNIX-1800-s-Zähler.
+
+Damit ist der Rebootpfad weiterhin real vorhanden; es gibt keinen bekannten OTA-Sonderzweig, der ihn während eines Mainboardupdates deaktiviert. Für normale Updates ist es deshalb einfacher und risikoärmer, MQTT verbunden zu lassen.
+
+Details:
+[`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](docs/reverse_engineering/PHNIX_phnixIot4G_watchdogs_reset_counters.md)
 
 ### Screenshots
+
+> [!NOTE]
+> Die Screenshots zeigen den grundsätzlichen Aufbau der Windows-GUI. Einzelne Texte und Optionen können gegenüber v0.3.9 leicht abweichen.
 
 | Verbindung | Backup |
 |---|---|
@@ -79,14 +97,15 @@ Real getestet bzw. bestätigt sind unter anderem:
 - read-only LTE-Backup/Firmware-Download;
 - Dry-Run;
 - normaler Windows-Firmware-Update-Aufruf mit **V3.3 → V3.3** bis zur sicheren Gleichversionsablehnung;
-- vollständiger realer Versionswechsel **V3.3 → V3.4**, einschließlich C5A8-Übertragung, Status 5 und anschließender C544-Versionsbestätigung `0034`;
+- vollständiger realer Versionswechsel **V3.3 → V3.4**, einschließlich kompletter C5A8-Übertragung, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließender C544-Versionsbestätigung `0034`;
 - Mainboard-OTA-Vorgangszähler-Wartung einschließlich Sicherung, kontrolliertem Dienstneustart und Verifikation.
 
 Beim V3.3→V3.3-Test erkannte das Mainboard die bereits installierte Firmware und beendete den Ablauf vor C357/C5A8. Es wurden keine Firmwaredaten übertragen.
 
-Beim V3.3→V3.4-Lauf dauerte die C5A8-Datenübertragung rund 28:56 Minuten;
-bis Status 5 vergingen danach weitere rund 5:16 Minuten. Details stehen in
-[`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md).
+Beim V3.3→V3.4-Lauf dauerte die C5A8-Datenübertragung rund **28:56 Minuten**. Vom letzten Datenblock bis Status 5 vergingen weitere rund **5:16 Minuten**. Bis zur ersten neuen C544-Versionsmeldung dauerte der vollständige beobachtete Ablauf rund **35 Minuten**.
+
+Details stehen in:
+[`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
 
 ### Windows-Architektur
 
@@ -210,6 +229,9 @@ cd ~/FoxAir_updater
   --target-ssid 0063
 ```
 
+Weitere Details:
+[`docs/HowTo/FIRMWARE_MANIFEST.md`](docs/HowTo/FIRMWARE_MANIFEST.md)
+
 ## Technische Sicherheitsgrenze
 
 Der aktuelle Live-Pfad ist für genau den untersuchten Originaldienst `phnixIot4G` ausgelegt:
@@ -225,8 +247,9 @@ Der frühe OTA-Vorhandshake und der eigentliche Firmwaretransfer werden bewusst 
 - **Ab dem ersten C5A8** ist der originale PHNIX-Dienst autoritativ; ein Monitoringfehler darf den Transfer nicht automatisch abbrechen.
 - `C36E Status 3` ist **kein sicherer Stopppunkt**.
 - Ein fehlendes `C37B/3` stoppt die anschließende Mainboard-Promotion nicht; das ACK gehört zur Status-/Retrylogik und ist kein Promotion-Gate.
+- **100 % C5A8 ist nicht terminal.** Erst Status 5 / Board-Step 12 bestätigt den Mainboardabschluss.
 
-Diese Erkenntnisse basieren auf der analysierten Mainboard-Firmware V3.3. Details befinden sich unter [`docs/reverse_engineering/`](docs/reverse_engineering/).
+Diese Erkenntnisse basieren auf der analysierten Mainboard-Firmware V3.3 und dem erfolgreichen V3.3→V3.4-Live-Lauf. Details befinden sich unter [`docs/reverse_engineering/`](docs/reverse_engineering/).
 
 ## Repository-Struktur
 
