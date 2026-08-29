@@ -1,6 +1,8 @@
 # Firmware-Backup des LTE-Modems über Micro-USB
 
-Diese Anleitung beschreibt, wie man sich per **Micro-USB** mit dem LTE-Modem verbindet und die Firmware sowie zusätzliche Dateien mit **ADB (Android Debug Bridge, Bestandteil der Android SDK Platform Tools)** sichert.
+Stand: 29. August 2026
+
+Diese Anleitung beschreibt, wie man sich per **Micro-USB** mit dem LTE-Modem verbindet und Firmware-/Statusdateien mit **ADB (Android Debug Bridge, Bestandteil der Android SDK Platform Tools)** sichert.
 
 > [!NOTE]
 > Es gibt drei alternative Bedienwege:
@@ -8,25 +10,25 @@ Diese Anleitung beschreibt, wie man sich per **Micro-USB** mit dem LTE-Modem ver
 > - **Windows – manuell:** PowerShell und direkte `adb.exe`-Befehle;
 > - **Linux / Raspberry Pi:** `adb` beziehungsweise der Linux-Launcher `./foxair-updater`.
 >
-> Es muss **nur einer dieser Wege** verwendet werden. Die PowerShell- und Linux-Abschnitte sind Alternativen zur Windows-GUI.
+> Es muss **nur einer dieser Wege** verwendet werden.
 
 > [!IMPORTANT]
-> Der **Windows-Backup-Pfad wurde real getestet**. ADB-Verbindung, Originalstatus und das read-only Backup der LTE-Dateien funktionieren sowohl mit lokal angeschlossenem Modem als auch über den optionalen Remote-ADB-Weg zum Raspberry Pi.
+> Der Windows-Backup-Pfad wurde real getestet. ADB-Verbindung, Originalstatus und das read-only Backup der LTE-Dateien funktionieren sowohl mit lokal angeschlossenem Modem als auch über Remote-ADB zum Raspberry Pi.
 >
-> Ein echter Firmwarewechsel auf eine andere Mainboard-Version ist weiterhin experimentell und ist **nicht Voraussetzung** für das hier beschriebene Backup.
+> Ein vollständiger Firmwarewechsel **V3.3 → V3.4** wurde inzwischen ebenfalls erfolgreich durchgeführt; das ist für das hier beschriebene Backup jedoch **nicht erforderlich**.
 
 > [!NOTE]
-> Die Backup-Funktionen **verändern nichts am LTE-Modem**. Die Windows-GUI verwendet dafür ausschließlich `adb pull`; bei den manuellen Wegen werden dieselben Dateien ebenfalls nur vom LTE-Modem heruntergeladen.
+> Die Backup-Funktionen verändern nichts am LTE-Modem. Die Windows-GUI verwendet dafür ausschließlich `adb pull`; bei den manuellen Wegen werden dieselben Dateien ebenfalls nur heruntergeladen.
 
 > [!WARNING]
-> Die aus dem LTE-Modem ausgelesenen Firmware- und Datendateien **nicht öffentlich hochladen oder weiterveröffentlichen**. Sie können herstellerspezifische Software, Konfigurationsdaten oder andere nicht für die Veröffentlichung bestimmte Inhalte enthalten.
+> Ausgelesene Firmware- und Datendateien **nicht öffentlich hochladen oder weiterveröffentlichen**. Sie können herstellerspezifische Software, Konfigurationsdaten oder andere nicht für die Veröffentlichung bestimmte Inhalte enthalten.
 
 ## 1. LTE-Modem öffnen und USB-Port freilegen
 
-- Der Deckel des LTE-Modems ist **nur gesteckt** und kann vorsichtig abgenommen werden.
-- Im **Micro-USB-Port** kann sich etwas Versiegelungs-/Vergussmasse von der Platine befinden.
-- Diese lässt sich vorsichtig z. B. mit einer **Pinzette** entfernen.
-- Dabei unbedingt darauf achten, USB-Port, Kontakte und Platine nicht zu beschädigen.
+- Der Deckel des LTE-Modems ist nur gesteckt und kann vorsichtig abgenommen werden.
+- Im **Micro-USB-Port** kann sich Versiegelungs-/Vergussmasse befinden.
+- Diese lässt sich vorsichtig z. B. mit einer Pinzette entfernen.
+- Dabei USB-Port, Kontakte und Platine nicht beschädigen.
 
 ### Geöffnetes LTE-Modem
 
@@ -45,17 +47,15 @@ Benötigt werden die SIMCom USB-Treiber:
 
 - [SIMCOM Windows USB Drivers V1.0.2](https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip)
 
-ZIP-Datei entpacken und die passenden Windows-Treiber installieren. Danach das LTE-Modem über den Micro-USB-Port mit dem PC verbinden.
+ZIP-Datei entpacken und die passenden Windows-Treiber installieren. Danach das LTE-Modem über Micro-USB mit dem PC verbinden.
 
-### Erkennung im Windows-Geräte-Manager prüfen
+### Geräte-Manager prüfen
 
 1. **Geräte-Manager** öffnen.
-2. LTE-Modem per Micro-USB mit dem PC verbinden.
-3. Beobachten, ob beim Ein- und Ausstecken neue Geräte erscheinen bzw. verschwinden.
+2. LTE-Modem per Micro-USB verbinden.
+3. Beobachten, ob beim Ein-/Ausstecken Geräte erscheinen oder verschwinden.
 4. Besonders unter **Anschlüsse (COM & LPT)**, **Modems**, **USB-Controller** bzw. **Andere Geräte** nach SIMCom-/Android-/ADB-Geräten suchen.
-5. Wird ein Gerät mit gelbem Warnsymbol oder als unbekanntes Gerät angezeigt, den SIMCom-Treiber installieren bzw. aktualisieren und das Modem erneut verbinden.
-
-Damit lässt sich bereits vor dem ADB-Test feststellen, ob Windows die USB-Verbindung grundsätzlich erkennt.
+5. Bei Warnsymbol/unbekanntem Gerät den SIMCom-Treiber installieren bzw. aktualisieren.
 
 ## 3. Android SDK Platform Tools / ADB installieren
 
@@ -73,26 +73,26 @@ C:\platform-tools
 
 entpacken.
 
----
-
 # 4. Windows – empfohlen: FoxAir Updater GUI
 
-Die aktuelle Windows-Version des FoxAir Updaters ist als **Portable-ZIP** und **Setup-EXE** auf der GitHub-Releases-Seite verfügbar:
+Die aktuelle Windows-Version ist als Portable-ZIP und Setup-EXE verfügbar:
 
 - [FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)
 
-Die Windows-GUI ist inzwischen der empfohlene Weg für Backup und Firmware-Download. Sie bietet unter anderem:
+Aktueller dokumentierter Stand: **v0.3.9**.
+
+Die GUI bietet unter anderem:
 
 - lokale ADB-Verbindung direkt per USB;
-- optional Remote-ADB über einen Raspberry Pi;
-- automatische bzw. manuelle ADB-Reconnect-Funktion;
+- Remote-ADB über Raspberry Pi;
+- automatische/manuelle ADB-Reconnect-Funktion;
 - read-only Backup per `adb pull`;
 - frei wählbaren Zielordner;
-- kurze Beschreibung der einzelnen Backup-Dateien;
-- direkten Button **Zielordner öffnen**.
+- Beschreibung der Backup-Dateien;
+- Button **Zielordner öffnen**.
 
 > [!NOTE]
-> Die Windows-Builds sind derzeit nicht mit einem kommerziellen Code-Signing-Zertifikat signiert. Beim ersten Start kann Windows SmartScreen **„Der Computer wurde durch Windows geschützt“** anzeigen. Wenn die Datei bewusst von der offiziellen GitHub-Releases-Seite geladen wurde, **Weitere Informationen** und danach **Trotzdem ausführen** wählen.
+> Die Windows-Builds sind derzeit nicht kommerziell code-signiert. Windows SmartScreen kann deshalb beim ersten Start **„Der Computer wurde durch Windows geschützt“** anzeigen. Wenn die Datei bewusst von der offiziellen GitHub-Releases-Seite geladen wurde, **Weitere Informationen** und danach **Trotzdem ausführen** wählen.
 
 ## 4.1 ADB in der GUI einrichten
 
@@ -108,7 +108,7 @@ Auch im Remote-Modus wird lokal unter Windows weiterhin eine `adb.exe` als Clien
 ## 4.2 Backup erstellen
 
 1. Registerkarte **Backup** öffnen.
-2. Gewünschten Zielordner mit **Zielordner…** auswählen.
+2. Zielordner mit **Zielordner…** auswählen.
 3. Gewünschte Dateien auswählen.
 4. **Backup erstellen** anklicken.
 5. Nach erfolgreichem Abschluss **Zielordner öffnen** verwenden.
@@ -117,12 +117,12 @@ Auch im Remote-Modus wird lokal unter Windows weiterhin eine `adb.exe` als Clien
 
 Die GUI kann folgende Dateien sichern:
 
-| Auswahl in der GUI | Quelle auf dem LTE-Modem | Bedeutung |
+| Auswahl | Quelle auf dem LTE-Modem | Bedeutung |
 |---|---|---|
-| **Firmware** | `/cache/phnixIot_device_OTA` | aktuell im LTE-Cache vorhandene OTA-/Firmwaredatei |
-| **OTA_INFO** | `/data/phnixIot_device_OTA_INFO` | persistenter OTA-/Resume-Zustand |
-| **Statistik** | `/data/phnixIot_device_statisic` | Betriebs-, Kommunikations-, Reset- und OTA-Zähler |
-| **Originaldienst phnixIot4G** | `/data/phnixIot4G` | originale ausführbare PHNIX-LTE-Programmdatei |
+| Firmware | `/cache/phnixIot_device_OTA` | aktuell im LTE-Cache vorhandene OTA-/Firmwaredatei |
+| OTA_INFO | `/data/phnixIot_device_OTA_INFO` | persistenter OTA-/Resume-Zustand |
+| Statistik | `/data/phnixIot_device_statisic` | Betriebs-, Kommunikations-, Reset- und OTA-Zähler |
+| Originaldienst `phnixIot4G` | `/data/phnixIot4G` | originale ausführbare PHNIX-LTE-Programmdatei |
 
 Bei Auswahl aller Optionen landen im Zielordner entsprechend:
 
@@ -133,13 +133,11 @@ phnixIot_device_statisic
 phnixIot4G
 ```
 
-Die Firmwaredatei unter `/cache/phnixIot_device_OTA` ist nur vorhanden, solange sie vom originalen PHNIX-Dienst noch nicht entfernt bzw. durch einen späteren OTA-Auftrag ersetzt wurde.
-
-Die GUI liest diese Dateien ausschließlich per `adb pull`. Es werden keine Dateien auf dem LTE-Modem verändert oder gelöscht.
+Die Datei `/cache/phnixIot_device_OTA` ist nur vorhanden, solange sie vom originalen PHNIX-Dienst noch nicht entfernt oder durch einen späteren OTA-Auftrag ersetzt wurde.
 
 ## 4.3 Remote ADB über Raspberry Pi
 
-Wenn das LTE-Modem nicht direkt am Windows-PC, sondern per USB an einem Raspberry Pi hängt, kann der ADB-Server auf dem Pi kurzfristig im lokalen LAN gestartet werden:
+Auf dem Raspberry Pi:
 
 ```bash
 adb kill-server
@@ -149,55 +147,40 @@ adb -a -P 5038 nodaemon server
 Danach in der Windows-GUI:
 
 1. **Remote – ADB-Server auf Raspberry Pi** auswählen.
-2. IP-Adresse des Raspberry Pi eintragen.
+2. IP-Adresse eintragen.
 3. Port `5038` verwenden.
 4. **ADB prüfen** anklicken.
 
-Der Pi-Befehl bleibt im Vordergrund und wird anschließend mit **Strg+C** beendet.
+Der Pi-Befehl bleibt im Vordergrund und wird mit **Strg+C** beendet.
 
 > [!IMPORTANT]
 > Den Remote-ADB-Port nur kurzfristig und nur in einem vertrauenswürdigen lokalen Netz freigeben.
 
----
-
 # 5. Windows – manuelle PowerShell-Alternative
 
-Wer die GUI nicht verwenden möchte, kann weiterhin direkt mit `adb.exe` arbeiten.
+Wer die GUI nicht verwenden möchte, kann direkt mit `adb.exe` arbeiten.
 
-Im Windows Explorer den entpackten Ordner `platform-tools` öffnen und dort PowerShell bzw. Terminal starten.
+Im `platform-tools`-Ordner PowerShell/Terminal öffnen.
 
-Die Eingabezeile sollte ungefähr so aussehen:
-
-```text
-PS C:\platform-tools>
-```
-
-ADB-Verbindung prüfen:
+ADB prüfen:
 
 ```powershell
 .\adb.exe devices
 ```
 
-Bei funktionierender Verbindung erscheint eine Geräte-ID mit dem Status `device`:
+Bei funktionierender Verbindung erscheint eine Geräte-ID mit Status `device`.
 
-```text
-List of devices attached
-XXXXXXXXXXXX    device
-```
-
-Optional kann eine Shell geöffnet werden:
+Optional Shell öffnen:
 
 ```powershell
 .\adb.exe shell
 ```
 
-Mit
+Beenden mit:
 
 ```text
 exit
 ```
-
-wird die Shell wieder verlassen.
 
 ## 5.1 Firmware manuell sichern
 
@@ -213,51 +196,41 @@ wird die Shell wieder verlassen.
 .\adb.exe pull /data/phnixIot_device_statisic
 ```
 
-Die Dateien werden jeweils in den Ordner heruntergeladen, in dem PowerShell aktuell geöffnet ist.
-
-`adb pull` kopiert die Dateien lediglich vom LTE-Modem auf den PC. Die Quelldateien werden dabei nicht verändert oder gelöscht.
-
----
+`adb pull` kopiert die Dateien nur vom LTE-Modem auf den PC. Die Quelldateien werden nicht verändert oder gelöscht.
 
 # 6. Gesicherte Dateien prüfen
 
 ## Windows-GUI
 
-Auf der Registerkarte **Backup** den Button **Zielordner öffnen** verwenden. Dadurch wird der eingestellte Sicherungsordner direkt im Windows-Explorer geöffnet.
-
-Der Button **Zielordner…** dient nur der Auswahl des Sicherungsordners.
+Auf der Registerkarte **Backup** den Button **Zielordner öffnen** verwenden.
 
 ## Manuelle Windows-Befehle
 
-Bei den PowerShell-Befehlen liegen die Dateien im aktuellen `platform-tools`-Ordner beziehungsweise im selbst gewählten Arbeitsordner.
+Die Dateien liegen im aktuellen `platform-tools`-Ordner bzw. im gewählten Arbeitsordner.
 
-Zur Sicherheit empfiehlt es sich, die Originaldateien zunächst **unverändert zu archivieren**, bevor sie analysiert oder weiterverarbeitet werden.
+Zur Sicherheit Originaldateien zunächst **unverändert archivieren**, bevor sie analysiert oder weiterverarbeitet werden.
 
 > [!IMPORTANT]
-> Diese Backups bitte **nicht in ein öffentliches GitHub-Repository, Forum oder einen anderen öffentlich zugänglichen Speicher hochladen**.
-
----
+> Backups bitte **nicht in ein öffentliches GitHub-Repository, Forum oder einen öffentlich zugänglichen Speicher hochladen**.
 
 # 7. Alternative: Linux / Raspberry Pi
 
 > [!IMPORTANT]
-> Dieser Abschnitt ist ein **alternativer Weg zur Windows-GUI und zur manuellen Windows-Anleitung**. Wer das Backup bereits unter Windows durchführt, braucht diesen Abschnitt nicht zusätzlich auszuführen.
+> Dieser Abschnitt ist ein alternativer Weg zur Windows-GUI und zur manuellen Windows-Anleitung. Wer das Backup bereits unter Windows durchführt, braucht ihn nicht zusätzlich auszuführen.
 
-Für einen Raspberry Pi mit Raspberry Pi OS / Debian-basiertem Linux sind normalerweise keine zusätzlichen SIMCom-Windows-Treiber notwendig.
+Unter Raspberry Pi OS / Debian sind normalerweise keine zusätzlichen SIMCom-Windows-Treiber erforderlich.
 
 ## 7.1 Komfortweg mit installiertem FoxAir Updater
-
-Wenn der FoxAir Updater bereits installiert ist, können Firmware-Cache und Zusatzdateien mit einem einzigen rein lesenden Befehl gesichert werden:
 
 ```bash
 cd ~/FoxAir_updater
 ./foxair-updater download
 ```
 
-Der Updater legt automatisch einen Zeitstempel-Unterordner an, zum Beispiel:
+Der Updater legt einen Zeitstempel-Unterordner an, z. B.:
 
 ```text
-~/FoxAir_updater/downloaded_firmware/20260824-151100/
+~/FoxAir_updater/downloaded_firmware/20260829-151100/
 ```
 
 Darin werden – soweit vorhanden – gespeichert:
@@ -272,7 +245,7 @@ SHA256SUMS.txt
 README.txt
 ```
 
-Fehlt `/cache/phnixIot_device_OTA`, meldet der Befehl dies als Warnung und sichert die übrigen vorhandenen Diagnose-/Statusdateien trotzdem.
+Fehlt `/cache/phnixIot_device_OTA`, werden die übrigen vorhandenen Dateien trotzdem gesichert.
 
 ## 7.2 ADB und USB-Werkzeuge manuell installieren
 
@@ -281,7 +254,7 @@ sudo apt update
 sudo apt install adb usbutils
 ```
 
-USB-Erkennung prüfen:
+USB-Erkennung:
 
 ```bash
 lsusb
@@ -293,19 +266,13 @@ ADB prüfen:
 adb devices -l
 ```
 
-Optional eine Shell öffnen:
+Optional Shell:
 
 ```bash
 adb shell
 ```
 
-Die Shell wird mit
-
-```text
-exit
-```
-
-wieder verlassen.
+Beenden mit `exit`.
 
 ## 7.3 Firmware manuell sichern
 
@@ -329,6 +296,12 @@ Beispiel vom Zielrechner aus:
 scp -r dominik@IP_DES_RPI:~/FoxAir_updater/downloaded_firmware/ ./
 ```
 
-Alternativ kann unter Windows beispielsweise WinSCP verwendet werden.
+Alternativ kann unter Windows z. B. WinSCP verwendet werden.
 
-Auch hier gilt: Die ausgelesenen Originaldateien nicht öffentlich hochladen oder weiterverteilen.
+Auch hier gilt: ausgelesene Originaldateien nicht öffentlich hochladen oder weiterverteilen.
+
+## Weiterführende Updater-Dokumentation
+
+- [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md)
+- [`FIRMWARE_MANIFEST.md`](FIRMWARE_MANIFEST.md)
+- [`../RELEASE_NOTES_WINDOWS_v0.3.9.md`](../RELEASE_NOTES_WINDOWS_v0.3.9.md)
