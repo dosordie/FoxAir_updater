@@ -18,7 +18,7 @@ PHNIX_USB_ID = r"USB\VID_1E0E&PID_9001&MI_04"
 
 TRANSLATIONS = {
     "modbus校验失败": "Modbus-CRC-Prüfung des empfangenen Mainboard-Telegramms fehlgeschlagen.",
-    "收到主板回复的pk，pk已存储，不做任何操作": "ProductKey-Antwort vom Mainboard empfangen; ProductKey bereits gespeichert; keine weitere Aktion.",
+    "收到主板回复的pk，pk已存储，": "ProductKey-Antwort vom Mainboard empfangen; ProductKey ist bereits gespeichert, keine weitere Aktion erforderlich.",
     "收到主板回复的pk，检查是否已经存储pk": "ProductKey-Antwort vom Mainboard empfangen; gespeicherten ProductKey prüfen.",
     "================>主板升级指令": "Mainboard-OTA-/Update-Verarbeitung.",
     "DTU 发送给主板的固件包信息:": "DTU überträgt Firmwarepaketdaten an das Mainboard.",
@@ -26,7 +26,7 @@ TRANSLATIONS = {
     "推送数据成功<3>": "OTA-Status-/Fortschrittsmeldung erfolgreich übertragen.",
     "主板升级成功<5>": "Mainboard meldet Firmwareupdate erfolgreich.",
     "主板升级结束": "Mainboard-OTA-Ablauf beendet.",
-    "FINISH推送完成，无需断电续传": "Übertragung/Verarbeitung abgeschlossen; kein OTA-Resume nach Stromunterbrechung erforderlich.",
+    "FINISH推送完成，无需断电续传": "Kein fortzusetzender Mainboard-OTA-Zustand vorhanden; der Originaldienst meldet den aktuellen Firmwarestand an die Cloud.",
     "推送dtu软硬件代码版本号到芬尼云": "DTU Software-/Hardwareversion an PHNIX-Cloud melden.",
     "IOT_MQTT_CheckStateNormal = 1": "Aliyun/MQTT-Verbindung wird vom Originaldienst als normal erkannt.",
     "publish success, packet-id=": "MQTT Publish erfolgreich.",

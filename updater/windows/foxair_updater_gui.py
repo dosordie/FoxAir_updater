@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 APP_VERSION = "0.3.95"
 ADB_URL = "https://developer.android.com/tools/releases/platform-tools?hl=de#downloads"
 HOWTO_URL = "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_backup_lte.md"
+UPDATE_HOWTO_URL = "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_update_windows.md"
 MODEM_DRIVER_URL = "https://files.waveshare.com/upload/2/24/SIMCOM_Windows_USB_Drivers_V1.0.2.zip"
 
 
@@ -124,11 +125,6 @@ class MainWindow(QMainWindow):
         clear_button = QPushButton("Protokoll leeren")
         clear_button.clicked.connect(self._clear_log)
         row.addWidget(clear_button)
-        self.lte_log_button = QPushButton("LTE-Modem-Log öffnen")
-        self.lte_log_button.clicked.connect(
-            lambda: getattr(self, "_open_debug_monitor", lambda: None)()
-        )
-        row.addWidget(self.lte_log_button)
         save_button = QPushButton("Log speichern…")
         save_button.clicked.connect(self._save_log)
         row.addWidget(save_button)
@@ -153,6 +149,9 @@ class MainWindow(QMainWindow):
         row.addWidget(button)
         button = QPushButton("LTE-/USB-Anleitung")
         button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(HOWTO_URL)))
+        row.addWidget(button)
+        button = QPushButton("Update-Anleitung")
+        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(UPDATE_HOWTO_URL)))
         row.addWidget(button)
         row.addStretch()
         layout.addWidget(links)

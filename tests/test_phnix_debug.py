@@ -347,6 +347,14 @@ class PhnixDebugTests(unittest.TestCase):
         self.assertIn("12345", explain_debug_line("下载主板升级文件长度:12345"))
         self.assertIn("0x20", explain_debug_line("传输主板升级文件偏移:0x20"))
 
+    def test_startup_ota_status_and_damaged_product_key_are_explained(self):
+        startup = explain_debug_line("FINISH推送完成，无需断电续传 iii=-1 oat_sta:0")
+        self.assertIn("Kein fortzusetzender Mainboard-OTA-Zustand", startup)
+        self.assertNotIn("Übertragung/Verarbeitung abgeschlossen", startup)
+        product_key = explain_debug_line("收到主板回复的pk，pk已存储，���做任何操作")
+        self.assertIn("ProductKey ist bereits gespeichert", product_key)
+        self.assertNotIn("Noch keine deutsche Erläuterung", product_key)
+
     def test_tcp_timeout_stays_open_but_eof_disconnects(self):
         class Socket:
             def __init__(self):
