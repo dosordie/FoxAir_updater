@@ -31,8 +31,8 @@ class WindowsWrapperStateTests(unittest.TestCase):
         self.assertFalse(wrapper.dirty_state_reset_is_safe({"phase": "c350"}))
         self.assertFalse(wrapper.dirty_state_reset_is_safe(None))
 
-    def test_finished_failed_simulator_run_can_reset_stale_pending_state(self):
-        run_state = {"phase": "failed", "terminal": True, "transfer_started": True}
+    def test_finished_simulator_can_reset_stale_host_c5a8_state(self):
+        run_state = {"phase": "c5a8", "terminal": False, "transfer_started": True}
         simulator_state = {
             "marker": "PHNIX-OTA-SIMULATOR-V1",
             "status": {"phase": "failed", "terminal": True},
@@ -40,14 +40,26 @@ class WindowsWrapperStateTests(unittest.TestCase):
         }
         self.assertTrue(wrapper.dirty_state_reset_is_safe(run_state, simulator_state))
 
-    def test_active_or_unclear_c5a8_remains_protected(self):
+    def test_active_or_unfinished_simulator_remains_protected(self):
         run_state = {"phase": "c5a8", "terminal": False, "transfer_started": True}
-        simulator_state = {
+        active = {
             "marker": "PHNIX-OTA-SIMULATOR-V1",
             "status": {"phase": "c5a8", "terminal": False},
             "runtime": {"running": True},
         }
-        self.assertFalse(wrapper.dirty_state_reset_is_safe(run_state, simulator_state))
+        terminal_but_running = {
+            "marker": "PHNIX-OTA-SIMULATOR-V1",
+            "status": {"phase": "failed", "terminal": True},
+            "runtime": {"running": True},
+        }
+        stopped_but_not_terminal = {
+            "marker": "PHNIX-OTA-SIMULATOR-V1",
+            "status": {"phase": "c5a8", "terminal": False},
+            "runtime": {"running": False},
+        }
+        self.assertFalse(wrapper.dirty_state_reset_is_safe(run_state, active))
+        self.assertFalse(wrapper.dirty_state_reset_is_safe(run_state, terminal_but_running))
+        self.assertFalse(wrapper.dirty_state_reset_is_safe(run_state, stopped_but_not_terminal))
         self.assertFalse(wrapper.dirty_state_reset_is_safe(run_state))
 
     def test_explicit_state_dir_is_the_effective_state_dir(self):
