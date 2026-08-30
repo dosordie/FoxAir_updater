@@ -145,6 +145,9 @@ class MainWindow(desktop.MainWindow):
         self._serial_monitoring_lost = False
         self._serial_fallback_success = False
         self._serial_capture_identity: str | None = None
+        self._serial_success_tail_generation: int | None = None
+        self._serial_reattach_pending_generation: int | None = None
+        self._serial_reattach_started_generation: int | None = None
         super().__init__()
 
     def _modem_info_page(self):
@@ -365,6 +368,8 @@ class MainWindow(desktop.MainWindow):
         except OSError as error:
             self._log(f"[Warnung] Lokaler Update-Schutz konnte nicht abgeschlossen werden: {error}")
         self._serial_fallback_success = True
+        self._serial_success_tail_generation = generation
+        self._serial_reattach_pending_generation = generation
         self._flow_title = "Firmwareupdate erfolgreich"
         self._set_step(
             "update-result", "ok",
@@ -387,8 +392,23 @@ class MainWindow(desktop.MainWindow):
         QTimer.singleShot(100, lambda: self._serial_reattach(generation))
 
     def _serial_reattach(self, generation: int) -> None:
-        if generation == self._update_run_generation and self._serial_fallback_success:
-            self._reattach_ota()
+        if (
+            generation != self._update_run_generation
+            or not self._serial_fallback_success
+            or self._serial_reattach_pending_generation != generation
+            or self._serial_reattach_started_generation == generation
+            or self.busy
+        ):
+            return
+        self._serial_reattach_pending_generation = None
+        self._serial_reattach_started_generation = generation
+        self._reattach_ota()
+
+    def _automatic_monitoring_reattach(self):
+        if self._serial_fallback_success:
+            self._serial_reattach(self._update_run_generation)
+            return
+        super()._automatic_monitoring_reattach()
 
     def _render_transfer_progress(self):
         """Render diagnostics separately; the controller phase headline stays stable."""
@@ -470,6 +490,9 @@ class MainWindow(desktop.MainWindow):
         self._serial_monitoring_lost = False
         self._serial_fallback_success = False
         self._serial_capture_identity = None
+        self._serial_success_tail_generation = None
+        self._serial_reattach_pending_generation = None
+        self._serial_reattach_started_generation = None
         self._phnix_transfer_event = None
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         firmware_directory = manifest.parent
@@ -578,6 +601,12 @@ class MainWindow(desktop.MainWindow):
         super()._run(op, command, cwd)
 
     def _done(self, op, code, output):
+        generation = self._update_run_generation
+        keep_success_tail = (
+            op == "update"
+            and self._serial_fallback_success
+            and self._serial_success_tail_generation == generation
+        )
         keep_serial_tail = (
             op == "update"
             and self._serial_monitoring_lost
@@ -586,15 +615,15 @@ class MainWindow(desktop.MainWindow):
             and not self._serial_fallback_success
         )
         if op in {"dry", "update"}:
-            if keep_serial_tail:
-                generation = self._update_run_generation
+            if keep_success_tail or keep_serial_tail:
                 if self._automatic_log:
                     try:
                         self._automatic_log.close()
                     except OSError:
                         pass
                     self._automatic_log = None
-                QTimer.singleShot(600000, lambda: self._finish_automatic_logs(generation))
+                if keep_serial_tail:
+                    QTimer.singleShot(600000, lambda: self._finish_automatic_logs(generation))
             else:
                 # Must happen before the base implementation can open a modal QMessageBox.
                 self._finish_automatic_logs()
@@ -603,6 +632,7 @@ class MainWindow(desktop.MainWindow):
             # generic process/button cleanup.  The normal update handler would
             # reinterpret the controller's non-zero monitoring-loss exit.
             super()._done("handled-result", code, output)
+            self._serial_reattach(generation)
             return
         super()._done(op, code, output)
         if op == "ota-reattach" and self._serial_fallback_success:

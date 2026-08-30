@@ -322,6 +322,49 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("keep_serial_tail", normal_path)
         self.assertIn("self._serial_monitoring_lost", normal_path)
 
+    def test_serial_reattach_waits_for_busy_update_cleanup_and_starts_once(self):
+        confirm = self.lte_ui.split("def _confirm_serial_completion", 1)[1].split(
+            "def _render_transfer_progress", 1
+        )[0]
+        reattach = confirm.split("def _serial_reattach", 1)[1]
+        self.assertIn("self._serial_reattach_pending_generation = generation", confirm)
+        self.assertIn("or self.busy", reattach)
+        self.assertIn("self._serial_reattach_started_generation == generation", reattach)
+        self.assertIn("self._serial_reattach_pending_generation = None", reattach)
+        self.assertIn("self._reattach_ota()", reattach)
+        self.assertIn("def _automatic_monitoring_reattach", self.app_ui)
+        automatic = self.lte_ui.split("def _automatic_monitoring_reattach", 1)[1].split(
+            "def _render_transfer_progress", 1
+        )[0]
+        self.assertIn("self._serial_reattach(self._update_run_generation)", automatic)
+
+        done = self.lte_ui.split("def _done(self, op, code, output):", 1)[1].split(
+            "def _log", 1
+        )[0]
+        serial_exit = done.split('if op == "update" and self._serial_fallback_success:', 1)[1].split(
+            "return", 1
+        )[0]
+        self.assertLess(
+            serial_exit.index('super()._done("handled-result", code, output)'),
+            serial_exit.index("self._serial_reattach(generation)"),
+        )
+
+    def test_early_serial_success_keeps_only_short_lte_tail(self):
+        done = self.lte_ui.split("def _done(self, op, code, output):", 1)[1].split(
+            "def _log", 1
+        )[0]
+        self.assertIn("keep_success_tail", done)
+        self.assertIn("self._serial_success_tail_generation == generation", done)
+        self.assertIn("if keep_success_tail or keep_serial_tail:", done)
+        self.assertIn("self._automatic_log.close()", done)
+        timeout_block = done.split("if keep_serial_tail:", 1)[1].split("else:", 1)[0]
+        self.assertIn("QTimer.singleShot(600000", timeout_block)
+        self.assertNotIn("QTimer.singleShot(600000", done.split("keep_success_tail =", 1)[0])
+        finish = self.lte_ui.split("def _finish_automatic_logs", 1)[1].split(
+            "def _debug_log_status", 1
+        )[0]
+        self.assertNotIn('remove_consumer("window")', finish)
+
     def test_debug_disconnect_fallback_and_source_timestamp_reset(self):
         self.assertIn(
             '"Monitor getrennt – LTE-Logging für laufendes Update weiterhin verbunden."',
