@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0\..\.."
 
-set "APP_VERSION=0.3.93"
+set "APP_VERSION=0.3.94"
 set "APP_NAME=FoxAir_Updater"
 set "OUT=dist\%APP_NAME%"
 set "CACHE=build\windows-cache"
