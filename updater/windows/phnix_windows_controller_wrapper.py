@@ -249,11 +249,7 @@ def dirty_state_reset_is_safe(
     run_state: dict | None,
     simulator_state: dict | None = None,
 ) -> bool:
-    """Return true only for controller-confirmed states which exclude C5A8.
-
-    This predicate intentionally defaults to false.  It does not change a
-    controller decision and is kept separately testable for the Windows UI.
-    """
+    """Return true for known pre-transfer states or a stopped terminal simulator."""
     if not isinstance(run_state, dict):
         return False
     phase = run_state.get("phase")
@@ -264,19 +260,17 @@ def dirty_state_reset_is_safe(
     }:
         return True
 
-    # A terminal simulator run is authoritative even if it reached simulated
-    # C5A8.  Require both the simulator identity and its current, fully stopped
-    # runtime state so stale host run-state can never authorize this path.
+    # The explicit Advanced reset may recover a stale host C5A8 state after
+    # monitoring was lost.  For the simulator, a terminal remote status plus
+    # a stopped runtime is sufficient; the stale host phase need not match.
     if not isinstance(simulator_state, dict):
         return False
     remote_status = simulator_state.get("status")
     runtime = simulator_state.get("runtime")
     return (
         simulator_state.get("marker") == "PHNIX-OTA-SIMULATOR-V1"
-        and run_state.get("terminal") is True
         and isinstance(remote_status, dict)
         and remote_status.get("terminal") is True
-        and remote_status.get("phase") == phase
         and isinstance(runtime, dict)
         and runtime.get("running") is False
     )
