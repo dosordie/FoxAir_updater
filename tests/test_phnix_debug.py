@@ -2,16 +2,19 @@ import queue
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from updater.common.phnix_debug import (
     PhnixDebugCapture,
+    TcpDebugSource,
     explain_debug_line,
     parse_debug_line,
     redact_debug_text,
     remote_debug_endpoint,
     resolve_phnix_debug_port,
     translation_for,
+    translations_for,
 )
 
 
@@ -123,6 +126,85 @@ class PhnixDebugTests(unittest.TestCase):
         self.assertTrue(manufacturer.manufacturer_success)
         self.assertFalse(manufacturer.terminal_success)
         self.assertEqual(mqtt.kind, "mqtt-normal")
+
+    def test_download_is_separate_from_mainboard_and_cloud_progress(self):
+        download = parse_debug_line("download 100%")
+        cloud = parse_debug_line('CMD_OTA code=0043 progress=100')
+        transfer = parse_debug_line("tal_len:46C0E,and:B52,len;0")
+        self.assertEqual(download.kind, "lte-download-progress")
+        self.assertEqual(cloud.kind, "cloud-progress")
+        self.assertEqual(transfer.kind, "transfer-progress")
+        self.assertAlmostEqual(transfer.progress, 1.0, places=1)
+        self.assertTrue(all(not event.terminal_success for event in (download, cloud, transfer)))
+
+    def test_multiple_translations_and_unknown_chinese_marker(self):
+        line = "上报服务器此轮升级失败oat step:12publish success, packet-id=433"
+        explanations = translations_for(line)
+        self.assertEqual(len(explanations), 2)
+        rendered = explain_debug_line(line)
+        self.assertIn("OTA-Runde", rendered)
+        self.assertIn("MQTT Publish erfolgreich", rendered)
+        self.assertIn("Noch keine deutsche Erläuterung", explain_debug_line("尚未识别的文本"))
+        self.assertNotIn("Noch keine deutsche Erläuterung", explain_debug_line("ASCII only"))
+
+    def test_new_translations_and_dynamic_numbers(self):
+        expected = {
+            "主板收到服务器新固件信息，回复允许升级": "neue Firmwareinformationen",
+            "主板允许升级": "Firmwareupdate",
+            "board固件MD5校验正确！": "MD5-Prüfung",
+            "获取IMEI": "IMEI",
+            "重新采集WF": "WF-Information",
+            "等待获取主板productKey": "ProductKey",
+            "重新采集pk": "ProductKey",
+            "等待获取主板2deviceSecret": "DeviceSecret",
+        }
+        for original, german in expected.items():
+            self.assertIn(german, explain_debug_line(original))
+        self.assertIn("12345", explain_debug_line("下载主板升级文件长度:12345"))
+        self.assertIn("0x20", explain_debug_line("传输主板升级文件偏移:0x20"))
+
+    def test_tcp_timeout_stays_open_but_eof_disconnects(self):
+        class Socket:
+            def __init__(self):
+                self.values = [__import__("socket").timeout(), b""]
+                self.closed = False
+
+            def settimeout(self, _value):
+                pass
+
+            def recv(self, _size):
+                value = self.values.pop(0)
+                if isinstance(value, Exception):
+                    raise value
+                return value
+
+            def close(self):
+                self.closed = True
+
+        sock = Socket()
+        with patch("updater.common.phnix_debug.socket.create_connection", return_value=sock):
+            source = TcpDebugSource("192.0.2.8", 5039)
+        self.assertEqual(source.read(10), b"")
+        with self.assertRaisesRegex(ConnectionError, "TCP-Verbindung beendet"):
+            source.read(10)
+
+    def test_capture_reports_eof_once_without_busy_loop(self):
+        class EofSource(FakeSource):
+            def __init__(self):
+                super().__init__()
+                self.reads = 0
+
+            def read(self, size):
+                self.reads += 1
+                raise ConnectionError("TCP-Verbindung beendet")
+
+        source = EofSource()
+        capture = PhnixDebugCapture(lambda: source, "remote:192.0.2.8:5039")
+        capture.add_consumer("window", lambda *_: None)
+        self._wait_for(lambda: source.closed == 1)
+        self.assertEqual(source.reads, 1)
+        self.assertFalse(capture.active)
+        self.assertEqual(capture.status, "Verbindung beendet")
 
     def test_translations_are_written_after_original(self):
         line = "[PHNIX] 升级包传输完成"

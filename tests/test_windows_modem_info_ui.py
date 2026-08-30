@@ -32,6 +32,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         cls.base_ui = Path("updater/windows/foxair_updater_gui.py").read_text(
             encoding="utf-8"
         )
+        cls.app_ui = Path("updater/windows/foxair_updater_app.py").read_text(encoding="utf-8")
         cls.traffic_ui = Path(
             "updater/windows/foxair_updater_traffic.py"
         ).read_text(encoding="utf-8")
@@ -163,10 +164,24 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("not from_dry_run and not self.allow_block_reset.isChecked()", self.desktop)
 
     def test_lte_log_contains_translations_and_events_only_refine_existing_steps(self):
-        self.assertIn('self._lte_log.write(explain_debug_line(line) + "\\n")', self.lte_ui)
+        self.assertIn('explained = explain_debug_line(line).splitlines()', self.lte_ui)
+        self.assertIn('strftime("%H:%M:%S.%f")[:-3]', self.lte_ui)
         self.assertIn("if key in self._flow_steps:", self.lte_ui)
-        for kind in ("transfer-complete", "manufacturer-success", "mqtt-normal", "cloud-progress"):
+        for kind in ("transfer-complete", "manufacturer-success", "mqtt-normal"):
             self.assertIn(f'kind == "{kind}"', self.lte_ui)
+        self.assertNotIn('kind == "cloud-progress"', self.lte_ui)
+
+    def test_debug_monitor_controls_status_and_update_page_entry(self):
+        self.assertIn('self.mode.setCurrentIndex(1)', self.lte_ui)
+        self.assertIn('QPushButton("Verbinden")', self.lte_ui)
+        self.assertIn('QPushButton("Trennen")', self.lte_ui)
+        for status in ("Verbinde …", "Verbunden", "Getrennt", "Verbindung fehlgeschlagen"):
+            self.assertIn(status, self.lte_ui + Path("updater/common/phnix_debug.py").read_text(encoding="utf-8"))
+        self.assertIn('QPushButton("LTE-Modem-Log öffnen")', self.app_ui)
+        self.assertIn('setMinimumHeight(26)', self.base_ui + self.app_ui)
+        update_page = self.base_ui.split("def _update(self):", 1)[1].split("def _status", 1)[0]
+        self.assertNotIn("Manifest", update_page)
+        self.assertIn("Update-Datei", update_page)
 
     def test_completed_flow_phases_are_resolved_to_green(self):
         self.assertIn('self._set_step(key, "ok", text)', self.desktop)

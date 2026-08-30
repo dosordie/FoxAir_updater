@@ -48,6 +48,7 @@ class MainWindow(base.MainWindow):
         self._flow_title = "Noch kein Ablauf gestartet."
         self._release_check_running = False
         self._latest_release_url = release_check.UPDATE_RELEASES_URL
+        self._controller_transfer = None
         self._update_signals = UpdateSignals()
         self._update_signals.result.connect(self._release_check_result)
         self._update_signals.error.connect(self._release_check_error)
@@ -198,8 +199,17 @@ class MainWindow(base.MainWindow):
         layout.insertWidget(3, self.flow_status)
 
         self.progress.setRange(0, 100)
+        self.progress.setMinimumHeight(26)
         self.progress.setValue(0)
         self.progress.setFormat("Noch keine Firmwareübertragung")
+        self.progress_sources = QLabel("")
+        self.progress_sources.setWordWrap(True)
+        layout.insertWidget(layout.indexOf(self.progress) + 1, self.progress_sources)
+        self.lte_log_button = QPushButton("LTE-Modem-Log öffnen")
+        self.lte_log_button.clicked.connect(
+            lambda: getattr(self, "_open_debug_monitor", lambda: None)()
+        )
+        layout.insertWidget(layout.indexOf(self.progress_sources) + 1, self.lte_log_button)
         self._render_flow()
         return widget
 
@@ -266,7 +276,7 @@ class MainWindow(base.MainWindow):
             else self._settings_directory("manifest_dir")
         )
         file_name, _ = QFileDialog.getOpenFileName(
-            self, "Manifest auswählen", str(start), "Manifest (*.json)"
+            self, "Update-Datei auswählen", str(start), "Update-Datei (*.json)"
         )
         if file_name:
             field.setText(file_name)
@@ -367,6 +377,9 @@ class MainWindow(base.MainWindow):
         self._flow_steps.clear()
         self._flow_title = title
         self.progress.setValue(0)
+        self._controller_transfer = None
+        if hasattr(self, "progress_sources"):
+            self.progress_sources.clear()
         self.progress.setFormat(
             "Warte auf Firmwareübertragung …"
             if transfer_expected
@@ -666,11 +679,14 @@ class MainWindow(base.MainWindow):
             offset = info["offset"]
             length = info["length"]
             percent = min(100, max(0, round(offset * 100 / length)))
-            self.progress.setValue(percent)
-            self.progress.setFormat(
-                (f"{percent} % – {offset:,} / {length:,} Byte").replace(",", ".")
-            )
-            self.progress_text.setText("Firmwareübertragung läuft.")
+            self._controller_transfer = (offset, length, percent)
+            if hasattr(self, "_render_transfer_progress"):
+                self._render_transfer_progress()
+            else:
+                self.progress.setValue(percent)
+                self.progress.setFormat(
+                    (f"{percent} % – {offset:,} / {length:,} Byte").replace(",", ".")
+                )
 
     def _line(self, text):
         # Preserve the existing raw protocol and base parser exactly as before.
