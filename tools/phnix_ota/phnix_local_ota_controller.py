@@ -1070,10 +1070,10 @@ def run_update(args, adb: AdbClient) -> None:
                 )
                 if monitoring_lost:
                     raise
-                # Reconnect is passive host-side recovery. It neither starts a
-                # helper nor sends or modifies any OTA state on the modem.
+                # Only probe passively: reconnecting could terminate the
+                # persistent ADB shell that owns the already-running hook.
                 try:
-                    adb.run("reconnect", check=False)
+                    adb.run("get-state", check=False)
                 except OSError:
                     pass
                 time.sleep(args.poll_interval)

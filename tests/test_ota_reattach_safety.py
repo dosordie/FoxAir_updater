@@ -27,8 +27,11 @@ class OtaReattachSafetyTests(unittest.TestCase):
             "hook = status", 1
         )[0]
         self.assertIn('"monitoring-recovery"', recovery)
-        self.assertIn('adb.run("reconnect", check=False)', recovery)
-        for forbidden in (" hold ", "restore", "cancel_update", "popen_shell", "REMOTE_COMMAND"):
+        self.assertIn('adb.run("get-state", check=False)', recovery)
+        for forbidden in (
+            'adb.run("reconnect"', 'adb.run("kill-server"', 'adb.run("start-server"',
+            " hold ", "restore", "cancel_update", "popen_shell", "REMOTE_COMMAND",
+        ):
             self.assertNotIn(forbidden, recovery)
 
     def test_status_exposes_read_only_reattach_fields(self):

@@ -214,6 +214,14 @@ class WindowsModemInfoUiTests(unittest.TestCase):
             self.operator_ui,
         )
 
+    def test_monitoring_recovered_marks_recovery_step_ok(self):
+        recovered = self.app_ui.split('elif event == "monitoring-recovered":', 1)[1].split(
+            'elif event == "monitoring-connection-lost":', 1
+        )[0]
+        self.assertIn('"monitoring-recovery", "ok"', recovered)
+        self.assertIn("ADB-Verbindung wiederhergestellt", recovered)
+        self.assertNotIn('"complete"', recovered)
+
     def test_automatic_update_logs_prefer_logs_directory_with_warning_fallback(self):
         log_setup = self.lte_ui.split("def _start_automatic_logs", 1)[1].split(
             "def _finish_automatic_logs", 1

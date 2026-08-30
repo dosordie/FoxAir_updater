@@ -655,6 +655,11 @@ class MainWindow(base.MainWindow):
             self._set_step(
                 "monitoring-recovery", "warn", "ADB-Verbindung wird erneut geprüft …"
             )
+        elif event == "monitoring-recovered":
+            self._set_step(
+                "monitoring-recovery", "ok",
+                "ADB-Verbindung wiederhergestellt – Überwachung wird fortgesetzt.",
+            )
         elif event == "monitoring-connection-lost":
             self.ota_monitoring_lost = True
             self.ota_reattach_btn.setVisible(True)
