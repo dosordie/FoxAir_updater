@@ -60,7 +60,10 @@ class QtSerialDebugSource:
             raise OSError(self._serial.errorString())
 
     def read(self, size: int) -> bytes:
-        self._serial.waitForReadyRead(500)
+        from PySide6.QtSerialPort import QSerialPort
+        ready = self._serial.waitForReadyRead(500)
+        if not ready and self._serial.error() not in (QSerialPort.NoError, QSerialPort.TimeoutError):
+            raise OSError(self._serial.errorString())
         return bytes(self._serial.read(size))
 
     def close(self) -> None:
@@ -104,6 +107,7 @@ class PhnixDebugWindow(QDialog):
         layout.addLayout(row)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
+        self.output.setMaximumBlockCount(10000)
         layout.addWidget(self.output)
 
     def append_line(self, line: str) -> None:
@@ -137,6 +141,7 @@ class MainWindow(desktop.MainWindow):
         self._debug_connected_since: datetime | None = None
         self._debug_last_data: datetime | None = None
         self._last_debug_status = "Getrennt"
+        self._debug_source_description = "Quelle: Lokal\nEndpunkt: MI_04"
         self._phnix_transfer_event = None
         self._update_run_generation = 0
         self._serial_sequence: SerialCompletionSequence | None = None
@@ -149,6 +154,9 @@ class MainWindow(desktop.MainWindow):
         self._serial_reattach_pending_generation: int | None = None
         self._serial_reattach_started_generation: int | None = None
         super().__init__()
+        self._debug_status_timer = QTimer(self)
+        self._debug_status_timer.setInterval(1000)
+        self._debug_status_timer.timeout.connect(self._refresh_debug_status)
 
     def _modem_info_page(self):
         widget = QWidget()
@@ -221,7 +229,7 @@ class MainWindow(desktop.MainWindow):
         return PhnixDebugCapture(factory, identity)
 
     def _ensure_debug_capture(self, *, for_update=False) -> PhnixDebugCapture:
-        identity, _description, factory = self._debug_configuration()
+        identity, description, factory = self._debug_configuration()
         old = self._debug_capture
         if old is None or (old.identity != identity and not old.has_consumer("update")):
             window_was_connected = bool(old and old.has_consumer("window"))
@@ -230,6 +238,7 @@ class MainWindow(desktop.MainWindow):
                 old.remove_status_consumer("ui")
                 old.remove_status_consumer("log")
             self._debug_capture = PhnixDebugCapture(factory, identity)
+            self._debug_source_description = description
             self._debug_last_data = None
             self._debug_connected_since = None
             if window_was_connected and for_update:
@@ -242,15 +251,10 @@ class MainWindow(desktop.MainWindow):
 
     def _connect_debug_monitor(self):
         capture = self._ensure_debug_capture()
-        if capture.has_consumer("update") and capture.identity != self._debug_configuration()[0]:
-            self._debug_status("Konfiguration geändert", f"Aktiver Update-Stream: {capture.identity}")
-            return
         if not capture.active:
             self._debug_last_data = None
             self._debug_connected_since = None
-        opened = self._attach_monitor_consumer(capture)
-        if not opened:
-            self._log("[Warnung] PHNIX LTE-Debugport nicht verfügbar – Diagnose bleibt ohne Stream.")
+        self._attach_monitor_consumer(capture)
 
     def _disconnect_debug_monitor(self):
         if self._debug_capture:
@@ -283,8 +287,14 @@ class MainWindow(desktop.MainWindow):
         self._debug_last_data = datetime.now()
         if self._debug_window:
             self._debug_window.append_line(line)
+        if not self._debug_status_timer.isActive():
+            self._debug_status_timer.start()
+
+    def _refresh_debug_status(self):
         if self._debug_capture:
             self._debug_status(self._debug_capture.status, self._debug_capture.last_error)
+        if not self._debug_window:
+            self._debug_status_timer.stop()
 
     def _debug_status(self, status: str, error: object):
         now = datetime.now()
@@ -294,11 +304,8 @@ class MainWindow(desktop.MainWindow):
         if status in {"Getrennt", "Verbindung beendet", "Verbindung fehlgeschlagen"}:
             self._phnix_transfer_event = None
             self._render_transfer_progress()
-        identity, description, _factory = self._debug_configuration()
         capture = self._debug_capture
-        if capture and capture.identity != identity:
-            description += f"\nAktuell verbunden: {capture.identity}\nKonfiguration geändert"
-        details = [f"Status: {status}", description]
+        details = [f"Status: {status}", self._debug_source_description]
         if self._debug_connected_since and status == "Verbunden":
             details.append("Verbunden seit: " + self._debug_connected_since.strftime("%H:%M:%S"))
         if self._debug_last_data:

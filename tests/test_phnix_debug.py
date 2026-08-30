@@ -64,6 +64,7 @@ class PhnixDebugTests(unittest.TestCase):
         capture = PhnixDebugCapture(factory)
         self.assertTrue(capture.add_consumer("window", lambda *_: None))
         self.assertTrue(capture.add_consumer("update", lambda *_: None))
+        self._wait_for(lambda: capture.active)
         self.assertEqual(len(opens), 1)
         capture.remove_consumer("window")
         self.assertTrue(capture.active)
@@ -78,6 +79,7 @@ class PhnixDebugTests(unittest.TestCase):
         capture = PhnixDebugCapture(lambda: source)
         capture.add_consumer("window", lambda *_: None)
         capture.add_consumer("update", lambda *_: None)
+        self._wait_for(lambda: capture.active)
         capture.remove_consumer("update")
         self.assertTrue(capture.active)
         self.assertEqual(source.closed, 0)
@@ -128,6 +130,52 @@ class PhnixDebugTests(unittest.TestCase):
         capture.add_status_consumer("log", lambda status, error: statuses.append(status), notify_initial=False)
         self.assertEqual(statuses, [])
 
+    def test_add_consumer_returns_without_waiting_for_slow_open(self):
+        release = threading.Event()
+
+        def factory():
+            release.wait(1.0)
+            return FakeSource()
+
+        capture = PhnixDebugCapture(factory)
+        started = time.monotonic()
+        self.assertTrue(capture.add_consumer("window", lambda *_: None))
+        self.assertLess(time.monotonic() - started, 0.1)
+        release.set()
+        capture.remove_consumer("window")
+
+    def test_empty_reads_have_reader_backoff(self):
+        class EmptySource(FakeSource):
+            def __init__(self):
+                super().__init__()
+                self.reads = 0
+
+            def read(self, size):
+                self.reads += 1
+                return b""
+
+        source = EmptySource()
+        capture = PhnixDebugCapture(lambda: source)
+        capture.add_consumer("window", lambda *_: None)
+        time.sleep(0.08)
+        capture.remove_consumer("window")
+        self.assertLess(source.reads, 10)
+
+    def test_unterminated_pending_data_is_bounded(self):
+        received = []
+
+        class Source(FakeSource):
+            def read(self, size):
+                if not received:
+                    received.append(True)
+                    return b"x" * 1_100_000
+                raise ConnectionError("done")
+
+        capture = PhnixDebugCapture(lambda: Source())
+        capture.add_consumer("window", lambda line, event: None)
+        self._wait_for(lambda: capture.status == "Verbindung beendet")
+        self.assertFalse(capture.active)
+
     def test_exact_mi04_resolution_and_no_heuristic_fallback(self):
         records = [
             {"instance_id": r"USB\VID_1E0E&PID_9001&MI_03\A", "port": "COM6"},
@@ -148,6 +196,19 @@ class PhnixDebugTests(unittest.TestCase):
             "COM16",
         )
         self.assertIsNone(resolve_phnix_debug_port(records, ["COM3", "COM14"]))
+
+    @patch("updater.common.phnix_debug._windows_pnp_records", return_value=[])
+    def test_stale_registry_com16_is_absent_without_present_pnp_device(self, _records):
+        self.assertIsNone(resolve_phnix_debug_port())
+
+    @patch(
+        "updater.common.phnix_debug._windows_pnp_records",
+        return_value=[
+            {"instance_id": r"USB\VID_1E0E&PID_9001&MI_04\PRESENT", "port": "COM16"}
+        ],
+    )
+    def test_present_pnp_mi04_com16_is_resolved(self, _records):
+        self.assertEqual(resolve_phnix_debug_port(), "COM16")
 
     def test_windows_resolution_never_uses_other_interfaces(self):
         records = [
