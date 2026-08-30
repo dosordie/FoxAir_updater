@@ -323,7 +323,7 @@ class MainWindow(desktop.MainWindow):
         if event is not None:
             percent = event.progress
             self.progress.setValue(round(percent))
-            self.progress.setFormat(f"{percent:.1f} % – PHNIX Originaldienst")
+            self.progress_percent_label.setText(f"{percent:.1f} %")
             lines.append(
                 (f"PHNIX Originaldienst: {percent:.1f} % · {event.current:,} / "
                  f"{event.total:,} Byte").replace(",", ".")
@@ -331,11 +331,11 @@ class MainWindow(desktop.MainWindow):
         elif controller is not None:
             offset, length, percent = controller
             self.progress.setValue(percent)
-            self.progress.setFormat(f"{percent} % – Controller")
+            self.progress_percent_label.setText(f"{percent} %")
         if controller is not None:
             offset, length, percent = controller
             lines.append(
-                (f"Controller: {percent} % · {offset:,} / {length:,} Byte").replace(",", ".")
+                (f"Windows Updater: {percent} % · {offset:,} / {length:,} Byte").replace(",", ".")
             )
         self.progress_sources.setText("\n".join(lines))
 
@@ -368,8 +368,10 @@ class MainWindow(desktop.MainWindow):
         self._finish_automatic_logs()
         self._phnix_transfer_event = None
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        directory = manifest.parent
+        firmware_directory = manifest.parent
+        directory = firmware_directory / "Logs"
         try:
+            directory.mkdir(exist_ok=True)
             self._automatic_log = (directory / f"FoxAir_Update_{stamp}.log").open("a", encoding="utf-8")
             self._lte_log = (directory / f"FoxAir_Update_{stamp}_LTE.log").open("a", encoding="utf-8")
         except OSError as error:
@@ -377,7 +379,27 @@ class MainWindow(desktop.MainWindow):
                 if stream:
                     stream.close()
             self._automatic_log = self._lte_log = None
-            self._log(f"[Warnung] Automatische Update-Logs konnten nicht angelegt werden: {error}")
+            self._log(
+                "[Warnung] Ordner „Logs“ konnte nicht verwendet werden. "
+                "Update-Logs werden direkt im Firmware-Verzeichnis gespeichert. "
+                f"({error})"
+            )
+            try:
+                self._automatic_log = (
+                    firmware_directory / f"FoxAir_Update_{stamp}.log"
+                ).open("a", encoding="utf-8")
+                self._lte_log = (
+                    firmware_directory / f"FoxAir_Update_{stamp}_LTE.log"
+                ).open("a", encoding="utf-8")
+            except OSError as fallback_error:
+                for stream in (self._automatic_log, self._lte_log):
+                    if stream:
+                        stream.close()
+                self._automatic_log = self._lte_log = None
+                self._log(
+                    "[Warnung] Automatische Update-Logs konnten nicht angelegt werden: "
+                    f"{fallback_error}"
+                )
         capture = self._ensure_debug_capture(for_update=True)
         if not capture.active:
             self._debug_last_data = None

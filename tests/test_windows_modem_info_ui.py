@@ -188,11 +188,50 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn('QPushButton("LTE-Modem-Log öffnen")', log_row)
         self.assertIn('save_button = QPushButton("Log speichern…")', log_row)
         self.assertNotIn('QPushButton("LTE-Modem-Log öffnen")', self.app_ui)
-        self.assertIn('setMinimumHeight(54)', self.base_ui)
-        self.assertIn('setMinimumHeight(54)', self.app_ui)
+        self.assertIn('setFixedHeight(20)', self.base_ui)
+        self.assertIn('self.progress.setTextVisible(False)', self.base_ui)
+        self.assertIn('QProgressBar::chunk', self.base_ui)
+        self.assertIn('background: palette(highlight)', self.base_ui)
+        self.assertNotIn('setMinimumHeight(54)', self.base_ui + self.app_ui)
         update_page = self.base_ui.split("def _update(self):", 1)[1].split("def _status", 1)[0]
         self.assertNotIn("Manifest", update_page)
         self.assertIn("Update-Datei", update_page)
+
+    def test_transfer_progress_has_separate_percent_and_friendly_sources(self):
+        render = self.lte_ui.split("def _render_transfer_progress", 1)[1].split(
+            "def _update_existing_debug_step", 1
+        )[0]
+        self.assertIn('self.progress_percent_label.setText(f"{percent:.1f} %")', render)
+        self.assertIn('self.progress_percent_label.setText(f"{percent} %")', render)
+        self.assertNotIn("setFormat", render)
+        self.assertIn("PHNIX Originaldienst:", render)
+        self.assertIn("Windows Updater:", render)
+        self.assertNotIn("Controller:", render)
+        self.assertIn("self.progress_percent_label = QLabel", self.operator_ui)
+        self.assertIn("self.progress.valueChanged.connect", self.operator_ui)
+
+    def test_automatic_update_logs_prefer_logs_directory_with_warning_fallback(self):
+        log_setup = self.lte_ui.split("def _start_automatic_logs", 1)[1].split(
+            "def _finish_automatic_logs", 1
+        )[0]
+        self.assertIn('directory = firmware_directory / "Logs"', log_setup)
+        self.assertIn("directory.mkdir(exist_ok=True)", log_setup)
+        self.assertEqual(log_setup.count('f"FoxAir_Update_{stamp}'), 4)
+        self.assertIn("Ordner „Logs“ konnte nicht verwendet werden", log_setup)
+        self.assertIn("direkt im Firmware-Verzeichnis gespeichert", log_setup)
+        self.assertIn("except OSError as fallback_error", log_setup)
+        self.assertIn("capture = self._ensure_debug_capture(for_update=True)", log_setup)
+
+    def test_visible_windows_safety_name_is_update_protection(self):
+        visible_sources = self.app_ui + self.desktop + self.lte_ui
+        wrapper_output = Path(
+            "updater/windows/phnix_windows_controller_wrapper.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("Windows-Sicherheitswrapper", visible_sources + wrapper_output)
+        self.assertIn("Update-Schutz", visible_sources)
+        self.assertIn("Update-Schutz", wrapper_output)
+        self.assertIn("phnix_windows_controller_wrapper", self.desktop)
+        self.assertIn("windows_wrapper", self.desktop)
 
     def test_debug_disconnect_fallback_and_source_timestamp_reset(self):
         self.assertIn(

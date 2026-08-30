@@ -70,7 +70,7 @@ class MainWindow(app.MainWindow):
         note = QLabel(
             "Für Recovery-/Testfälle kann ein offener <code>cache.pending</code>-Zustand "
             "nur nach eindeutig sicherer Controllerprüfung zurückgesetzt werden. Dabei wird "
-            "die vorhandene Wrapper-Restore-/Konsistenzlogik verwendet; bei einem unklaren "
+            "die vorhandene Restore-/Konsistenzlogik des Update-Schutzes verwendet; bei einem unklaren "
             "oder möglicherweise bereits begonnenen Firmwaretransfer bleibt alles unverändert."
         )
         note.setWordWrap(True)
@@ -190,7 +190,7 @@ class MainWindow(app.MainWindow):
                 "Es wurde ein offener Sicherheitszustand eines vorherigen Laufs gefunden. "
                 "Dies kann von einem nicht sauber beendeten Lauf stammen.\n\n"
                 "Der Controller bestätigt einen Zustand vor dem Firmwaretransfer. Die vorhandene "
-                "Wrapper-Restore- und Konsistenzprüfung wird jetzt verwendet; Marker werden nicht "
+                "Restore- und Konsistenzprüfung des Update-Schutzes wird jetzt verwendet; Marker werden nicht "
                 "blind gelöscht.\n\nSicherheitszustand sicher zurücksetzen?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,

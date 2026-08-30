@@ -43,12 +43,12 @@ COMPARE_FIELDS = (
 
 
 def fail(message: str, code: int = 2) -> NoReturn:
-    print(f"[Windows-Sicherheitswrapper] FEHLER: {message}", file=sys.stderr, flush=True)
+    print(f"[Update-Schutz] FEHLER: {message}", file=sys.stderr, flush=True)
     raise SystemExit(code)
 
 
 def note(message: str) -> None:
-    print(f"[Windows-Sicherheitswrapper] {message}", flush=True)
+    print(f"[Update-Schutz] {message}", flush=True)
 
 
 def value_after(args: list[str], option: str) -> str | None:

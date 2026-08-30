@@ -199,7 +199,6 @@ class MainWindow(base.MainWindow):
         layout.insertWidget(3, self.flow_status)
 
         self.progress.setRange(0, 100)
-        self.progress.setMinimumHeight(54)
         self.progress.setValue(0)
         self.progress.setFormat("Noch keine Firmwareübertragung")
         self.progress_sources = QLabel("")
@@ -458,7 +457,7 @@ class MainWindow(base.MainWindow):
         return None
 
     def _handle_plain_status(self, text: str):
-        prefix = "[Windows-Sicherheitswrapper] "
+        prefix = "[Update-Schutz] "
         if not text.startswith(prefix):
             return
         message = text[len(prefix):].strip()
