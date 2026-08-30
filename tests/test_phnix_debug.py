@@ -138,6 +138,24 @@ class PhnixDebugTests(unittest.TestCase):
         records.append({"instance_id": records[1]["instance_id"] + "2", "port": "COM18"})
         self.assertIsNone(resolve_phnix_debug_port(records))
 
+    def test_windows_resolution_ignores_stale_mi04_instances(self):
+        records = [
+            {"instance_id": rf"USB\VID_1E0E&PID_9001&MI_04\{port}", "port": port}
+            for port in ("COM6", "COM11", "COM16")
+        ]
+        self.assertEqual(
+            resolve_phnix_debug_port(records, ["COM3", "COM14", "COM16", "COM17"]),
+            "COM16",
+        )
+        self.assertIsNone(resolve_phnix_debug_port(records, ["COM3", "COM14"]))
+
+    def test_windows_resolution_never_uses_other_interfaces(self):
+        records = [
+            {"instance_id": rf"USB\VID_1E0E&PID_9001&MI_0{interface}\A", "port": f"COM{interface}"}
+            for interface in (0, 1, 2)
+        ]
+        self.assertIsNone(resolve_phnix_debug_port(records, ["COM0", "COM1", "COM2"]))
+
     def test_remote_debug_is_adb_port_plus_one(self):
         self.assertEqual(remote_debug_endpoint("192.0.2.8", 5038), ("192.0.2.8", 5039))
 

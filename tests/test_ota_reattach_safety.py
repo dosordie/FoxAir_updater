@@ -21,6 +21,19 @@ class OtaReattachSafetyTests(unittest.TestCase):
         for forbidden in (" hold ", "restore", "C36A", "cancel_update"):
             self.assertNotIn(forbidden, post_c5a8)
 
+    def test_post_acceptance_adb_errors_enter_passive_recovery_first(self):
+        run_update = self.controller.split("def run_update", 1)[1].split("def cancel_update", 1)[0]
+        recovery = run_update.split("except (OtaError, TransportError", 1)[1].split(
+            "hook = status", 1
+        )[0]
+        self.assertIn('"monitoring-recovery"', recovery)
+        self.assertIn('adb.run("get-state", check=False)', recovery)
+        for forbidden in (
+            'adb.run("reconnect"', 'adb.run("kill-server"', 'adb.run("start-server"',
+            " hold ", "restore", "cancel_update", "popen_shell", "REMOTE_COMMAND",
+        ):
+            self.assertNotIn(forbidden, recovery)
+
     def test_status_exposes_read_only_reattach_fields(self):
         status = self.controller.split("def remote_status", 1)[1].split("def ", 1)[0]
         for field in (
