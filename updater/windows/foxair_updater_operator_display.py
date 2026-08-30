@@ -88,6 +88,7 @@ class MainWindow(lte.MainWindow):
             elapsed_font.setPointSize(max(12, elapsed_font.pointSize() + 2))
             elapsed_font.setBold(True)
             self.ota_elapsed_label.setFont(elapsed_font)
+            self.progress_percent_label.setFont(self.ota_elapsed_label.font())
             self.ota_elapsed_label.setToolTip(
                 "Reine Count-up-Anzeige ab dem ersten sicher nach der lokalen MQTT-Sperre "
                 "beobachteten OTA-Zustand. Keine automatische Bewertung oder Abbruchlogik."

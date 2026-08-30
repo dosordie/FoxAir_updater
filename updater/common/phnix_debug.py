@@ -243,8 +243,12 @@ def _partial_mask(value: str) -> str:
     return value[:2] + "***" + value[-2:]
 
 
-def resolve_phnix_debug_port(records: Iterable[dict[str, str]] | None = None) -> str | None:
+def resolve_phnix_debug_port(
+    records: Iterable[dict[str, str]] | None = None,
+    available_ports: Iterable[str] | None = None,
+) -> str | None:
     """Resolve only the exact MI_04 interface; ambiguous matches are rejected."""
+    supplied_records = records is not None
     if records is None:
         records = _windows_pnp_records()
     matches = {
@@ -253,6 +257,13 @@ def resolve_phnix_debug_port(records: Iterable[dict[str, str]] | None = None) ->
         if PHNIX_USB_ID.lower() in str(record.get("instance_id", "")).lower()
         and re.fullmatch(r"COM\d+", str(record.get("port", "")), re.I)
     }
+    if available_ports is None and not supplied_records:
+        from PySide6.QtSerialPort import QSerialPortInfo
+
+        available_ports = (port.portName() for port in QSerialPortInfo.availablePorts())
+    if available_ports is not None:
+        present = {str(port).upper() for port in available_ports}
+        matches &= present
     return next(iter(matches)) if len(matches) == 1 else None
 
 

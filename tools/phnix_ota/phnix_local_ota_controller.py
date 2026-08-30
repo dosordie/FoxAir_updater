@@ -54,6 +54,8 @@ REMOTE_INJECTION_STARTED = f"{REMOTE_HOOK_STATE}/injection-started"
 REMOTE_ORIGINAL_SERVICE_OWNS = f"{REMOTE_HOOK_STATE}/original-service-owns"
 POST_UPDATE_RUNTIME_TIMEOUT = 120.0
 DEFAULT_FIRMWARE_URL = "http://127.0.0.1:8081/phnixIot_device_OTA.bin"
+ADB_MONITOR_MIN_FAILURES = 5
+ADB_MONITOR_GRACE_SECONDS = 30.0
 
 OUTPUT_MODE = "auto"
 COLOR_ENABLED = True
@@ -69,6 +71,31 @@ RESET = "\033[0m"
 
 class OtaError(RuntimeError):
     pass
+
+
+@dataclass
+class AdbMonitorRecovery:
+    """Run-local accounting for passive ADB monitoring interruptions."""
+
+    generation: object
+    fail_count: int = 0
+    first_failure_time: float | None = None
+    recovering: bool = False
+
+    def failed(self, now: float) -> bool:
+        if self.first_failure_time is None:
+            self.first_failure_time = now
+        self.fail_count += 1
+        self.recovering = True
+        return (
+            self.fail_count >= ADB_MONITOR_MIN_FAILURES
+            and now - self.first_failure_time >= ADB_MONITOR_GRACE_SECONDS
+        )
+
+    def recovered(self) -> None:
+        self.fail_count = 0
+        self.first_failure_time = None
+        self.recovering = False
 
 
 @dataclass
@@ -1012,12 +1039,48 @@ def run_update(args, adb: AdbClient) -> None:
     transfer_started = False
     original_service_authoritative = False
     helper_exit_seen_at = None
+    adb_monitor = AdbMonitorRecovery(generation=object())
     try:
         while True:
             # OTA_INFO is owned by the original service. A read can overlap a
             # rewrite, so intermediate values are observational only and must
             # never interrupt an active firmware transfer.
-            status = remote_status(adb, allow_transient_info=True)
+            try:
+                status = remote_status(adb, allow_transient_info=True)
+                candidate_hook = status.get("hook")
+                if (
+                    (original_service_authoritative or transfer_started)
+                    and (
+                        not isinstance(candidate_hook, dict)
+                        or not isinstance(candidate_hook.get("phase"), str)
+                    )
+                ):
+                    raise OtaError("ADB returned no valid OTA monitoring status")
+            except (OtaError, TransportError, OSError, json.JSONDecodeError) as error:
+                if not original_service_authoritative and not transfer_started:
+                    raise
+                now = time.monotonic()
+                monitoring_lost = adb_monitor.failed(now)
+                print_event(
+                    "monitoring-recovery",
+                    message="Update laeuft vermutlich weiter - Ueberwachung wird wiederhergestellt",
+                    failures=adb_monitor.fail_count,
+                    elapsed=now - adb_monitor.first_failure_time,
+                    error=str(error),
+                )
+                if monitoring_lost:
+                    raise
+                # Reconnect is passive host-side recovery. It neither starts a
+                # helper nor sends or modifies any OTA state on the modem.
+                try:
+                    adb.run("reconnect", check=False)
+                except OSError:
+                    pass
+                time.sleep(args.poll_interval)
+                continue
+            if adb_monitor.recovering:
+                adb_monitor.recovered()
+                print_event("monitoring-recovered")
             hook = status["hook"]
             info = status["ota_info"]
             print_event("status", **status)

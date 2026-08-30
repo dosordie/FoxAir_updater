@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from tools.phnix_ota import phnix_local_ota_controller as controller
 from tools.phnix_ota.phnix_local_ota_controller import (
+    AdbMonitorRecovery,
     cancel_proof_ok,
     cancel_payload,
     build_parser,
@@ -36,6 +37,37 @@ def test_manifest():
 
 
 class OtaInfoTests(unittest.TestCase):
+    def test_adb_monitor_requires_failure_count_and_grace_period(self):
+        recovery = AdbMonitorRecovery(generation=object())
+        self.assertFalse(recovery.failed(100.0))
+        for now in (102.0, 104.0, 106.0):
+            self.assertFalse(recovery.failed(now))
+        self.assertEqual(recovery.fail_count, 4)
+        self.assertFalse(recovery.failed(110.0))
+
+        too_few = AdbMonitorRecovery(generation=object())
+        for now in (100.0, 115.0, 131.0):
+            self.assertFalse(too_few.failed(now))
+        self.assertTrue(too_few.recovering)
+
+        threshold = AdbMonitorRecovery(generation=object())
+        for now in (100.0, 105.0, 110.0, 120.0):
+            self.assertFalse(threshold.failed(now))
+        self.assertTrue(threshold.failed(130.0))
+
+    def test_adb_monitor_success_and_new_generation_reset_recovery(self):
+        generation = object()
+        recovery = AdbMonitorRecovery(generation=generation)
+        recovery.failed(100.0)
+        recovery.recovered()
+        self.assertEqual(recovery.fail_count, 0)
+        self.assertIsNone(recovery.first_failure_time)
+        self.assertFalse(recovery.recovering)
+
+        next_run = AdbMonitorRecovery(generation=object())
+        self.assertIsNot(next_run.generation, generation)
+        self.assertEqual(next_run.fail_count, 0)
+
     def test_mqtt_preflight_requires_tcp_established(self):
         self.assertFalse(mqtt_tcp_established("tcp 0 1 10.0.0.2:1234 1.2.3.4:1883 SYN_SENT"))
         self.assertFalse(mqtt_tcp_established("tcp 0 0 0.0.0.0:1883 0.0.0.0:* LISTEN"))

@@ -648,6 +648,13 @@ class MainWindow(base.MainWindow):
             self._set_step("update-complete", "ok", "Firmwareübertragung und Mainboard-Abschluss erfolgreich.")
             self.progress.setValue(100)
             self.progress.setFormat("100 % – Firmwareupdate abgeschlossen")
+        elif event == "monitoring-recovery":
+            self.progress_text.setText(
+                "Update läuft vermutlich weiter – Überwachung wird wiederhergestellt."
+            )
+            self._set_step(
+                "monitoring-recovery", "warn", "ADB-Verbindung wird erneut geprüft …"
+            )
         elif event == "monitoring-connection-lost":
             self.ota_monitoring_lost = True
             self.ota_reattach_btn.setVisible(True)

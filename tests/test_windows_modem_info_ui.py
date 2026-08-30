@@ -209,6 +209,10 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertNotIn("Controller:", render)
         self.assertIn("self.progress_percent_label = QLabel", self.operator_ui)
         self.assertIn("self.progress.valueChanged.connect", self.operator_ui)
+        self.assertIn(
+            "self.progress_percent_label.setFont(self.ota_elapsed_label.font())",
+            self.operator_ui,
+        )
 
     def test_automatic_update_logs_prefer_logs_directory_with_warning_fallback(self):
         log_setup = self.lte_ui.split("def _start_automatic_logs", 1)[1].split(
