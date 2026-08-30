@@ -144,6 +144,23 @@ class PhnixDebugTests(unittest.TestCase):
         release.set()
         capture.remove_consumer("window")
 
+    def test_async_source_open_failure_is_reported_asynchronously(self):
+        release = threading.Event()
+        statuses = []
+
+        def factory():
+            release.wait(1.0)
+            raise OSError("open failed")
+
+        capture = PhnixDebugCapture(factory)
+        capture.add_status_consumer("ui", lambda status, error: statuses.append(status))
+        started = time.monotonic()
+        self.assertTrue(capture.add_consumer("update", lambda *_: None))
+        self.assertLess(time.monotonic() - started, 0.1)
+        release.set()
+        self._wait_for(lambda: capture.status == "Verbindung fehlgeschlagen")
+        self.assertIn("Verbindung fehlgeschlagen", statuses)
+
     def test_empty_reads_have_reader_backoff(self):
         class EmptySource(FakeSource):
             def __init__(self):

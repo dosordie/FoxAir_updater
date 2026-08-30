@@ -142,6 +142,7 @@ class MainWindow(desktop.MainWindow):
         self._debug_last_data: datetime | None = None
         self._last_debug_status = "Getrennt"
         self._debug_source_description = "Quelle: Lokal\nEndpunkt: MI_04"
+        self._debug_open_warning_shown = False
         self._phnix_transfer_event = None
         self._update_run_generation = 0
         self._serial_sequence: SerialCompletionSequence | None = None
@@ -305,6 +306,19 @@ class MainWindow(desktop.MainWindow):
             self._phnix_transfer_event = None
             self._render_transfer_progress()
         capture = self._debug_capture
+        if (
+            status == "Verbindung fehlgeschlagen"
+            and capture
+            and capture.has_consumer("update")
+            and not self._debug_open_warning_shown
+        ):
+            self._debug_open_warning_shown = True
+            warning = (
+                "Remote PHNIX-Debugstream nicht erreichbar – Fortsetzung ohne LTE-Debug."
+                if capture.identity.startswith("remote:") else
+                "PHNIX LTE-Debugport nicht verfügbar – Update wird ohne LTE-Debuglog fortgesetzt."
+            )
+            self._log("[Warnung] " + warning)
         details = [f"Status: {status}", self._debug_source_description]
         if self._debug_connected_since and status == "Verbunden":
             details.append("Verbunden seit: " + self._debug_connected_since.strftime("%H:%M:%S"))
@@ -535,6 +549,7 @@ class MainWindow(desktop.MainWindow):
                     f"{fallback_error}"
                 )
         capture = self._ensure_debug_capture(for_update=True)
+        self._debug_open_warning_shown = False
         self._serial_capture_identity = capture.identity
         if not capture.active:
             self._debug_last_data = None
@@ -543,17 +558,11 @@ class MainWindow(desktop.MainWindow):
         capture.add_status_consumer(
             "progress", lambda status, error: self._debug_signals.status.emit(status, error)
         )
-        if not capture.add_consumer(
+        capture.add_consumer(
             "update", lambda line, event, run=generation: self._debug_signals.update_line.emit(
                 run, line, event
             )
-        ):
-            warning = (
-                "Remote PHNIX-Debugstream nicht erreichbar – Fortsetzung ohne LTE-Debug."
-                if self.adb_remote.isChecked() else
-                "PHNIX LTE-Debugport nicht verfügbar – Update wird ohne LTE-Debuglog fortgesetzt."
-            )
-            self._log("[Warnung] " + warning)
+        )
 
     def _update_debug_line_for_run(self, generation: int, line: str, event: object) -> None:
         if generation == self._update_run_generation:
