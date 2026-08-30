@@ -148,13 +148,14 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("unverified_device_id_candidate", self.modem)
         self.assertNotIn("Device-/DTU-ID:", self.lte_ui)
 
-    def test_advanced_block_reset_only_deletes_local_pending_marker(self):
+    def test_advanced_block_reset_uses_safe_controller_restore(self):
         self.assertIn(
             'QCheckBox("Blockzustand zurücksetzen erlauben")', self.desktop
         )
         self.assertIn('"cache.pending"', self.desktop)
-        self.assertIn("marker.unlink()", self.desktop)
-        self.assertIn("keine ADB- oder Mainboard-Operation", self.desktop)
+        self.assertNotIn("marker.unlink()", self.desktop)
+        self.assertIn("dirty_state_reset_is_safe", self.desktop)
+        self.assertIn('self._backend("restore"', self.desktop)
 
     def test_completed_flow_phases_are_resolved_to_green(self):
         self.assertIn('self._set_step(key, "ok", text)', self.desktop)

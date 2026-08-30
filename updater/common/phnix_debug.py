@@ -1,0 +1,281 @@
+"""Read-only PHNIX ttyGS0 debug capture and diagnostic parsing.
+
+This module deliberately has no dependency on the OTA controller.  Its events are
+diagnostic facts only; callers must never use them to advance a safety state.
+"""
+
+from __future__ import annotations
+
+import re
+import socket
+import threading
+from dataclasses import dataclass
+from typing import Callable, Iterable, Protocol
+
+
+PHNIX_USB_ID = r"USB\VID_1E0E&PID_9001&MI_04"
+
+TRANSLATIONS = {
+    "modbus校验失败": "Modbus-CRC-Prüfung des empfangenen Mainboard-Telegramms fehlgeschlagen.",
+    "收到主板回复的pk，pk已存储，不做任何操作": "ProductKey-Antwort vom Mainboard empfangen; ProductKey bereits gespeichert; keine weitere Aktion.",
+    "收到主板回复的pk，检查是否已经存储pk": "ProductKey-Antwort vom Mainboard empfangen; gespeicherten ProductKey prüfen.",
+    "================>主板升级指令": "Mainboard-OTA-/Update-Verarbeitung.",
+    "DTU 发送给主板的固件包信息:": "DTU überträgt Firmwarepaketdaten an das Mainboard.",
+    "升级包传输完成": "Firmwarepaket-Übertragung an das Mainboard abgeschlossen.",
+    "推送数据成功<3>": "OTA-Status-/Fortschrittsmeldung erfolgreich übertragen.",
+    "主板升级成功<5>": "Mainboard meldet Firmwareupdate erfolgreich.",
+    "主板升级结束": "Mainboard-OTA-Ablauf beendet.",
+    "FINISH推送完成，无需断电续传": "Übertragung/Verarbeitung abgeschlossen; kein OTA-Resume nach Stromunterbrechung erforderlich.",
+    "推送dtu软硬件代码版本号到芬尼云": "DTU Software-/Hardwareversion an PHNIX-Cloud melden.",
+    "IOT_MQTT_CheckStateNormal = 1": "Aliyun/MQTT-Verbindung wird vom Originaldienst als normal erkannt.",
+    "publish success, packet-id=": "MQTT Publish erfolgreich.",
+    "重新获取sim卡iccid": "SIM-ICCID wird erneut abgefragt.",
+    "获取sim卡iccid失败": "SIM-ICCID konnte nicht gelesen werden.",
+    "重新获取sim卡imsi": "SIM-IMSI wird erneut abgefragt.",
+    "获取sim卡imsi失败": "SIM-IMSI konnte nicht gelesen werden.",
+}
+
+
+@dataclass(frozen=True)
+class DebugEvent:
+    kind: str
+    total: int | None = None
+    current: int | None = None
+    progress: float | None = None
+    code: str | None = None
+    bytes_read: int | None = None
+    block_size: int | None = None
+    manufacturer_success: bool = False
+    terminal_success: bool = False  # Always false: controller state remains authoritative.
+
+
+_TRANSFER = re.compile(r"tal_len:([0-9a-f]+),and:([0-9a-f]+)", re.I)
+_BLOCK = re.compile(r"readCount\s*=\s*(\d+)\s+size\s*=\s*(\d+)", re.I)
+_CMD_JSON = re.compile(
+    r'["\']code["\']\s*:\s*["\'](00(?:43|53))["\'].*?["\']progress["\']\s*:\s*["\']?(\d{1,3})',
+    re.I,
+)
+_CMD_PLAIN = re.compile(r"CMD_OTA.*?code\s*[=: ]+\s*(00(?:43|53)).*?progress\s*[=: ]+\s*(\d{1,3})", re.I)
+
+
+def parse_debug_line(line: str) -> DebugEvent | None:
+    """Parse supplementary OTA diagnostics without ever producing terminal success."""
+    match = _TRANSFER.search(line)
+    if match:
+        total, current = (int(value, 16) for value in match.groups())
+        if total > 0 and 0 <= current <= total:
+            return DebugEvent("transfer-progress", total, current, current * 100.0 / total)
+        return None
+    match = _BLOCK.search(line)
+    if match:
+        read, size = map(int, match.groups())
+        if 0 <= read <= size and size > 0:
+            return DebugEvent("firmware-block", bytes_read=read, block_size=size)
+        return None
+    match = _CMD_JSON.search(line) or _CMD_PLAIN.search(line)
+    if match:
+        code, value = match.groups()
+        progress = int(value)
+        if 0 <= progress <= 100:
+            return DebugEvent("cloud-progress", progress=float(progress), code=code)
+        return None
+    if "主板升级成功<5>" in line:
+        return DebugEvent("manufacturer-success", manufacturer_success=True)
+    if "升级包传输完成" in line:
+        return DebugEvent("transfer-complete")
+    if "主板升级结束" in line:
+        return DebugEvent("manufacturer-finished")
+    return None
+
+
+def translation_for(line: str) -> str | None:
+    return next((translation for source, translation in TRANSLATIONS.items() if source in line), None)
+
+
+def explain_debug_line(line: str) -> str:
+    translation = translation_for(line)
+    if translation:
+        return f"{line}\n        -> {translation}"
+    event = parse_debug_line(line)
+    if event and event.kind == "transfer-progress":
+        return f"{line}\n        -> PHNIX-Debug: {event.current} / {event.total} Byte ({event.progress:.1f} %)."
+    if event and event.kind == "firmware-block":
+        label = "Letzter Firmwareblock" if event.bytes_read != event.block_size else "Firmwareblock"
+        return f"{line}\n        -> {label}: {event.bytes_read} Byte."
+    return line
+
+
+_KEY_VALUE = re.compile(
+    r"(?i)(device[_-]?secret|devicesecret|iccid|imsi|imei|devicecode|device_code|productkey|product_key)"
+    r"(\s*[=:]\s*|[\"']\s*:\s*[\"'])([^\s,;&\"'{}]+)"
+)
+_TOPIC = re.compile(r"(?i)(/(?:sys|ext|ota|device)/)([^\s\"']+)")
+
+
+def redact_debug_text(text: str) -> str:
+    """Redact credentials and subscriber/device identifiers before fan-out."""
+    def replace(match: re.Match[str]) -> str:
+        key, separator, value = match.groups()
+        replacement = "<REDACTED>" if "secret" in key.lower() else _partial_mask(value)
+        return key + separator + replacement
+
+    redacted = _KEY_VALUE.sub(replace, text)
+    return _TOPIC.sub(lambda m: m.group(1) + "<REDACTED>", redacted)
+
+
+def _partial_mask(value: str) -> str:
+    if len(value) <= 4:
+        return "<REDACTED>"
+    return value[:2] + "***" + value[-2:]
+
+
+def resolve_phnix_debug_port(records: Iterable[dict[str, str]] | None = None) -> str | None:
+    """Resolve only the exact MI_04 interface; ambiguous matches are rejected."""
+    if records is None:
+        records = _windows_pnp_records()
+    matches = {
+        str(record.get("port", "")).upper()
+        for record in records
+        if PHNIX_USB_ID.lower() in str(record.get("instance_id", "")).lower()
+        and re.fullmatch(r"COM\d+", str(record.get("port", "")), re.I)
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _windows_pnp_records() -> list[dict[str, str]]:
+    try:
+        import winreg
+    except ImportError:
+        return []
+    root_path = r"SYSTEM\CurrentControlSet\Enum\USB\VID_1E0E&PID_9001&MI_04"
+    records = []
+    try:
+        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, root_path)
+        index = 0
+        while True:
+            try:
+                child = winreg.EnumKey(root, index)
+            except OSError:
+                break
+            index += 1
+            try:
+                params = winreg.OpenKey(root, child + r"\Device Parameters")
+                port, _ = winreg.QueryValueEx(params, "PortName")
+                records.append({"instance_id": PHNIX_USB_ID + "\\" + child, "port": str(port)})
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return records
+
+
+def remote_debug_endpoint(host: str, adb_port: int) -> tuple[str, int]:
+    port = int(adb_port) + 1
+    if not host.strip() or not 1 <= port <= 65535:
+        raise ValueError("Ungültiger Remote-PHNIX-Debug-Endpunkt")
+    return host.strip(), port
+
+
+class ReadSource(Protocol):
+    description: str
+    def read(self, size: int) -> bytes: ...
+    def close(self) -> None: ...
+
+
+class TcpDebugSource:
+    def __init__(self, host: str, port: int, timeout: float = 1.0):
+        self.description = f"Remote: {host}:{port}"
+        self._socket = socket.create_connection((host, port), timeout=timeout)
+        self._socket.settimeout(0.5)
+
+    def read(self, size: int) -> bytes:
+        try:
+            return self._socket.recv(size)
+        except socket.timeout:
+            return b""
+
+    def close(self) -> None:
+        self._socket.close()
+
+
+class PhnixDebugCapture:
+    """One physical reader shared by named, independently-lived consumers."""
+    def __init__(self, source_factory: Callable[[], ReadSource]):
+        self._factory = source_factory
+        self._source: ReadSource | None = None
+        self._consumers: dict[str, Callable[[str, DebugEvent | None], None]] = {}
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.status = "Nicht verfügbar"
+        self.last_error: str | None = None
+
+    @property
+    def active(self) -> bool:
+        with self._lock:
+            return self._source is not None
+
+    def add_consumer(self, name: str, callback: Callable[[str, DebugEvent | None], None]) -> bool:
+        with self._lock:
+            self._consumers[name] = callback
+            if self._source is not None:
+                return True
+            try:
+                self._source = self._factory()
+            except Exception as error:
+                self.last_error = str(error)
+                self.status = "Nicht verfügbar"
+                return False
+            self.status = self._source.description
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._read_loop, daemon=True, name="phnix-debug-reader")
+            self._thread.start()
+            return True
+
+    def remove_consumer(self, name: str) -> None:
+        source = None
+        with self._lock:
+            self._consumers.pop(name, None)
+            if not self._consumers and self._source is not None:
+                self._stop.set()
+                source, self._source = self._source, None
+                self.status = "Nicht verfügbar"
+        if source is not None:
+            source.close()
+
+    def _read_loop(self) -> None:
+        pending = ""
+        with self._lock:
+            source = self._source
+        if source is None:
+            return
+        try:
+            while not self._stop.is_set():
+                chunk = source.read(8192)
+                if not chunk:
+                    continue
+                pending += chunk.decode("utf-8", errors="replace")
+                lines = pending.splitlines(keepends=True)
+                pending = "" if not lines or lines[-1].endswith(("\r", "\n")) else lines.pop()
+                for raw in lines:
+                    original = raw.rstrip("\r\n")
+                    safe = redact_debug_text(original)
+                    event = parse_debug_line(original)
+                    with self._lock:
+                        callbacks = list(self._consumers.values())
+                    for callback in callbacks:
+                        callback(safe, event)
+        except Exception as error:
+            self.last_error = str(error)
+        finally:
+            owns_source = False
+            with self._lock:
+                if self._source is source:
+                    self._source = None
+                    self.status = "Nicht verfügbar"
+                    owns_source = True
+            if owns_source:
+                try:
+                    source.close()
+                except Exception:
+                    pass

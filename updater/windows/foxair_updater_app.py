@@ -1000,9 +1000,13 @@ class MainWindow(base.MainWindow):
             completed = self._has_event(records, "complete") or self._has_phase(records, "success")
             monitoring_lost = self._has_event(records, "monitoring-connection-lost")
             if code == 0 and same:
-                self._flow_title = "Update nicht durchgeführt – gleiche Firmware"
-                self._set_step("update-result", "warn", "Mainboard hat die bereits installierte Firmware erkannt und sicher abgelehnt.")
-                self._set_step("update-no-write", "ok", "Es wurden keine Firmwaredaten übertragen.")
+                self._flow_title = "Kein Firmwareupdate erforderlich – gleiche Firmware erkannt; LTE-/Cloudzustand vollständig geprüft."
+                for key in ("warning", "update-result", "update-no-write", "same-complete"):
+                    self._flow_steps.pop(key, None)
+                self._set_step(
+                    "phase-same", "warn",
+                    "Gleiche Firmware erkannt – kein Update erforderlich; keine Firmwaredaten übertragen.",
+                )
                 QMessageBox.information(
                     self,
                     "Update nicht erforderlich",
