@@ -2,11 +2,28 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from updater.windows import phnix_windows_controller_wrapper as wrapper
 
 
 class WindowsWrapperStateTests(unittest.TestCase):
+    def test_success_cleanup_removes_only_local_pending_marker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pending = root / "cache.pending"
+            backup = root / "phnixIot_device_OTA"
+            pending.touch()
+            backup.write_bytes(b"existing backup")
+            with patch.object(
+                wrapper,
+                "cache_paths",
+                return_value={"pending": pending, "backup": backup},
+            ):
+                wrapper.clear_cache_pending()
+            self.assertFalse(pending.exists())
+            self.assertEqual(backup.read_bytes(), b"existing backup")
+
     def test_dirty_state_reset_requires_confirmed_pre_transfer_state(self):
         self.assertTrue(wrapper.dirty_state_reset_is_safe({"phase": "c350", "transfer_started": False}))
         self.assertTrue(wrapper.dirty_state_reset_is_safe({"phase": "same-version", "transfer_started": False}))

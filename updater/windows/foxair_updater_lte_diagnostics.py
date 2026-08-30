@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import threading
 from datetime import datetime
@@ -30,6 +31,7 @@ from updater.common.phnix_debug import (
     PhnixDebugCapture,
     SerialCompletionSequence,
     TcpDebugSource,
+    completion_events_for_line,
     explain_debug_line,
     remote_debug_endpoint,
     resolve_phnix_debug_port,
@@ -320,18 +322,23 @@ class MainWindow(desktop.MainWindow):
             self._phnix_transfer_event = event
             self._render_transfer_progress()
         self._apply_debug_event(event)
-        self._observe_serial_completion(event, self._update_run_generation)
+        for completion_event in completion_events_for_line(line):
+            self._observe_serial_completion(completion_event, self._update_run_generation)
+
+    def _serial_fallback_allowed(self, generation: int) -> bool:
+        return bool(
+            generation == self._update_run_generation
+            and self._serial_c5a8_started
+            and self._serial_transfer_started
+            and self._serial_capture_identity is not None
+            and self._debug_capture
+            and self._debug_capture.identity == self._serial_capture_identity
+        )
 
     def _observe_serial_completion(self, event: object, generation: int) -> None:
         sequence = self._serial_sequence
         if (
-            sequence is None
-            or generation != self._update_run_generation
-            or not self._serial_c5a8_started
-            or not self._serial_transfer_started
-            or self._serial_capture_identity is None
-            or not self._debug_capture
-            or self._debug_capture.identity != self._serial_capture_identity
+            sequence is None or not self._serial_fallback_allowed(generation)
         ):
             return
         complete = sequence.observe(event, generation)
@@ -351,13 +358,21 @@ class MainWindow(desktop.MainWindow):
             self._confirm_serial_completion(generation)
 
     def _confirm_serial_completion(self, generation: int) -> None:
-        if generation != self._update_run_generation:
+        if not self._serial_fallback_allowed(generation):
             return
+        try:
+            desktop.windows_wrapper.clear_cache_pending()
+        except OSError as error:
+            self._log(f"[Warnung] Lokaler Update-Schutz konnte nicht abgeschlossen werden: {error}")
         self._serial_fallback_success = True
         self._flow_title = "Firmwareupdate erfolgreich"
         self._set_step(
             "update-result", "ok",
             "Firmwareupdate erfolgreich abgeschlossen. Abschluss wurde über den PHNIX-Originaldienst bestätigt.",
+        )
+        self._set_step(
+            "phase-c5a8", "ok",
+            "PHNIX-Originaldienst bestätigt die vollständige Mainboard-Abschlusssequenz.",
         )
         self.progress.setValue(100)
         self.progress_text.setText(
@@ -414,10 +429,13 @@ class MainWindow(desktop.MainWindow):
                 "Firmwaredaten vollständig an das Mainboard übertragen – Mainboard verarbeitet das Image; Controllerprüfung läuft.",
             )
         elif kind == "manufacturer-success":
-            self._update_existing_debug_step(
-                "phase-c5a8", "warn",
-                "PHNIX-Originaldienst meldet Mainboard-Update erfolgreich – abschließende Controllerprüfung läuft.",
+            text = (
+                "PHNIX-Originaldienst meldet erfolgreichen Mainboard-Abschluss – "
+                "vollständige Abschlusssequenz wird noch geprüft."
+                if self._serial_monitoring_lost else
+                "PHNIX-Originaldienst meldet Mainboard-Update erfolgreich – abschließende Controllerprüfung läuft."
             )
+            self._update_existing_debug_step("phase-c5a8", "warn", text)
         elif kind == "mqtt-normal":
             self._update_existing_debug_step(
                 "preflight-mqtt", "ok",
@@ -435,6 +453,12 @@ class MainWindow(desktop.MainWindow):
             self._serial_transfer_started = True
         if record.get("event") == "monitoring-connection-lost":
             self._serial_monitoring_lost = True
+            if (
+                self._serial_sequence
+                and self._serial_sequence.complete
+                and not self._serial_fallback_success
+            ):
+                self._confirm_serial_completion(self._update_run_generation)
 
     def _start_automatic_logs(self, manifest: Path) -> None:
         self._finish_automatic_logs()
@@ -576,15 +600,37 @@ class MainWindow(desktop.MainWindow):
                 self._finish_automatic_logs()
         super()._done(op, code, output)
         if op == "ota-reattach" and self._serial_fallback_success:
-            if code == 0:
+            status = None
+            json_start = output.find("{")
+            if json_start >= 0:
+                try:
+                    candidate = json.loads(output[json_start:])
+                    status = candidate if isinstance(candidate, dict) else None
+                except json.JSONDecodeError:
+                    pass
+            hook = status.get("hook") if isinstance(status, dict) and isinstance(status.get("hook"), dict) else {}
+            terminal_success = (
+                code == 0
+                and hook.get("phase") == "success"
+                and hook.get("terminal") is True
+            )
+            if terminal_success:
                 self.progress_text.setText(
                     "Firmwareupdate erfolgreich über PHNIX bestätigt. ADB-Abschlusskontrolle abgeschlossen."
                 )
+                self.ota_reattach_btn.setVisible(False)
+            elif code == 0 and status is not None:
+                self.progress_text.setText(
+                    "Firmwareupdate erfolgreich über PHNIX bestätigt. "
+                    "ADB-Verbindung wiederhergestellt – Abschlusskontrolle noch nicht terminal bestätigt."
+                )
+                self.ota_reattach_btn.setVisible(True)
             else:
                 self.progress_text.setText(
                     "Firmwareupdate erfolgreich über PHNIX bestätigt. "
                     "ADB-Abschlusskontrolle derzeit nicht möglich."
                 )
+                self.ota_reattach_btn.setVisible(True)
 
     def _log(self, text):
         super()._log(text)

@@ -9,6 +9,7 @@ from updater.common.phnix_debug import (
     PhnixDebugCapture,
     SerialCompletionSequence,
     TcpDebugSource,
+    completion_events_for_line,
     explain_debug_line,
     parse_debug_line,
     redact_debug_text,
@@ -182,6 +183,18 @@ class PhnixDebugTests(unittest.TestCase):
         self.assertFalse(incomplete.observe(events[1], 8))
         self.assertFalse(incomplete.observe(events[2], 8))
         self.assertFalse(incomplete.observe(events[3], 8))
+
+    def test_glued_completion_messages_keep_manufacturer_and_0053_events(self):
+        events = completion_events_for_line(
+            "主板升级成功<5> ... CMD_OTA code 0053 progress 100"
+        )
+        self.assertEqual(
+            [(event.kind, event.code, event.progress) for event in events],
+            [
+                ("manufacturer-success", None, None),
+                ("cloud-progress", "0053", 100.0),
+            ],
+        )
 
     def test_parser_progress_and_invalid_values(self):
         event = parse_debug_line("tal_len:46C0E,and:43B78,len;0,idx:183")

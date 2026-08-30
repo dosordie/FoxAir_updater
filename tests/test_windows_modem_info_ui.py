@@ -252,7 +252,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("self._serial_c5a8_started", self.lte_ui)
         self.assertIn("self._serial_transfer_started", self.lte_ui)
         self.assertIn("self._serial_monitoring_lost", self.lte_ui)
-        self.assertIn("self._debug_capture.identity != self._serial_capture_identity", self.lte_ui)
+        self.assertIn("self._debug_capture.identity == self._serial_capture_identity", self.lte_ui)
         self.assertIn("self._reattach_ota()", self.lte_ui)
         self.assertIn("QTimer.singleShot(3000", self.lte_ui)
         self.assertNotIn("remove_consumer(\"window\")", self.lte_ui.split(
@@ -275,6 +275,37 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("Firmwareupdate erfolgreich über PHNIX bestätigt", reattach_result)
         self.assertIn("ADB-Abschlusskontrolle derzeit nicht möglich", reattach_result)
         self.assertNotIn("Firmwareupdate fehlgeschlagen", reattach_result)
+
+    def test_serial_success_finishes_only_local_wrapper_marker(self):
+        confirm = self.lte_ui.split("def _confirm_serial_completion", 1)[1].split(
+            "def _serial_reattach", 1
+        )[0]
+        self.assertIn("desktop.windows_wrapper.clear_cache_pending()", confirm)
+        self.assertNotIn("restore_update_cache", confirm)
+        self.assertNotIn("REMOTE_", confirm)
+
+    def test_reattach_requires_terminal_success_status(self):
+        result = self.lte_ui.split('if op == "ota-reattach"', 1)[1].split(
+            "def _log", 1
+        )[0]
+        self.assertIn('hook.get("phase") == "success"', result)
+        self.assertIn('hook.get("terminal") is True', result)
+        self.assertIn("Abschlusskontrolle noch nicht terminal bestätigt", result)
+        self.assertIn("self.ota_reattach_btn.setVisible(True)", result)
+
+    def test_monitoring_loss_confirms_already_complete_current_sequence(self):
+        handler = self.lte_ui.split("def _handle_record", 1)[1].split(
+            "def _start_automatic_logs", 1
+        )[0]
+        self.assertIn("self._serial_sequence.complete", handler)
+        self.assertIn("self._confirm_serial_completion(self._update_run_generation)", handler)
+
+    def test_manufacturer_success_after_monitoring_loss_has_no_controller_check_text(self):
+        apply_event = self.lte_ui.split("def _apply_debug_event", 1)[1].split(
+            "def _handle_record", 1
+        )[0]
+        self.assertIn("if self._serial_monitoring_lost", apply_event)
+        self.assertIn("vollständige Abschlusssequenz wird noch geprüft", apply_event)
 
     def test_debug_disconnect_fallback_and_source_timestamp_reset(self):
         self.assertIn(

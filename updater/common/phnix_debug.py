@@ -65,6 +65,10 @@ class SerialCompletionSequence:
     generation: int
     position: int = 0
 
+    @property
+    def complete(self) -> bool:
+        return self.position == 4
+
     def observe(self, event: DebugEvent | None, generation: int) -> bool:
         if event is None or generation != self.generation or self.position >= 4:
             return self.position == 4 and generation == self.generation
@@ -81,7 +85,7 @@ class SerialCompletionSequence:
         ):
             return False
         self.position += 1
-        return self.position == 4
+        return self.complete
 
 
 _TRANSFER = re.compile(r"tal_len:([0-9a-f]+),and:([0-9a-f]+)", re.I)
@@ -133,6 +137,28 @@ def parse_debug_line(line: str) -> DebugEvent | None:
     if "IOT_MQTT_CheckStateNormal = 1" in line:
         return DebugEvent("mqtt-normal")
     return None
+
+
+def completion_events_for_line(line: str) -> list[DebugEvent]:
+    """Return every ordered terminal-sequence diagnostic in one physical line."""
+    found: list[tuple[int, DebugEvent]] = []
+    for marker, kind in (
+        ("升级包传输完成", "transfer-complete"),
+        ("主板升级成功<5>", "manufacturer-success"),
+        ("主板升级结束", "manufacturer-finished"),
+    ):
+        start = 0
+        while (position := line.find(marker, start)) >= 0:
+            found.append((position, DebugEvent(kind)))
+            start = position + len(marker)
+    for pattern in (_CMD_JSON, _CMD_PLAIN):
+        for match in pattern.finditer(line):
+            code, value = match.groups()
+            if code == "0053" and int(value) == 100:
+                found.append(
+                    (match.start(), DebugEvent("cloud-progress", progress=100.0, code=code))
+                )
+    return [event for _position, event in sorted(found, key=lambda item: item[0])]
 
 
 def translations_for(line: str) -> list[str]:
