@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from pathlib import Path
 
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,16 +19,24 @@ from PySide6.QtWidgets import (
 
 import foxair_updater_operator_display as operator
 import foxair_updater_traffic as traffic
+from updater.common.adb_transport import AdbClient
 from updater.common.phnix_modem_info import PhnixModemInfo
+from updater.common.phnix_service_restart import restart_phnix_iot_service
 
 
 CONFIRM_TOKEN = "PHNIX-STATISTICS-WRITE"
+
+
+class RestartSignals(QObject):
+    done = Signal(bool, str)
 
 
 class MainWindow(traffic.MainWindow):
     """Thin frontend for the shared statistics maintenance core."""
 
     def __init__(self):
+        self._restart_signals = RestartSignals()
+        self._restart_signals.done.connect(self._restart_finished)
         super().__init__()
         self._update_window_title()
 
@@ -200,7 +210,62 @@ class MainWindow(traffic.MainWindow):
         self.statistics_set_btn = QPushButton("Mainboard OTA-Vorgänge setzen")
         self.statistics_set_btn.clicked.connect(self._statistics_set)
         layout.insertWidget(insert_at, self.statistics_set_btn)
+        insert_at += 1
+
+        layout.insertWidget(insert_at, QLabel("<hr><b>PHNIX-LTE-Kommunikationsdienst</b>"))
+        insert_at += 1
+        restart_note = QLabel(
+            "Startet ausschließlich den PHNIX-LTE-Kommunikationsdienst neu. "
+            "Das LTE-Modem/Linux-System wird nicht neu gestartet."
+        )
+        restart_note.setWordWrap(True)
+        layout.insertWidget(insert_at, restart_note)
+        insert_at += 1
+        self.phnix_restart_btn = QPushButton("phnixIot4G neu starten")
+        self.phnix_restart_btn.clicked.connect(self._restart_phnix_iot)
+        layout.insertWidget(insert_at, self.phnix_restart_btn)
         return widget
+
+    def _restart_phnix_iot(self):
+        if self.busy:
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "phnixIot4G neu starten",
+                "Der PHNIX-LTE-Kommunikationsdienst wird kurz beendet und vom "
+                "Geräte-Watchdog neu gestartet.\nCloud-/LTE-Kommunikation ist "
+                "währenddessen kurz unterbrochen.\n\nJetzt neu starten?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            != QMessageBox.Yes
+        ):
+            return
+        adb_path = self._require_adb()
+        if not adb_path:
+            return
+        self.busy = True
+        self._buttons()
+        client = AdbClient(adb_path, env=self._process_env())
+
+        def work():
+            try:
+                message = restart_phnix_iot_service(client)
+            except Exception as error:
+                self._restart_signals.done.emit(False, str(error))
+            else:
+                self._restart_signals.done.emit(True, message)
+
+        threading.Thread(target=work, daemon=True, name="phnix-service-restart").start()
+
+    def _restart_finished(self, success: bool, message: str):
+        self.busy = False
+        self._buttons()
+        if success:
+            QMessageBox.information(self, "phnixIot4G neu starten", message)
+        else:
+            QMessageBox.warning(self, "phnixIot4G neu starten", message)
 
     @staticmethod
     def _statistics_core_path() -> Path:
@@ -414,6 +479,8 @@ class MainWindow(traffic.MainWindow):
                 and self.allow_statistics_write.isChecked()
                 and self._statistics_value() is not None
             )
+        if hasattr(self, "phnix_restart_btn"):
+            self.phnix_restart_btn.setEnabled(not self.busy and self._adb_ready())
 
 
 def main():

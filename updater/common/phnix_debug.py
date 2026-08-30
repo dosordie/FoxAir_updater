@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import socket
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, Protocol
 
@@ -248,7 +249,6 @@ def resolve_phnix_debug_port(
     available_ports: Iterable[str] | None = None,
 ) -> str | None:
     """Resolve only the exact MI_04 interface; ambiguous matches are rejected."""
-    supplied_records = records is not None
     if records is None:
         records = _windows_pnp_records()
     matches = {
@@ -257,10 +257,6 @@ def resolve_phnix_debug_port(
         if PHNIX_USB_ID.lower() in str(record.get("instance_id", "")).lower()
         and re.fullmatch(r"COM\d+", str(record.get("port", "")), re.I)
     }
-    if available_ports is None and not supplied_records:
-        from PySide6.QtSerialPort import QSerialPortInfo
-
-        available_ports = (port.portName() for port in QSerialPortInfo.availablePorts())
     if available_ports is not None:
         present = {str(port).upper() for port in available_ports}
         matches &= present
@@ -268,29 +264,104 @@ def resolve_phnix_debug_port(
 
 
 def _windows_pnp_records() -> list[dict[str, str]]:
+    """Enumerate only currently present USB devices through Windows SetupAPI."""
     try:
-        import winreg
+        import ctypes
+        from ctypes import wintypes
     except ImportError:
         return []
-    root_path = r"SYSTEM\CurrentControlSet\Enum\USB\VID_1E0E&PID_9001&MI_04"
-    records = []
+    if not hasattr(ctypes, "WinDLL"):
+        return []
+
+    class SP_DEVINFO_DATA(ctypes.Structure):
+        _fields_ = (
+            ("cbSize", wintypes.DWORD),
+            ("ClassGuid", ctypes.c_byte * 16),
+            ("DevInst", wintypes.DWORD),
+            ("Reserved", ctypes.c_void_p),
+        )
+
+    setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    setupapi.SetupDiGetClassDevsW.argtypes = (
+        ctypes.c_void_p, wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD
+    )
+    setupapi.SetupDiGetClassDevsW.restype = ctypes.c_void_p
+    setupapi.SetupDiEnumDeviceInfo.argtypes = (
+        ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(SP_DEVINFO_DATA)
+    )
+    setupapi.SetupDiGetDeviceInstanceIdW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(SP_DEVINFO_DATA),
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    setupapi.SetupDiOpenDevRegKey.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(SP_DEVINFO_DATA),
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    )
+    setupapi.SetupDiOpenDevRegKey.restype = ctypes.c_void_p
+    setupapi.SetupDiDestroyDeviceInfoList.argtypes = (ctypes.c_void_p,)
+    advapi32.RegQueryValueExW.argtypes = (
+        ctypes.c_void_p,
+        wintypes.LPCWSTR,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    advapi32.RegCloseKey.argtypes = (ctypes.c_void_p,)
+    devices = setupapi.SetupDiGetClassDevsW(None, "USB", None, 0x02 | 0x04)  # PRESENT | ALLCLASSES
+    invalid = ctypes.c_void_p(-1).value
+    if devices in (None, invalid):
+        return []
+    records: list[dict[str, str]] = []
     try:
-        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, root_path)
         index = 0
         while True:
-            try:
-                child = winreg.EnumKey(root, index)
-            except OSError:
+            info = SP_DEVINFO_DATA()
+            info.cbSize = ctypes.sizeof(info)
+            if not setupapi.SetupDiEnumDeviceInfo(devices, index, ctypes.byref(info)):
                 break
             index += 1
-            try:
-                params = winreg.OpenKey(root, child + r"\Device Parameters")
-                port, _ = winreg.QueryValueEx(params, "PortName")
-                records.append({"instance_id": PHNIX_USB_ID + "\\" + child, "port": str(port)})
-            except OSError:
+            needed = wintypes.DWORD()
+            setupapi.SetupDiGetDeviceInstanceIdW(
+                devices, ctypes.byref(info), None, 0, ctypes.byref(needed)
+            )
+            if not needed.value:
                 continue
-    except OSError:
-        pass
+            instance = ctypes.create_unicode_buffer(needed.value)
+            if not setupapi.SetupDiGetDeviceInstanceIdW(
+                devices, ctypes.byref(info), instance, needed.value, None
+            ) or PHNIX_USB_ID.lower() not in instance.value.lower():
+                continue
+            key = setupapi.SetupDiOpenDevRegKey(
+                devices, ctypes.byref(info), 0x01, 0, 0x00000001, 0x00000001
+            )  # DICS_FLAG_GLOBAL, DIREG_DEV, KEY_QUERY_VALUE
+            if key in (None, invalid):
+                continue
+            try:
+                kind = wintypes.DWORD()
+                size = wintypes.DWORD(512)
+                value = ctypes.create_unicode_buffer(256)
+                if advapi32.RegQueryValueExW(
+                    key,
+                    "PortName",
+                    None,
+                    ctypes.byref(kind),
+                    ctypes.cast(value, ctypes.c_void_p),
+                    ctypes.byref(size),
+                ) == 0:
+                    records.append({"instance_id": instance.value, "port": value.value})
+            finally:
+                advapi32.RegCloseKey(key)
+    finally:
+        setupapi.SetupDiDestroyDeviceInfoList(devices)
     return records
 
 
@@ -336,7 +407,6 @@ class PhnixDebugCapture:
         self._status_consumers: dict[str, Callable[[str, str | None], None]] = {}
         self._lock = threading.RLock()
         self._stop = threading.Event()
-        self._opened = threading.Event()
         self._thread: threading.Thread | None = None
         self._restart_requested = False
         self.status = "Getrennt"
@@ -356,13 +426,11 @@ class PhnixDebugCapture:
                     self._restart_requested = True
                 return True
             self._stop.clear()
-            self._opened.clear()
             self.status = "Verbinde …"
             self._notify_status()
             self._thread = threading.Thread(target=self._read_loop, daemon=True, name="phnix-debug-reader")
             self._thread.start()
-        self._opened.wait(2.0)
-        return self.active
+        return True
 
     def remove_consumer(self, name: str) -> None:
         with self._lock:
@@ -410,7 +478,6 @@ class PhnixDebugCapture:
                 self.status = "Verbunden"
                 self.last_error = None
             self._notify_status()
-            self._opened.set()
             while True:
                 with self._lock:
                     if self._stop.is_set():
@@ -420,8 +487,11 @@ class PhnixDebugCapture:
                     self._restart_requested = False
                 chunk = source.read(8192)
                 if not chunk:
+                    time.sleep(0.02)
                     continue
                 pending += chunk.decode("utf-8", errors="replace")
+                if len(pending) > 1_048_576:
+                    pending = pending[-1_048_576:]
                 lines = pending.splitlines(keepends=True)
                 pending = "" if not lines or lines[-1].endswith(("\r", "\n")) else lines.pop()
                 for raw in lines:
@@ -449,7 +519,6 @@ class PhnixDebugCapture:
                 self._restart_requested = False
                 if restart:
                     self._stop.clear()
-                    self._opened.clear()
                     self.status = "Verbinde …"
                     self._thread = threading.Thread(
                         target=self._read_loop, daemon=True, name="phnix-debug-reader"
@@ -457,5 +526,4 @@ class PhnixDebugCapture:
                     self._thread.start()
                 elif self.status == "Verbunden":
                     self.status = "Getrennt"
-            self._opened.set()
             self._notify_status()

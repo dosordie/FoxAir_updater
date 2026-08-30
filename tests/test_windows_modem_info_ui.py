@@ -396,6 +396,20 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn('self._debug_last_data = None', ensure_capture)
         self.assertIn('self._debug_connected_since = None', ensure_capture)
 
+    def test_async_update_debug_open_failure_warns_once_in_gui_status_handler(self):
+        status_handler = self.lte_ui.split("def _debug_status", 1)[1].split(
+            "def _update_debug_line", 1
+        )[0]
+        self.assertIn('status == "Verbindung fehlgeschlagen"', status_handler)
+        self.assertIn('capture.has_consumer("update")', status_handler)
+        self.assertIn("not self._debug_open_warning_shown", status_handler)
+        self.assertEqual(status_handler.count('self._log("[Warnung] " + warning)'), 1)
+        start_logs = self.lte_ui.split("def _start_automatic_logs", 1)[1].split(
+            "def _update_debug_line_for_run", 1
+        )[0]
+        self.assertIn("self._debug_open_warning_shown = False", start_logs)
+        self.assertNotIn("if not capture.add_consumer", start_logs)
+
     def test_completed_flow_phases_are_resolved_to_green(self):
         self.assertIn('self._set_step(key, "ok", text)', self.desktop)
         self.assertIn('self._resolve_flow_step("phase-yield"', self.desktop)
