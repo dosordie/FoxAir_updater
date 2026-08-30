@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 import foxair_updater_app as app
+import phnix_windows_controller_wrapper as windows_wrapper
 from updater.common.adb_transport import AdbClient
 from updater.common.phnix_modem_info import PhnixModemInfo, format_seconds, read_phnix_modem_info
 
@@ -67,11 +68,10 @@ class MainWindow(app.MainWindow):
         insert_at += 1
 
         note = QLabel(
-            "Für Recovery-/Testfälle kann der lokale Windows-Sicherheitsmarker "
-            "<code>cache.pending</code> bewusst freigegeben werden. Dabei wird "
-            "<b>nur der lokale Marker</b> gelöscht: keine ADB-Schreiboperation, "
-            "keine Änderung an /cache und kein Mainboard-/RS485-Zugriff. "
-            "Vorhandene Sicherungsdateien bleiben als Diagnosematerial erhalten."
+            "Für Recovery-/Testfälle kann ein offener <code>cache.pending</code>-Zustand "
+            "nur nach eindeutig sicherer Controllerprüfung zurückgesetzt werden. Dabei wird "
+            "die vorhandene Wrapper-Restore-/Konsistenzlogik verwendet; bei einem unklaren "
+            "oder möglicherweise bereits begonnenen Firmwaretransfer bleibt alles unverändert."
         )
         note.setWordWrap(True)
         layout.insertWidget(insert_at, note)
@@ -165,8 +165,8 @@ class MainWindow(app.MainWindow):
             self.block_reset_status.setText("Kein lokaler cache.pending-Blockzustand vorhanden.")
         self._buttons()
 
-    def _reset_block_pending(self):
-        if self.busy or not self.allow_block_reset.isChecked():
+    def _reset_block_pending(self, checked: bool = False, *, from_dry_run: bool = False):
+        if self.busy or (not from_dry_run and not self.allow_block_reset.isChecked()):
             return
         marker = self._wrapper_pending_path()
         if not marker.exists():
@@ -174,16 +174,24 @@ class MainWindow(app.MainWindow):
             QMessageBox.information(self, "Blockzustand", "cache.pending ist bereits nicht vorhanden.")
             return
 
+        run_state = self._latest_controller_run_state()
+        if not windows_wrapper.dirty_state_reset_is_safe(run_state):
+            QMessageBox.warning(
+                self,
+                "Sicherheitszustand nicht zurücksetzbar",
+                "Ein kritischer Firmwaretransfer kann anhand des Controller-Run-State nicht sicher "
+                "ausgeschlossen werden. Der Zustand bleibt unverändert.",
+            )
+            return
         if (
             QMessageBox.warning(
                 self,
-                "Lokalen Blockzustand wirklich zurücksetzen?",
-                "Es wird ausschließlich dieser lokale Windows-Marker gelöscht:\n\n"
-                f"{marker}\n\n"
-                "Das LTE-Modem und das Mainboard werden nicht angesprochen. Die vorhandene "
-                "Cache-Sicherungsdatei und Hashes bleiben erhalten. Der Windows-Wrapper "
-                "betrachtet den alten Cache-Sicherungszustand danach aber nicht mehr als offen.\n\n"
-                "Nur fortfahren, wenn der vorherige OTA-Zustand bereits geprüft wurde.",
+                "Offenen Sicherheitszustand sicher zurücksetzen?",
+                "Es wurde ein offener Sicherheitszustand eines vorherigen Laufs gefunden. "
+                "Dies kann von einem nicht sauber beendeten Lauf stammen.\n\n"
+                "Der Controller bestätigt einen Zustand vor dem Firmwaretransfer. Die vorhandene "
+                "Wrapper-Restore- und Konsistenzprüfung wird jetzt verwendet; Marker werden nicht "
+                "blind gelöscht.\n\nSicherheitszustand sicher zurücksetzen?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -191,20 +199,26 @@ class MainWindow(app.MainWindow):
         ):
             return
 
-        try:
-            marker.unlink()
-        except OSError as error:
-            QMessageBox.critical(self, "Blockzustand", f"cache.pending konnte nicht gelöscht werden:\n{error}")
-            return
-
-        self._log(f"[Erweitert] Lokalen Blockzustand gelöscht: {marker}")
         self.allow_block_reset.setChecked(False)
-        self._refresh_block_state()
-        QMessageBox.information(
-            self,
-            "Blockzustand zurückgesetzt",
-            "Der lokale cache.pending-Marker wurde gelöscht. Es wurde keine ADB- oder Mainboard-Operation ausgeführt.",
-        )
+        self._backend("restore", ["run", "--restore", "original"])
+
+    def _latest_controller_run_state(self) -> dict | None:
+        candidates = [path for path in self.state_dir.glob("*/run-state.json") if path.is_file()]
+        if not candidates:
+            return None
+        try:
+            value = __import__("json").loads(
+                max(candidates, key=lambda path: path.stat().st_mtime_ns).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def _dry(self):
+        if self._wrapper_pending_path().exists():
+            self._reset_block_pending(from_dry_run=True)
+            return
+        super()._dry()
 
     def _refresh_modem_info(self):
         if self.busy or self._modem_info_running:

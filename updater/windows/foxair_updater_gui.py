@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -137,7 +138,8 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        row = QHBoxLayout()
+        links = QGroupBox("Links / Infos")
+        row = QHBoxLayout(links)
         button = QPushButton("SIMCom USB-Treiber")
         button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(MODEM_DRIVER_URL)))
         row.addWidget(button)
@@ -148,7 +150,7 @@ class MainWindow(QMainWindow):
         button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(HOWTO_URL)))
         row.addWidget(button)
         row.addStretch()
-        layout.addLayout(row)
+        layout.addWidget(links)
 
         row = QHBoxLayout()
         row.addWidget(QLabel("adb.exe Pfad:"))
@@ -184,6 +186,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(description)
 
         remote_form_widget = QWidget()
+        self.remote_form_widget = remote_form_widget
         remote_form = QFormLayout(remote_form_widget)
         self.remote_host = QLineEdit()
         self.remote_host.setPlaceholderText("192.168.1.100")
@@ -197,6 +200,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(remote_form_widget)
 
         remote_help_frame = QFrame()
+        self.remote_help_frame = remote_help_frame
         remote_help_frame.setObjectName("remoteAdbHelp")
         remote_help_frame.setStyleSheet(
             "QFrame#remoteAdbHelp{background:#f7f8fa;border:1px solid #d0d5dd;"
@@ -495,8 +499,8 @@ class MainWindow(QMainWindow):
     def _remote_changed(self, *args):
         remote = hasattr(self, "adb_remote") and self.adb_remote.isChecked()
         if hasattr(self, "remote_host"):
-            self.remote_host.setEnabled(remote)
-            self.remote_port.setEnabled(remote)
+            self.remote_form_widget.setVisible(remote)
+            self.remote_help_frame.setVisible(remote)
             self.settings.setValue("adb_mode", "remote" if remote else "local")
             self.settings.setValue("remote_host", self.remote_host.text().strip())
             self.settings.setValue("remote_port", self.remote_port.value())

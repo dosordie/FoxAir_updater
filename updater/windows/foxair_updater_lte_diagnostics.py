@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import sys
 import threading
+from datetime import datetime
 from html import escape
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QHBoxLayout,
+    QFileDialog,
     QLabel,
+    QComboBox,
+    QDialog,
+    QPlainTextEdit,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -19,6 +26,85 @@ from PySide6.QtWidgets import (
 import foxair_updater_desktop as desktop
 from updater.common.adb_transport import AdbClient
 from updater.common.phnix_modem_info import PhnixModemInfo, format_seconds, read_phnix_modem_info
+from updater.common.phnix_debug import (
+    PhnixDebugCapture,
+    TcpDebugSource,
+    explain_debug_line,
+    remote_debug_endpoint,
+    resolve_phnix_debug_port,
+)
+
+
+class DebugSignals(QObject):
+    line = Signal(str, object)
+    update_line = Signal(str, object)
+
+
+class QtSerialDebugSource:
+    """Blocking, read-only QtSerialPort adapter, constructed in the reader thread."""
+    def __init__(self, port: str):
+        from PySide6.QtSerialPort import QSerialPort
+        self.description = f"Lokal: {port} / MI_04"
+        self._serial = QSerialPort()
+        self._serial.setPortName(port)
+        self._serial.setBaudRate(115200)
+        self._serial.setDataBits(QSerialPort.Data8)
+        self._serial.setParity(QSerialPort.NoParity)
+        self._serial.setStopBits(QSerialPort.OneStop)
+        self._serial.setFlowControl(QSerialPort.NoFlowControl)
+        if not self._serial.open(QSerialPort.ReadOnly):
+            raise OSError(self._serial.errorString())
+
+    def read(self, size: int) -> bytes:
+        self._serial.waitForReadyRead(500)
+        return bytes(self._serial.read(size))
+
+    def close(self) -> None:
+        self._serial.close()
+
+
+class PhnixDebugWindow(QDialog):
+    closed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("PHNIX Debugmonitor (nur Lesen)")
+        self.resize(900, 560)
+        layout = QVBoxLayout(self)
+        self.status = QLabel("Nicht verfügbar")
+        layout.addWidget(self.status)
+        row = QHBoxLayout()
+        self.mode = QComboBox()
+        self.mode.addItems(("Original", "Original + deutsche Erläuterungen"))
+        self.autoscroll = QCheckBox("Auto-Scroll")
+        self.autoscroll.setChecked(True)
+        clear = QPushButton("Anzeige leeren")
+        clear.clicked.connect(lambda: self.output.clear())
+        save = QPushButton("Log speichern…")
+        save.clicked.connect(self._save)
+        row.addWidget(self.mode)
+        row.addWidget(self.autoscroll)
+        row.addStretch()
+        row.addWidget(clear)
+        row.addWidget(save)
+        layout.addLayout(row)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        layout.addWidget(self.output)
+
+    def append_line(self, line: str) -> None:
+        self.output.appendPlainText(explain_debug_line(line) if self.mode.currentIndex() else line)
+        if self.autoscroll.isChecked():
+            self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
+
+    def _save(self):
+        name, _ = QFileDialog.getSaveFileName(self, "PHNIX-Debuglog speichern", "PHNIX_Debug.log", "Log (*.log)")
+        if name:
+            Path(name).write_text(self.output.toPlainText() + "\n", encoding="utf-8")
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
 
 
 class MainWindow(desktop.MainWindow):
@@ -26,6 +112,13 @@ class MainWindow(desktop.MainWindow):
 
     def __init__(self):
         self._last_modem_info: PhnixModemInfo | None = None
+        self._debug_signals = DebugSignals()
+        self._debug_signals.line.connect(self._debug_line)
+        self._debug_signals.update_line.connect(self._update_debug_line)
+        self._debug_capture: PhnixDebugCapture | None = None
+        self._debug_window: PhnixDebugWindow | None = None
+        self._automatic_log = None
+        self._lte_log = None
         super().__init__()
 
     def _modem_info_page(self):
@@ -50,6 +143,14 @@ class MainWindow(desktop.MainWindow):
         self.modem_read_status.setWordWrap(True)
         row.addWidget(self.modem_read_status, 1)
         outer.addLayout(row)
+
+        debug_row = QHBoxLayout()
+        self.debug_monitor_btn = desktop.QPushButton("PHNIX Debugmonitor öffnen")
+        self.debug_monitor_btn.clicked.connect(self._open_debug_monitor)
+        debug_row.addWidget(self.debug_monitor_btn)
+        debug_row.addWidget(QLabel("ttyGS0 / USB MI_04 – ausschließlich read-only"))
+        debug_row.addStretch()
+        outer.addLayout(debug_row)
 
         self.show_cloud_secrets = QCheckBox("Cloud-Secrets anzeigen")
         self.show_cloud_secrets.setToolTip(
@@ -76,6 +177,155 @@ class MainWindow(desktop.MainWindow):
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
         return widget
+
+    def _new_debug_capture(self) -> PhnixDebugCapture:
+        if self.adb_remote.isChecked():
+            host, port = remote_debug_endpoint(self.remote_host.text(), self.remote_port.value())
+            return PhnixDebugCapture(lambda: TcpDebugSource(host, port))
+        port = resolve_phnix_debug_port()
+        if not port:
+            return PhnixDebugCapture(lambda: (_ for _ in ()).throw(OSError("MI_04 nicht eindeutig gefunden")))
+        return PhnixDebugCapture(lambda: QtSerialDebugSource(port))
+
+    def _ensure_debug_capture(self) -> PhnixDebugCapture:
+        if self._debug_capture is None:
+            self._debug_capture = self._new_debug_capture()
+        return self._debug_capture
+
+    def _open_debug_monitor(self):
+        if self._debug_window is None:
+            self._debug_window = PhnixDebugWindow(self)
+            self._debug_window.closed.connect(self._close_debug_monitor)
+            capture = self._ensure_debug_capture()
+            opened = capture.add_consumer("window", lambda line, event: self._debug_signals.line.emit(line, event))
+            self._debug_window.status.setText(capture.status)
+            if not opened:
+                self._log("[Warnung] PHNIX LTE-Debugport nicht verfügbar – Diagnose bleibt ohne Stream.")
+        self._debug_window.show()
+        self._debug_window.raise_()
+
+    def _close_debug_monitor(self):
+        if self._debug_capture:
+            self._debug_capture.remove_consumer("window")
+        self._debug_window = None
+
+    def _debug_line(self, line: str, event: object):
+        if self._debug_window:
+            self._debug_window.append_line(line)
+
+    def _update_debug_line(self, line: str, event: object):
+        if self._lte_log:
+            try:
+                self._lte_log.write(explain_debug_line(line) + "\n")
+                self._lte_log.flush()
+            except OSError as error:
+                self._lte_log = None
+                self._log(f"[Warnung] Automatisches LTE-Log konnte nicht weitergeschrieben werden: {error}")
+        # Supplementary progress is shown only once the controller has authoritatively entered C5A8.
+        if getattr(event, "kind", None) == "transfer-progress" and "phase-c5a8" in self._flow_steps:
+            percent = event.progress
+            self.progress_text.setText(
+                f"Firmwaredaten werden an das Mainboard übertragen – PHNIX: {percent:.1f} % / "
+                f"{event.current} von {event.total} Byte"
+            )
+        self._apply_debug_event(event)
+
+    def _update_existing_debug_step(self, key: str, level: str, text: str) -> None:
+        """Refine a visible controller step without creating a new safety fact."""
+        if key in self._flow_steps:
+            self._set_step(key, level, text)
+
+    def _apply_debug_event(self, event: object) -> None:
+        kind = getattr(event, "kind", None)
+        if kind == "transfer-complete":
+            self._update_existing_debug_step(
+                "phase-c5a8", "warn",
+                "Firmwaredaten vollständig an das Mainboard übertragen – Mainboard verarbeitet das Image; Controllerprüfung läuft.",
+            )
+        elif kind == "manufacturer-success":
+            self._update_existing_debug_step(
+                "phase-c5a8", "warn",
+                "PHNIX-Originaldienst meldet Mainboard-Update erfolgreich – abschließende Controllerprüfung läuft.",
+            )
+        elif kind == "mqtt-normal":
+            self._update_existing_debug_step(
+                "preflight-mqtt", "ok",
+                "PHNIX-Originaldienst meldet Aliyun/MQTT als verbunden.",
+            )
+        elif kind == "cloud-progress":
+            progress = int(event.progress)
+            if event.code == "0043":
+                self._update_existing_debug_step(
+                    "phase-c5a8", "warn",
+                    f"Firmwaredaten werden an das Mainboard übertragen – PHNIX-Cloudfortschritt {progress} %; Controller bleibt maßgeblich.",
+                )
+            elif event.code == "0053":
+                self._update_existing_debug_step(
+                    "phase-success-report", "warn",
+                    f"PHNIX-Originaldienst meldet Mainboard-OTA-Status {progress} % – abschließende Controllerprüfung läuft.",
+                )
+
+    def _start_automatic_logs(self, manifest: Path) -> None:
+        self._finish_automatic_logs()
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        directory = manifest.parent
+        try:
+            self._automatic_log = (directory / f"FoxAir_Update_{stamp}.log").open("a", encoding="utf-8")
+            self._lte_log = (directory / f"FoxAir_Update_{stamp}_LTE.log").open("a", encoding="utf-8")
+        except OSError as error:
+            for stream in (self._automatic_log, self._lte_log):
+                if stream:
+                    stream.close()
+            self._automatic_log = self._lte_log = None
+            self._log(f"[Warnung] Automatische Update-Logs konnten nicht angelegt werden: {error}")
+        capture = self._ensure_debug_capture()
+        if not capture.add_consumer(
+            "update", lambda line, event: self._debug_signals.update_line.emit(line, event)
+        ):
+            warning = (
+                "Remote PHNIX-Debugstream nicht erreichbar – Fortsetzung ohne LTE-Debug."
+                if self.adb_remote.isChecked() else
+                "PHNIX LTE-Debugport nicht verfügbar – Update wird ohne LTE-Debuglog fortgesetzt."
+            )
+            self._log("[Warnung] " + warning)
+
+    def _finish_automatic_logs(self) -> None:
+        if self._debug_capture:
+            self._debug_capture.remove_consumer("update")
+        for stream_name in ("_automatic_log", "_lte_log"):
+            stream = getattr(self, stream_name, None)
+            if stream:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            setattr(self, stream_name, None)
+
+    def _run(self, op, command, cwd=None):
+        if op in {"dry", "update"}:
+            try:
+                index = command.index("--manifest")
+                manifest = Path(command[index + 1])
+            except (ValueError, IndexError):
+                manifest = None
+            if manifest and manifest.is_file():
+                self._start_automatic_logs(manifest)
+        super()._run(op, command, cwd)
+
+    def _done(self, op, code, output):
+        super()._done(op, code, output)
+        if op in {"dry", "update"}:
+            QTimer.singleShot(1200, self._finish_automatic_logs)
+
+    def _log(self, text):
+        super()._log(text)
+        if self._automatic_log:
+            try:
+                self._automatic_log.write(text + "\n")
+                self._automatic_log.flush()
+            except OSError as error:
+                self._automatic_log = None
+                super()._log(f"[Warnung] Automatisches Controller-Log konnte nicht weitergeschrieben werden: {error}")
 
     def _refresh_modem_info(self):
         if self.busy or self._modem_info_running:

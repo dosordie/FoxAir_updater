@@ -1,0 +1,18 @@
+tal_len:46C0E,and:43B78,len;0,idx:183
+sendBuf: {"cmd":"CMD_OTA","code":"0043","progress":"95"}
+tal_len:46C0E,and:44F28,len;0,idx:183
+sendBuf: {"cmd":"CMD_OTA","code":"0043","progress":"97"}
+tal_len:46C0E,and:462D8,len;0,idx:183
+sendBuf: {"cmd":"CMD_OTA","code":"0043","progress":"99"}
+tal_len:46C0E,and:46C08,len;0,idx:183
+readCount=6 size=168
+升级包传输完成
+sendBuf: {"cmd":"CMD_OTA","code":"0043","progress":"100"}
+推送数据成功<3>
+主板升级成功<5>
+sendBuf: {"cmd":"CMD_OTA","code":"0053","progress":"100"}
+主板升级结束
+重新获取sim卡iccid
+获取sim卡iccid失败
+重新获取sim卡imsi
+获取sim卡imsi失败

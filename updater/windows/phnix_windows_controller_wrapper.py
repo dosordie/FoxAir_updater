@@ -245,6 +245,22 @@ def clear_cache_pending() -> None:
         pass
 
 
+def dirty_state_reset_is_safe(run_state: dict | None) -> bool:
+    """Return true only for controller-confirmed states which exclude C5A8.
+
+    This predicate intentionally defaults to false.  It does not change a
+    controller decision and is kept separately testable for the Windows UI.
+    """
+    if not isinstance(run_state, dict):
+        return False
+    phase = run_state.get("phase")
+    transfer_started = run_state.get("transfer_started")
+    return transfer_started is False and phase in {
+        "verified", "waiting-for-yield-loop", "c350-probe-attaching",
+        "c350", "same-version", "c350-same-version",
+    }
+
+
 def restore_update_cache(base: list[str]) -> None:
     paths = cache_paths()
     if not paths["pending"].exists():
