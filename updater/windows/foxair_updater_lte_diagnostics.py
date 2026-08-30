@@ -271,7 +271,7 @@ class MainWindow(desktop.MainWindow):
 
     def _open_debug_monitor(self):
         if self._debug_window is None:
-            self._debug_window = PhnixDebugWindow(self)
+            self._debug_window = PhnixDebugWindow()
             self._debug_window.closed.connect(self._close_debug_monitor)
             self._debug_window.connect_requested.connect(self._connect_debug_monitor)
             self._debug_window.disconnect_requested.connect(self._disconnect_debug_monitor)
@@ -283,6 +283,11 @@ class MainWindow(desktop.MainWindow):
     def _close_debug_monitor(self):
         self._disconnect_debug_monitor()
         self._debug_window = None
+
+    def closeEvent(self, event):
+        if self._debug_window is not None:
+            self._debug_window.close()
+        super().closeEvent(event)
 
     def _debug_line(self, line: str, event: object):
         self._debug_last_data = datetime.now()

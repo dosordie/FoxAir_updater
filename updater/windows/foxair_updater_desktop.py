@@ -175,7 +175,8 @@ class MainWindow(app.MainWindow):
             return
 
         run_state = self._latest_controller_run_state()
-        if not windows_wrapper.dirty_state_reset_is_safe(run_state):
+        simulator_state = self._stopped_simulator_state()
+        if not windows_wrapper.dirty_state_reset_is_safe(run_state, simulator_state):
             QMessageBox.warning(
                 self,
                 "Sicherheitszustand nicht zurücksetzbar",
@@ -213,6 +214,27 @@ class MainWindow(app.MainWindow):
         except (OSError, ValueError):
             return None
         return value if isinstance(value, dict) else None
+
+    def _stopped_simulator_state(self) -> dict | None:
+        adb = self._adb_path()
+        if adb is None:
+            return None
+        try:
+            client = AdbClient(adb, env=self._process_env())
+            is_simulator = client.shell("test -f /data/.phnix_ota_simulator; echo $?") == "0"
+            first_status = client.shell("cat /tmp/phnix_ota_status.json")
+            running = client.shell("test -f /tmp/phnix_ota_hook/run.active; echo $?") == "0"
+            second_status = client.shell("cat /tmp/phnix_ota_status.json")
+            if not is_simulator or first_status != second_status:
+                return None
+            status = __import__("json").loads(second_status)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return {
+            "marker": "PHNIX-OTA-SIMULATOR-V1",
+            "status": status,
+            "runtime": {"running": running},
+        }
 
     def _dry(self):
         if self._wrapper_pending_path().exists():

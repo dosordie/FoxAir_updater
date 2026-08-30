@@ -181,12 +181,12 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn('QPushButton("Trennen")', self.lte_ui)
         for status in ("Verbinde …", "Verbunden", "Getrennt", "Verbindung fehlgeschlagen"):
             self.assertIn(status, self.lte_ui + Path("updater/common/phnix_debug.py").read_text(encoding="utf-8"))
-        self.assertIn('QPushButton("LTE-Modem-Log öffnen")', self.base_ui)
         log_row = self.base_ui.split('clear_button = QPushButton("Protokoll leeren")', 1)[1].split(
             "layout.addLayout(row)", 1
         )[0]
-        self.assertIn('QPushButton("LTE-Modem-Log öffnen")', log_row)
+        self.assertNotIn('QPushButton("LTE-Modem-Log öffnen")', log_row)
         self.assertIn('save_button = QPushButton("Log speichern…")', log_row)
+        self.assertIn('QPushButton("PHNIX Debugmonitor öffnen")', self.lte_ui)
         self.assertNotIn('QPushButton("LTE-Modem-Log öffnen")', self.app_ui)
         self.assertIn('setFixedHeight(20)', self.base_ui)
         self.assertIn('self.progress.setTextVisible(False)', self.base_ui)
@@ -196,6 +196,20 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         update_page = self.base_ui.split("def _update(self):", 1)[1].split("def _status", 1)[0]
         self.assertNotIn("Manifest", update_page)
         self.assertIn("Update-Datei", update_page)
+
+    def test_debug_monitor_is_unowned_and_closed_with_main_window(self):
+        self.assertIn("PhnixDebugWindow()", self.lte_ui)
+        self.assertNotIn("PhnixDebugWindow(self)", self.lte_ui)
+        close_event = self.lte_ui.split("def closeEvent(self, event):", 2)[2]
+        self.assertIn("self._debug_window.close()", close_event)
+        self.assertNotIn("WindowStaysOnTopHint", self.lte_ui)
+
+    def test_update_howto_link_is_available(self):
+        self.assertIn('QPushButton("Update-Anleitung")', self.base_ui)
+        self.assertIn(
+            "https://github.com/dosordie/FoxAir_updater/blob/main/docs/HowTo/firmware_update_windows.md",
+            self.base_ui,
+        )
 
     def test_transfer_progress_has_separate_percent_and_friendly_sources(self):
         render = self.lte_ui.split("def _render_transfer_progress", 1)[1].split(
