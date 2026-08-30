@@ -58,6 +58,32 @@ class DebugEvent:
     terminal_success: bool = False  # Always false: controller state remains authoritative.
 
 
+@dataclass
+class SerialCompletionSequence:
+    """Track the four diagnostic completion events for one local update generation."""
+
+    generation: int
+    position: int = 0
+
+    def observe(self, event: DebugEvent | None, generation: int) -> bool:
+        if event is None or generation != self.generation or self.position >= 4:
+            return self.position == 4 and generation == self.generation
+        expected = (
+            ("transfer-complete", None),
+            ("manufacturer-success", None),
+            ("cloud-progress", "0053"),
+            ("manufacturer-finished", None),
+        )[self.position]
+        if event.kind != expected[0]:
+            return False
+        if expected[1] is not None and not (
+            event.code == expected[1] and event.progress == 100
+        ):
+            return False
+        self.position += 1
+        return self.position == 4
+
+
 _TRANSFER = re.compile(r"tal_len:([0-9a-f]+),and:([0-9a-f]+)", re.I)
 _BLOCK = re.compile(r"readCount\s*=\s*(\d+)\s+size\s*=\s*(\d+)", re.I)
 _CMD_JSON = re.compile(
@@ -158,11 +184,15 @@ def explain_debug_line(line: str) -> str:
 
 
 _KEY_VALUE = re.compile(
-    r"(?i)(device[_-]?secret|devicesecret|iccid|imsi|imei|devicecode|device_code|productkey|product_key)"
+    r"(?i)(device[_-]?secret|devicesecret|iccid|ccid|imsi|imei|devicename|deviceid_03|"
+    r"devicecode|device_code|productkey|product_key)"
     r"(\s*[=:]\s*|[\"']\s*:\s*[\"'])([^\s,;&\"'{}]+)"
 )
 _TOPIC = re.compile(r"(?i)(/(?:sys|ext|ota|device)/)([^\s\"']+)")
 _PHNIX_TOPIC = re.compile(r"(?<![\w/])/(?!sys/|ext/|ota/|device/)([^/\s\"']+)/([^/\s\"']+)(/user(?:/[^\s\"']*)?)", re.I)
+_ERROR_PAYLOAD = re.compile(
+    r"(?i)(payload:\s*error:\s*0\s*,\s*18\s*,\s*)([^,\s]+)(\s*,\s*)([^,\s]+)"
+)
 
 
 def redact_debug_text(text: str) -> str:
@@ -173,6 +203,10 @@ def redact_debug_text(text: str) -> str:
         return key + separator + replacement
 
     redacted = _KEY_VALUE.sub(replace, text)
+    redacted = _ERROR_PAYLOAD.sub(
+        lambda match: match.group(1) + "<REDACTED>" + match.group(3) + "<REDACTED>",
+        redacted,
+    )
     redacted = _TOPIC.sub(lambda m: m.group(1) + "<REDACTED>", redacted)
     return _PHNIX_TOPIC.sub(r"/<REDACTED>/<REDACTED>\3", redacted)
 

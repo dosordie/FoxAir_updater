@@ -233,6 +233,49 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("phnix_windows_controller_wrapper", self.desktop)
         self.assertIn("windows_wrapper", self.desktop)
 
+    def test_terminal_log_cleanup_precedes_modal_base_done(self):
+        done = self.lte_ui.split("def _done(self, op, code, output):", 1)[1].split(
+            "def _log", 1
+        )[0]
+        cleanup = done.index("self._finish_automatic_logs()")
+        modal_base_done = done.index("super()._done(op, code, output)")
+        self.assertLess(cleanup, modal_base_done)
+        self.assertIn('op in {"dry", "update"}', done)
+        self.assertIn("keep_serial_tail", done)
+        self.assertIn("QTimer.singleShot(600000", done)
+
+    def test_serial_completion_is_run_bound_and_reuses_reattach(self):
+        self.assertIn("self._update_run_generation += 1", self.lte_ui)
+        self.assertIn("SerialCompletionSequence(generation)", self.lte_ui)
+        self.assertIn("run=generation", self.lte_ui)
+        self.assertIn("generation != self._update_run_generation", self.lte_ui)
+        self.assertIn("self._serial_c5a8_started", self.lte_ui)
+        self.assertIn("self._serial_transfer_started", self.lte_ui)
+        self.assertIn("self._serial_monitoring_lost", self.lte_ui)
+        self.assertIn("self._debug_capture.identity != self._serial_capture_identity", self.lte_ui)
+        self.assertIn("self._reattach_ota()", self.lte_ui)
+        self.assertIn("QTimer.singleShot(3000", self.lte_ui)
+        self.assertNotIn("remove_consumer(\"window\")", self.lte_ui.split(
+            "def _finish_automatic_logs", 1
+        )[1].split("def _debug_log_status", 1)[0])
+
+    def test_elapsed_timer_stops_for_all_terminal_success_paths(self):
+        self.assertIn('if phase == "success":', self.operator_ui)
+        self.assertIn('hook.get("phase") == "success"', self.operator_ui)
+        self.assertIn('hook.get("terminal") is True', self.operator_ui)
+        serial_success = self.lte_ui.split("def _confirm_serial_completion", 1)[1].split(
+            "def _serial_reattach", 1
+        )[0]
+        self.assertIn("self._stop_ota_elapsed()", serial_success)
+
+    def test_serial_success_is_not_downgraded_when_reattach_fails(self):
+        reattach_result = self.lte_ui.split('if op == "ota-reattach"', 1)[1].split(
+            "def _log", 1
+        )[0]
+        self.assertIn("Firmwareupdate erfolgreich über PHNIX bestätigt", reattach_result)
+        self.assertIn("ADB-Abschlusskontrolle derzeit nicht möglich", reattach_result)
+        self.assertNotIn("Firmwareupdate fehlgeschlagen", reattach_result)
+
     def test_debug_disconnect_fallback_and_source_timestamp_reset(self):
         self.assertIn(
             '"Monitor getrennt – LTE-Logging für laufendes Update weiterhin verbunden."',

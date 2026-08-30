@@ -129,9 +129,14 @@ class MainWindow(lte.MainWindow):
         super()._handle_phase(phase)
         if phase in _POST_MQTT_GUARD_PHASES:
             self._start_ota_elapsed()
+        if phase == "success":
+            self._stop_ota_elapsed()
 
     def _handle_record(self, record: dict):
         super()._handle_record(record)
+        hook = record.get("hook") if isinstance(record.get("hook"), dict) else {}
+        if hook.get("phase") == "success" and hook.get("terminal") is True:
+            self._stop_ota_elapsed()
         if record.get("event") in _MQTT_GUARD_RELEASE_EVENTS:
             self._stop_ota_elapsed()
 

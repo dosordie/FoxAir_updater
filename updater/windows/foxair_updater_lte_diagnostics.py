@@ -28,6 +28,7 @@ from updater.common.adb_transport import AdbClient
 from updater.common.phnix_modem_info import PhnixModemInfo, format_seconds, read_phnix_modem_info
 from updater.common.phnix_debug import (
     PhnixDebugCapture,
+    SerialCompletionSequence,
     TcpDebugSource,
     explain_debug_line,
     remote_debug_endpoint,
@@ -37,7 +38,7 @@ from updater.common.phnix_debug import (
 
 class DebugSignals(QObject):
     line = Signal(str, object)
-    update_line = Signal(str, object)
+    update_line = Signal(int, str, object)
     status = Signal(str, object)
 
 
@@ -125,7 +126,7 @@ class MainWindow(desktop.MainWindow):
         self._last_modem_info: PhnixModemInfo | None = None
         self._debug_signals = DebugSignals()
         self._debug_signals.line.connect(self._debug_line)
-        self._debug_signals.update_line.connect(self._update_debug_line)
+        self._debug_signals.update_line.connect(self._update_debug_line_for_run)
         self._debug_signals.status.connect(self._debug_status)
         self._debug_capture: PhnixDebugCapture | None = None
         self._debug_window: PhnixDebugWindow | None = None
@@ -135,6 +136,13 @@ class MainWindow(desktop.MainWindow):
         self._debug_last_data: datetime | None = None
         self._last_debug_status = "Getrennt"
         self._phnix_transfer_event = None
+        self._update_run_generation = 0
+        self._serial_sequence: SerialCompletionSequence | None = None
+        self._serial_c5a8_started = False
+        self._serial_transfer_started = False
+        self._serial_monitoring_lost = False
+        self._serial_fallback_success = False
+        self._serial_capture_identity: str | None = None
         super().__init__()
 
     def _modem_info_page(self):
@@ -312,6 +320,60 @@ class MainWindow(desktop.MainWindow):
             self._phnix_transfer_event = event
             self._render_transfer_progress()
         self._apply_debug_event(event)
+        self._observe_serial_completion(event, self._update_run_generation)
+
+    def _observe_serial_completion(self, event: object, generation: int) -> None:
+        sequence = self._serial_sequence
+        if (
+            sequence is None
+            or generation != self._update_run_generation
+            or not self._serial_c5a8_started
+            or not self._serial_transfer_started
+            or self._serial_capture_identity is None
+            or not self._debug_capture
+            or self._debug_capture.identity != self._serial_capture_identity
+        ):
+            return
+        complete = sequence.observe(event, generation)
+        if self._serial_monitoring_lost and not complete:
+            kind = getattr(event, "kind", None)
+            if kind == "manufacturer-success":
+                self.progress_text.setText(
+                    "PHNIX-Originaldienst meldet erfolgreichen Mainboard-Abschluss – "
+                    "vollständige Abschlusssequenz wird noch geprüft."
+                )
+            elif kind in {"transfer-complete", "cloud-progress", "manufacturer-finished"}:
+                self.progress_text.setText(
+                    "PHNIX-Originaldienst meldet Mainboard-Fortschritt – "
+                    "Controllerstatus derzeit nicht bestätigt."
+                )
+        if self._serial_monitoring_lost and complete and not self._serial_fallback_success:
+            self._confirm_serial_completion(generation)
+
+    def _confirm_serial_completion(self, generation: int) -> None:
+        if generation != self._update_run_generation:
+            return
+        self._serial_fallback_success = True
+        self._flow_title = "Firmwareupdate erfolgreich"
+        self._set_step(
+            "update-result", "ok",
+            "Firmwareupdate erfolgreich abgeschlossen. Abschluss wurde über den PHNIX-Originaldienst bestätigt.",
+        )
+        self.progress.setValue(100)
+        self.progress_text.setText(
+            "Firmwareupdate erfolgreich über PHNIX bestätigt. "
+            "ADB-Verbindung wird zur Abschlusskontrolle erneut hergestellt …"
+        )
+        self.ota_reattach_btn.setVisible(True)
+        if hasattr(self, "_stop_ota_elapsed"):
+            self._stop_ota_elapsed()
+        self._render_flow()
+        QTimer.singleShot(3000, lambda: self._finish_automatic_logs(generation))
+        QTimer.singleShot(100, lambda: self._serial_reattach(generation))
+
+    def _serial_reattach(self, generation: int) -> None:
+        if generation == self._update_run_generation and self._serial_fallback_success:
+            self._reattach_ota()
 
     def _render_transfer_progress(self):
         """Render diagnostics separately; the controller phase headline stays stable."""
@@ -364,8 +426,26 @@ class MainWindow(desktop.MainWindow):
         # CMD_OTA progress and manufacturer messages remain log-only diagnostics;
         # controller phases and terminal decisions are never synthesized here.
 
+    def _handle_record(self, record: dict):
+        super()._handle_record(record)
+        phase = self._record_phase(record)
+        if phase == "c5a8":
+            self._serial_c5a8_started = True
+        if record.get("transfer_started") is True:
+            self._serial_transfer_started = True
+        if record.get("event") == "monitoring-connection-lost":
+            self._serial_monitoring_lost = True
+
     def _start_automatic_logs(self, manifest: Path) -> None:
         self._finish_automatic_logs()
+        self._update_run_generation += 1
+        generation = self._update_run_generation
+        self._serial_sequence = SerialCompletionSequence(generation)
+        self._serial_c5a8_started = False
+        self._serial_transfer_started = False
+        self._serial_monitoring_lost = False
+        self._serial_fallback_success = False
+        self._serial_capture_identity = None
         self._phnix_transfer_event = None
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         firmware_directory = manifest.parent
@@ -401,6 +481,7 @@ class MainWindow(desktop.MainWindow):
                     f"{fallback_error}"
                 )
         capture = self._ensure_debug_capture(for_update=True)
+        self._serial_capture_identity = capture.identity
         if not capture.active:
             self._debug_last_data = None
             self._debug_connected_since = None
@@ -409,7 +490,9 @@ class MainWindow(desktop.MainWindow):
             "progress", lambda status, error: self._debug_signals.status.emit(status, error)
         )
         if not capture.add_consumer(
-            "update", lambda line, event: self._debug_signals.update_line.emit(line, event)
+            "update", lambda line, event, run=generation: self._debug_signals.update_line.emit(
+                run, line, event
+            )
         ):
             warning = (
                 "Remote PHNIX-Debugstream nicht erreichbar – Fortsetzung ohne LTE-Debug."
@@ -418,7 +501,13 @@ class MainWindow(desktop.MainWindow):
             )
             self._log("[Warnung] " + warning)
 
-    def _finish_automatic_logs(self) -> None:
+    def _update_debug_line_for_run(self, generation: int, line: str, event: object) -> None:
+        if generation == self._update_run_generation:
+            self._update_debug_line(line, event)
+
+    def _finish_automatic_logs(self, generation: int | None = None) -> None:
+        if generation is not None and generation != self._update_run_generation:
+            return
         if self._debug_capture:
             self._debug_capture.remove_consumer("update")
             self._debug_capture.remove_status_consumer("log")
@@ -465,9 +554,37 @@ class MainWindow(desktop.MainWindow):
         super()._run(op, command, cwd)
 
     def _done(self, op, code, output):
-        super()._done(op, code, output)
+        keep_serial_tail = (
+            op == "update"
+            and self._serial_monitoring_lost
+            and self._serial_c5a8_started
+            and self._serial_transfer_started
+            and not self._serial_fallback_success
+        )
         if op in {"dry", "update"}:
-            QTimer.singleShot(1200, self._finish_automatic_logs)
+            if keep_serial_tail:
+                generation = self._update_run_generation
+                if self._automatic_log:
+                    try:
+                        self._automatic_log.close()
+                    except OSError:
+                        pass
+                    self._automatic_log = None
+                QTimer.singleShot(600000, lambda: self._finish_automatic_logs(generation))
+            else:
+                # Must happen before the base implementation can open a modal QMessageBox.
+                self._finish_automatic_logs()
+        super()._done(op, code, output)
+        if op == "ota-reattach" and self._serial_fallback_success:
+            if code == 0:
+                self.progress_text.setText(
+                    "Firmwareupdate erfolgreich über PHNIX bestätigt. ADB-Abschlusskontrolle abgeschlossen."
+                )
+            else:
+                self.progress_text.setText(
+                    "Firmwareupdate erfolgreich über PHNIX bestätigt. "
+                    "ADB-Abschlusskontrolle derzeit nicht möglich."
+                )
 
     def _log(self, text):
         super()._log(text)
