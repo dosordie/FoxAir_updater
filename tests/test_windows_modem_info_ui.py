@@ -307,6 +307,21 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("if self._serial_monitoring_lost", apply_event)
         self.assertIn("vollständige Abschlusssequenz wird noch geprüft", apply_event)
 
+    def test_serial_success_controller_exit_uses_only_generic_cleanup(self):
+        done = self.lte_ui.split("def _done(self, op, code, output):", 1)[1].split(
+            "def _log", 1
+        )[0]
+        serial_exit = done.split('if op == "update" and self._serial_fallback_success:', 1)[1].split(
+            "super()._done(op, code, output)", 1
+        )[0]
+        self.assertIn('super()._done("handled-result", code, output)', serial_exit)
+        self.assertIn("return", serial_exit)
+        self.assertNotIn("_reattach_ota", serial_exit)
+        self.assertNotIn("QMessageBox", serial_exit)
+        normal_path = done.split('if op == "update" and self._serial_fallback_success:', 1)[0]
+        self.assertIn("keep_serial_tail", normal_path)
+        self.assertIn("self._serial_monitoring_lost", normal_path)
+
     def test_debug_disconnect_fallback_and_source_timestamp_reset(self):
         self.assertIn(
             '"Monitor getrennt – LTE-Logging für laufendes Update weiterhin verbunden."',

@@ -598,6 +598,12 @@ class MainWindow(desktop.MainWindow):
             else:
                 # Must happen before the base implementation can open a modal QMessageBox.
                 self._finish_automatic_logs()
+        if op == "update" and self._serial_fallback_success:
+            # Preserve the already terminal PHNIX result while still running the
+            # generic process/button cleanup.  The normal update handler would
+            # reinterpret the controller's non-zero monitoring-loss exit.
+            super()._done("handled-result", code, output)
+            return
         super()._done(op, code, output)
         if op == "ota-reattach" and self._serial_fallback_success:
             status = None
