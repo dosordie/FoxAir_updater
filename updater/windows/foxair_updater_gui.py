@@ -308,7 +308,19 @@ class MainWindow(QMainWindow):
         self.progress_text.setFont(progress_font)
         layout.addWidget(self.progress_text)
         self.progress = QProgressBar()
-        self.progress.setMinimumHeight(54)
+        self.progress.setFixedHeight(20)
+        self.progress.setTextVisible(False)
+        self.progress.setStyleSheet(
+            "QProgressBar {"
+            " border: 1px solid palette(mid);"
+            " border-radius: 4px;"
+            " background: palette(base);"
+            "}"
+            "QProgressBar::chunk {"
+            " background: palette(highlight);"
+            " border-radius: 3px;"
+            "}"
+        )
         layout.addWidget(self.progress)
         self.ota_reattach_btn = QPushButton("ADB neu verbinden / OTA-Status prüfen")
         self.ota_reattach_btn.clicked.connect(self._reattach_ota)

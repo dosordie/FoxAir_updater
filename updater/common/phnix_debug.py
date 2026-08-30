@@ -58,6 +58,36 @@ class DebugEvent:
     terminal_success: bool = False  # Always false: controller state remains authoritative.
 
 
+@dataclass
+class SerialCompletionSequence:
+    """Track the four diagnostic completion events for one local update generation."""
+
+    generation: int
+    position: int = 0
+
+    @property
+    def complete(self) -> bool:
+        return self.position == 4
+
+    def observe(self, event: DebugEvent | None, generation: int) -> bool:
+        if event is None or generation != self.generation or self.position >= 4:
+            return self.position == 4 and generation == self.generation
+        expected = (
+            ("transfer-complete", None),
+            ("manufacturer-success", None),
+            ("cloud-progress", "0053"),
+            ("manufacturer-finished", None),
+        )[self.position]
+        if event.kind != expected[0]:
+            return False
+        if expected[1] is not None and not (
+            event.code == expected[1] and event.progress == 100
+        ):
+            return False
+        self.position += 1
+        return self.complete
+
+
 _TRANSFER = re.compile(r"tal_len:([0-9a-f]+),and:([0-9a-f]+)", re.I)
 _BLOCK = re.compile(r"readCount\s*=\s*(\d+)\s+size\s*=\s*(\d+)", re.I)
 _CMD_JSON = re.compile(
@@ -109,6 +139,28 @@ def parse_debug_line(line: str) -> DebugEvent | None:
     return None
 
 
+def completion_events_for_line(line: str) -> list[DebugEvent]:
+    """Return every ordered terminal-sequence diagnostic in one physical line."""
+    found: list[tuple[int, DebugEvent]] = []
+    for marker, kind in (
+        ("升级包传输完成", "transfer-complete"),
+        ("主板升级成功<5>", "manufacturer-success"),
+        ("主板升级结束", "manufacturer-finished"),
+    ):
+        start = 0
+        while (position := line.find(marker, start)) >= 0:
+            found.append((position, DebugEvent(kind)))
+            start = position + len(marker)
+    for pattern in (_CMD_JSON, _CMD_PLAIN):
+        for match in pattern.finditer(line):
+            code, value = match.groups()
+            if code == "0053" and int(value) == 100:
+                found.append(
+                    (match.start(), DebugEvent("cloud-progress", progress=100.0, code=code))
+                )
+    return [event for _position, event in sorted(found, key=lambda item: item[0])]
+
+
 def translations_for(line: str) -> list[str]:
     """Return every distinct explanation found in one physical trace line."""
     matches: list[tuple[int, str]] = []
@@ -158,11 +210,15 @@ def explain_debug_line(line: str) -> str:
 
 
 _KEY_VALUE = re.compile(
-    r"(?i)(device[_-]?secret|devicesecret|iccid|imsi|imei|devicecode|device_code|productkey|product_key)"
+    r"(?i)(device[_-]?secret|devicesecret|iccid|ccid|imsi|imei|devicename|deviceid_03|"
+    r"devicecode|device_code|productkey|product_key)"
     r"(\s*[=:]\s*|[\"']\s*:\s*[\"'])([^\s,;&\"'{}]+)"
 )
 _TOPIC = re.compile(r"(?i)(/(?:sys|ext|ota|device)/)([^\s\"']+)")
 _PHNIX_TOPIC = re.compile(r"(?<![\w/])/(?!sys/|ext/|ota/|device/)([^/\s\"']+)/([^/\s\"']+)(/user(?:/[^\s\"']*)?)", re.I)
+_ERROR_PAYLOAD = re.compile(
+    r"(?i)(payload:\s*error:\s*0\s*,\s*18\s*,\s*)([^,\s]+)(\s*,\s*)([^,\s]+)"
+)
 
 
 def redact_debug_text(text: str) -> str:
@@ -173,6 +229,10 @@ def redact_debug_text(text: str) -> str:
         return key + separator + replacement
 
     redacted = _KEY_VALUE.sub(replace, text)
+    redacted = _ERROR_PAYLOAD.sub(
+        lambda match: match.group(1) + "<REDACTED>" + match.group(3) + "<REDACTED>",
+        redacted,
+    )
     redacted = _TOPIC.sub(lambda m: m.group(1) + "<REDACTED>", redacted)
     return _PHNIX_TOPIC.sub(r"/<REDACTED>/<REDACTED>\3", redacted)
 

@@ -199,7 +199,6 @@ class MainWindow(base.MainWindow):
         layout.insertWidget(3, self.flow_status)
 
         self.progress.setRange(0, 100)
-        self.progress.setMinimumHeight(54)
         self.progress.setValue(0)
         self.progress.setFormat("Noch keine Firmwareübertragung")
         self.progress_sources = QLabel("")
@@ -458,7 +457,7 @@ class MainWindow(base.MainWindow):
         return None
 
     def _handle_plain_status(self, text: str):
-        prefix = "[Windows-Sicherheitswrapper] "
+        prefix = "[Update-Schutz] "
         if not text.startswith(prefix):
             return
         message = text[len(prefix):].strip()
@@ -1056,7 +1055,7 @@ class MainWindow(base.MainWindow):
                     "Wärmepumpe und LTE-Modem nicht stromlos machen. Anschließend „ADB neu verbinden / "
                     "OTA-Status prüfen“ verwenden.",
                 )
-                QTimer.singleShot(1500, self._reattach_ota)
+                QTimer.singleShot(1500, self._automatic_monitoring_reattach)
             elif guarded:
                 self._flow_title = "Update sicher angehalten"
                 self._set_step("update-result", "error", "Guarded Hold – keine weiteren Updatebefehle ausführen.")
@@ -1120,6 +1119,9 @@ class MainWindow(base.MainWindow):
                     "Die Wiederherstellung wurde nicht erfolgreich abgeschlossen. Details stehen im Protokoll.",
                 )
             self._render_flow()
+
+    def _automatic_monitoring_reattach(self):
+        self._reattach_ota()
 
     def _dry(self):
         self._reset_flow("Vorprüfung / Dry-Run läuft", transfer_expected=False)

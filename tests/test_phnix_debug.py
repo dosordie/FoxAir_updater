@@ -7,7 +7,9 @@ from pathlib import Path
 
 from updater.common.phnix_debug import (
     PhnixDebugCapture,
+    SerialCompletionSequence,
     TcpDebugSource,
+    completion_events_for_line,
     explain_debug_line,
     parse_debug_line,
     redact_debug_text,
@@ -151,6 +153,48 @@ class PhnixDebugTests(unittest.TestCase):
             self.assertNotIn("a1ProductKey", safe)
             self.assertNotIn("867530900000001", safe)
             self.assertIn("/<REDACTED>/<REDACTED>/user/update", safe)
+
+    def test_phnix_identifier_variants_and_error_payload_are_redacted(self):
+        safe = redact_debug_text(
+            "ccid = 8988212345678901234 deviceName:359712345678901 "
+            "deviceID_03=board-identity "
+            "payload: error:0,18,8988212345678901234,359712345678901,/,823002250012,0/0"
+        )
+        self.assertNotIn("8988212345678901234", safe)
+        self.assertNotIn("359712345678901", safe)
+        self.assertNotIn("board-identity", safe)
+        self.assertIn("payload: error:0,18,<REDACTED>,<REDACTED>,/,823002250012,0/0", safe)
+
+    def test_serial_completion_requires_ordered_current_generation_sequence(self):
+        events = [
+            parse_debug_line("升级包传输完成"),
+            parse_debug_line("主板升级成功<5>"),
+            parse_debug_line("CMD_OTA code 0053 progress 100"),
+            parse_debug_line("主板升级结束"),
+        ]
+        sequence = SerialCompletionSequence(7)
+        for event in events[:-1]:
+            self.assertFalse(sequence.observe(event, 7))
+        self.assertTrue(sequence.observe(events[-1], 7))
+
+        old = SerialCompletionSequence(6)
+        self.assertFalse(any(old.observe(event, 7) for event in events))
+        incomplete = SerialCompletionSequence(8)
+        self.assertFalse(incomplete.observe(events[1], 8))
+        self.assertFalse(incomplete.observe(events[2], 8))
+        self.assertFalse(incomplete.observe(events[3], 8))
+
+    def test_glued_completion_messages_keep_manufacturer_and_0053_events(self):
+        events = completion_events_for_line(
+            "主板升级成功<5> ... CMD_OTA code 0053 progress 100"
+        )
+        self.assertEqual(
+            [(event.kind, event.code, event.progress) for event in events],
+            [
+                ("manufacturer-success", None, None),
+                ("cloud-progress", "0053", 100.0),
+            ],
+        )
 
     def test_parser_progress_and_invalid_values(self):
         event = parse_debug_line("tal_len:46C0E,and:43B78,len;0,idx:183")
