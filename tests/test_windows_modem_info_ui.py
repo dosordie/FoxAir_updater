@@ -157,6 +157,17 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("dirty_state_reset_is_safe", self.desktop)
         self.assertIn('self._backend("restore"', self.desktop)
 
+    def test_dry_run_dirty_state_bypasses_advanced_opt_in_only_for_popup(self):
+        self.assertIn("def _reset_block_pending(self, checked: bool = False, *, from_dry_run: bool = False)", self.desktop)
+        self.assertIn("self._reset_block_pending(from_dry_run=True)", self.desktop)
+        self.assertIn("not from_dry_run and not self.allow_block_reset.isChecked()", self.desktop)
+
+    def test_lte_log_contains_translations_and_events_only_refine_existing_steps(self):
+        self.assertIn('self._lte_log.write(explain_debug_line(line) + "\\n")', self.lte_ui)
+        self.assertIn("if key in self._flow_steps:", self.lte_ui)
+        for kind in ("transfer-complete", "manufacturer-success", "mqtt-normal", "cloud-progress"):
+            self.assertIn(f'kind == "{kind}"', self.lte_ui)
+
     def test_completed_flow_phases_are_resolved_to_green(self):
         self.assertIn('self._set_step(key, "ok", text)', self.desktop)
         self.assertIn('self._resolve_flow_step("phase-yield"', self.desktop)

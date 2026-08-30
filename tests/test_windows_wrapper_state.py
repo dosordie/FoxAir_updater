@@ -6,15 +6,14 @@ from pathlib import Path
 from updater.windows import phnix_windows_controller_wrapper as wrapper
 
 
-def test_dirty_state_reset_requires_confirmed_pre_transfer_state():
-    assert wrapper.dirty_state_reset_is_safe({"phase": "c350", "transfer_started": False})
-    assert wrapper.dirty_state_reset_is_safe({"phase": "same-version", "transfer_started": False})
-    assert not wrapper.dirty_state_reset_is_safe({"phase": "c5a8", "transfer_started": True})
-    assert not wrapper.dirty_state_reset_is_safe({"phase": "c350"})
-    assert not wrapper.dirty_state_reset_is_safe(None)
-
-
 class WindowsWrapperStateTests(unittest.TestCase):
+    def test_dirty_state_reset_requires_confirmed_pre_transfer_state(self):
+        self.assertTrue(wrapper.dirty_state_reset_is_safe({"phase": "c350", "transfer_started": False}))
+        self.assertTrue(wrapper.dirty_state_reset_is_safe({"phase": "same-version", "transfer_started": False}))
+        self.assertFalse(wrapper.dirty_state_reset_is_safe({"phase": "c5a8", "transfer_started": True}))
+        self.assertFalse(wrapper.dirty_state_reset_is_safe({"phase": "c350"}))
+        self.assertFalse(wrapper.dirty_state_reset_is_safe(None))
+
     def test_explicit_state_dir_is_the_effective_state_dir(self):
         with tempfile.TemporaryDirectory() as temp:
             wanted = Path(temp) / "gui-state"

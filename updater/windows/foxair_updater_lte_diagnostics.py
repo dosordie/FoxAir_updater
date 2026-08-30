@@ -216,7 +216,7 @@ class MainWindow(desktop.MainWindow):
     def _update_debug_line(self, line: str, event: object):
         if self._lte_log:
             try:
-                self._lte_log.write(line + "\n")
+                self._lte_log.write(explain_debug_line(line) + "\n")
                 self._lte_log.flush()
             except OSError as error:
                 self._lte_log = None
@@ -228,6 +228,42 @@ class MainWindow(desktop.MainWindow):
                 f"Firmwaredaten werden an das Mainboard übertragen – PHNIX: {percent:.1f} % / "
                 f"{event.current} von {event.total} Byte"
             )
+        self._apply_debug_event(event)
+
+    def _update_existing_debug_step(self, key: str, level: str, text: str) -> None:
+        """Refine a visible controller step without creating a new safety fact."""
+        if key in self._flow_steps:
+            self._set_step(key, level, text)
+
+    def _apply_debug_event(self, event: object) -> None:
+        kind = getattr(event, "kind", None)
+        if kind == "transfer-complete":
+            self._update_existing_debug_step(
+                "phase-c5a8", "warn",
+                "Firmwaredaten vollständig an das Mainboard übertragen – Mainboard verarbeitet das Image; Controllerprüfung läuft.",
+            )
+        elif kind == "manufacturer-success":
+            self._update_existing_debug_step(
+                "phase-c5a8", "warn",
+                "PHNIX-Originaldienst meldet Mainboard-Update erfolgreich – abschließende Controllerprüfung läuft.",
+            )
+        elif kind == "mqtt-normal":
+            self._update_existing_debug_step(
+                "preflight-mqtt", "ok",
+                "PHNIX-Originaldienst meldet Aliyun/MQTT als verbunden.",
+            )
+        elif kind == "cloud-progress":
+            progress = int(event.progress)
+            if event.code == "0043":
+                self._update_existing_debug_step(
+                    "phase-c5a8", "warn",
+                    f"Firmwaredaten werden an das Mainboard übertragen – PHNIX-Cloudfortschritt {progress} %; Controller bleibt maßgeblich.",
+                )
+            elif event.code == "0053":
+                self._update_existing_debug_step(
+                    "phase-success-report", "warn",
+                    f"PHNIX-Originaldienst meldet Mainboard-OTA-Status {progress} % – abschließende Controllerprüfung läuft.",
+                )
 
     def _start_automatic_logs(self, manifest: Path) -> None:
         self._finish_automatic_logs()

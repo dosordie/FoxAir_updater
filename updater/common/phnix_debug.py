@@ -85,6 +85,8 @@ def parse_debug_line(line: str) -> DebugEvent | None:
         return DebugEvent("transfer-complete")
     if "主板升级结束" in line:
         return DebugEvent("manufacturer-finished")
+    if "IOT_MQTT_CheckStateNormal = 1" in line:
+        return DebugEvent("mqtt-normal")
     return None
 
 
@@ -110,6 +112,7 @@ _KEY_VALUE = re.compile(
     r"(\s*[=:]\s*|[\"']\s*:\s*[\"'])([^\s,;&\"'{}]+)"
 )
 _TOPIC = re.compile(r"(?i)(/(?:sys|ext|ota|device)/)([^\s\"']+)")
+_PHNIX_TOPIC = re.compile(r"(?<![\w/])/(?!sys/|ext/|ota/|device/)([^/\s\"']+)/([^/\s\"']+)(/user(?:/[^\s\"']*)?)", re.I)
 
 
 def redact_debug_text(text: str) -> str:
@@ -120,7 +123,8 @@ def redact_debug_text(text: str) -> str:
         return key + separator + replacement
 
     redacted = _KEY_VALUE.sub(replace, text)
-    return _TOPIC.sub(lambda m: m.group(1) + "<REDACTED>", redacted)
+    redacted = _TOPIC.sub(lambda m: m.group(1) + "<REDACTED>", redacted)
+    return _PHNIX_TOPIC.sub(r"/<REDACTED>/<REDACTED>\3", redacted)
 
 
 def _partial_mask(value: str) -> str:
@@ -206,6 +210,7 @@ class PhnixDebugCapture:
         self._consumers: dict[str, Callable[[str, DebugEvent | None], None]] = {}
         self._lock = threading.RLock()
         self._stop = threading.Event()
+        self._opened = threading.Event()
         self._thread: threading.Thread | None = None
         self.status = "Nicht verfügbar"
         self.last_error: str | None = None
@@ -218,38 +223,32 @@ class PhnixDebugCapture:
     def add_consumer(self, name: str, callback: Callable[[str, DebugEvent | None], None]) -> bool:
         with self._lock:
             self._consumers[name] = callback
-            if self._source is not None:
+            if self._source is not None or (self._thread is not None and self._thread.is_alive()):
                 return True
-            try:
-                self._source = self._factory()
-            except Exception as error:
-                self.last_error = str(error)
-                self.status = "Nicht verfügbar"
-                return False
-            self.status = self._source.description
             self._stop.clear()
+            self._opened.clear()
             self._thread = threading.Thread(target=self._read_loop, daemon=True, name="phnix-debug-reader")
             self._thread.start()
-            return True
+        self._opened.wait(2.0)
+        return self.active
 
     def remove_consumer(self, name: str) -> None:
-        source = None
         with self._lock:
             self._consumers.pop(name, None)
-            if not self._consumers and self._source is not None:
+            if not self._consumers:
                 self._stop.set()
-                source, self._source = self._source, None
-                self.status = "Nicht verfügbar"
-        if source is not None:
-            source.close()
 
     def _read_loop(self) -> None:
         pending = ""
-        with self._lock:
-            source = self._source
-        if source is None:
-            return
+        source = None
         try:
+            source = self._factory()
+            with self._lock:
+                if self._stop.is_set() or not self._consumers:
+                    return
+                self._source = source
+                self.status = source.description
+            self._opened.set()
             while not self._stop.is_set():
                 chunk = source.read(8192)
                 if not chunk:
@@ -268,13 +267,12 @@ class PhnixDebugCapture:
         except Exception as error:
             self.last_error = str(error)
         finally:
-            owns_source = False
             with self._lock:
                 if self._source is source:
                     self._source = None
-                    self.status = "Nicht verfügbar"
-                    owns_source = True
-            if owns_source:
+                self.status = "Nicht verfügbar"
+            self._opened.set()
+            if source is not None:
                 try:
                     source.close()
                 except Exception:

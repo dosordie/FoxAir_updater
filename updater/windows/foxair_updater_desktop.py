@@ -165,8 +165,8 @@ class MainWindow(app.MainWindow):
             self.block_reset_status.setText("Kein lokaler cache.pending-Blockzustand vorhanden.")
         self._buttons()
 
-    def _reset_block_pending(self):
-        if self.busy or not self.allow_block_reset.isChecked():
+    def _reset_block_pending(self, checked: bool = False, *, from_dry_run: bool = False):
+        if self.busy or (not from_dry_run and not self.allow_block_reset.isChecked()):
             return
         marker = self._wrapper_pending_path()
         if not marker.exists():
@@ -216,7 +216,7 @@ class MainWindow(app.MainWindow):
 
     def _dry(self):
         if self._wrapper_pending_path().exists():
-            self._reset_block_pending()
+            self._reset_block_pending(from_dry_run=True)
             return
         super()._dry()
 
