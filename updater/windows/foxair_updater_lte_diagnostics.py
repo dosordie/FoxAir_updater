@@ -38,6 +38,7 @@ from updater.common.phnix_debug import (
 class DebugSignals(QObject):
     line = Signal(str, object)
     update_line = Signal(str, object)
+    status = Signal(str, object)
 
 
 class QtSerialDebugSource:
@@ -65,17 +66,25 @@ class QtSerialDebugSource:
 
 class PhnixDebugWindow(QDialog):
     closed = Signal()
+    connect_requested = Signal()
+    disconnect_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("PHNIX Debugmonitor (nur Lesen)")
         self.resize(900, 560)
         layout = QVBoxLayout(self)
-        self.status = QLabel("Nicht verfügbar")
+        self.status = QLabel("Status: Getrennt")
+        self.status.setWordWrap(True)
         layout.addWidget(self.status)
         row = QHBoxLayout()
         self.mode = QComboBox()
         self.mode.addItems(("Original", "Original + deutsche Erläuterungen"))
+        self.mode.setCurrentIndex(1)
+        self.connect_btn = QPushButton("Verbinden")
+        self.connect_btn.clicked.connect(self.connect_requested)
+        self.disconnect_btn = QPushButton("Trennen")
+        self.disconnect_btn.clicked.connect(self.disconnect_requested)
         self.autoscroll = QCheckBox("Auto-Scroll")
         self.autoscroll.setChecked(True)
         clear = QPushButton("Anzeige leeren")
@@ -83,6 +92,8 @@ class PhnixDebugWindow(QDialog):
         save = QPushButton("Log speichern…")
         save.clicked.connect(self._save)
         row.addWidget(self.mode)
+        row.addWidget(self.connect_btn)
+        row.addWidget(self.disconnect_btn)
         row.addWidget(self.autoscroll)
         row.addStretch()
         row.addWidget(clear)
@@ -115,10 +126,15 @@ class MainWindow(desktop.MainWindow):
         self._debug_signals = DebugSignals()
         self._debug_signals.line.connect(self._debug_line)
         self._debug_signals.update_line.connect(self._update_debug_line)
+        self._debug_signals.status.connect(self._debug_status)
         self._debug_capture: PhnixDebugCapture | None = None
         self._debug_window: PhnixDebugWindow | None = None
         self._automatic_log = None
         self._lte_log = None
+        self._debug_connected_since: datetime | None = None
+        self._debug_last_data: datetime | None = None
+        self._last_debug_status = "Getrennt"
+        self._phnix_transfer_event = None
         super().__init__()
 
     def _modem_info_page(self):
@@ -178,57 +194,150 @@ class MainWindow(desktop.MainWindow):
         outer.addWidget(scroll, 1)
         return widget
 
-    def _new_debug_capture(self) -> PhnixDebugCapture:
+    def _debug_configuration(self):
         if self.adb_remote.isChecked():
             host, port = remote_debug_endpoint(self.remote_host.text(), self.remote_port.value())
-            return PhnixDebugCapture(lambda: TcpDebugSource(host, port))
+            return f"remote:{host}:{port}", f"Quelle: Remote\nEndpunkt: {host}:{port}", lambda: TcpDebugSource(host, port)
         port = resolve_phnix_debug_port()
         if not port:
-            return PhnixDebugCapture(lambda: (_ for _ in ()).throw(OSError("MI_04 nicht eindeutig gefunden")))
-        return PhnixDebugCapture(lambda: QtSerialDebugSource(port))
+            return "local:MI_04", "Quelle: Lokal\nEndpunkt: MI_04", lambda: (_ for _ in ()).throw(OSError("COM-Port MI_04 nicht verfügbar"))
+        return f"local:{port}", f"Quelle: Lokal\nEndpunkt: {port} / MI_04", lambda: QtSerialDebugSource(port)
 
-    def _ensure_debug_capture(self) -> PhnixDebugCapture:
-        if self._debug_capture is None:
-            self._debug_capture = self._new_debug_capture()
+    def _new_debug_capture(self) -> PhnixDebugCapture:
+        identity, _description, factory = self._debug_configuration()
+        return PhnixDebugCapture(factory, identity)
+
+    def _ensure_debug_capture(self, *, for_update=False) -> PhnixDebugCapture:
+        identity, _description, factory = self._debug_configuration()
+        old = self._debug_capture
+        if old is None or (old.identity != identity and not old.has_consumer("update")):
+            window_was_connected = bool(old and old.has_consumer("window"))
+            if old:
+                old.remove_consumer("window")
+                old.remove_status_consumer("ui")
+                old.remove_status_consumer("log")
+            self._debug_capture = PhnixDebugCapture(factory, identity)
+            self._debug_last_data = None
+            self._debug_connected_since = None
+            if window_was_connected and for_update:
+                self._attach_monitor_consumer(self._debug_capture)
         return self._debug_capture
+
+    def _attach_monitor_consumer(self, capture):
+        capture.add_status_consumer("ui", lambda status, error: self._debug_signals.status.emit(status, error))
+        return capture.add_consumer("window", lambda line, event: self._debug_signals.line.emit(line, event))
+
+    def _connect_debug_monitor(self):
+        capture = self._ensure_debug_capture()
+        if capture.has_consumer("update") and capture.identity != self._debug_configuration()[0]:
+            self._debug_status("Konfiguration geändert", f"Aktiver Update-Stream: {capture.identity}")
+            return
+        if not capture.active:
+            self._debug_last_data = None
+            self._debug_connected_since = None
+        opened = self._attach_monitor_consumer(capture)
+        if not opened:
+            self._log("[Warnung] PHNIX LTE-Debugport nicht verfügbar – Diagnose bleibt ohne Stream.")
+
+    def _disconnect_debug_monitor(self):
+        if self._debug_capture:
+            self._debug_capture.remove_consumer("window")
+            self._debug_capture.remove_status_consumer("ui")
+        if self._debug_window:
+            if self._debug_capture and self._debug_capture.has_consumer("update"):
+                self._debug_window.status.setText(
+                    "Monitor getrennt – LTE-Logging für laufendes Update weiterhin verbunden."
+                )
+            else:
+                self._debug_window.status.setText("Status: Getrennt")
 
     def _open_debug_monitor(self):
         if self._debug_window is None:
             self._debug_window = PhnixDebugWindow(self)
             self._debug_window.closed.connect(self._close_debug_monitor)
-            capture = self._ensure_debug_capture()
-            opened = capture.add_consumer("window", lambda line, event: self._debug_signals.line.emit(line, event))
-            self._debug_window.status.setText(capture.status)
-            if not opened:
-                self._log("[Warnung] PHNIX LTE-Debugport nicht verfügbar – Diagnose bleibt ohne Stream.")
+            self._debug_window.connect_requested.connect(self._connect_debug_monitor)
+            self._debug_window.disconnect_requested.connect(self._disconnect_debug_monitor)
+            self._connect_debug_monitor()
         self._debug_window.show()
         self._debug_window.raise_()
+        self._debug_window.activateWindow()
 
     def _close_debug_monitor(self):
-        if self._debug_capture:
-            self._debug_capture.remove_consumer("window")
+        self._disconnect_debug_monitor()
         self._debug_window = None
 
     def _debug_line(self, line: str, event: object):
+        self._debug_last_data = datetime.now()
         if self._debug_window:
             self._debug_window.append_line(line)
+        if self._debug_capture:
+            self._debug_status(self._debug_capture.status, self._debug_capture.last_error)
+
+    def _debug_status(self, status: str, error: object):
+        now = datetime.now()
+        if status == "Verbunden" and self._last_debug_status != "Verbunden":
+            self._debug_connected_since = now
+        self._last_debug_status = status
+        if status in {"Getrennt", "Verbindung beendet", "Verbindung fehlgeschlagen"}:
+            self._phnix_transfer_event = None
+            self._render_transfer_progress()
+        identity, description, _factory = self._debug_configuration()
+        capture = self._debug_capture
+        if capture and capture.identity != identity:
+            description += f"\nAktuell verbunden: {capture.identity}\nKonfiguration geändert"
+        details = [f"Status: {status}", description]
+        if self._debug_connected_since and status == "Verbunden":
+            details.append("Verbunden seit: " + self._debug_connected_since.strftime("%H:%M:%S"))
+        if self._debug_last_data:
+            details.append("Letzte Daten: " + self._debug_last_data.strftime("%H:%M:%S"))
+        if error:
+            details.append("Hinweis: " + str(error))
+        if self._debug_window:
+            self._debug_window.status.setText("\n".join(details))
 
     def _update_debug_line(self, line: str, event: object):
         if self._lte_log:
             try:
-                self._lte_log.write(explain_debug_line(line) + "\n")
+                stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                explained = explain_debug_line(line).splitlines()
+                self._lte_log.write(f"[{stamp}] {explained[0]}\n")
+                for explanation in explained[1:]:
+                    self._lte_log.write(f"[{stamp}] {explanation}\n")
                 self._lte_log.flush()
             except OSError as error:
                 self._lte_log = None
                 self._log(f"[Warnung] Automatisches LTE-Log konnte nicht weitergeschrieben werden: {error}")
         # Supplementary progress is shown only once the controller has authoritatively entered C5A8.
         if getattr(event, "kind", None) == "transfer-progress" and "phase-c5a8" in self._flow_steps:
-            percent = event.progress
-            self.progress_text.setText(
-                f"Firmwaredaten werden an das Mainboard übertragen – PHNIX: {percent:.1f} % / "
-                f"{event.current} von {event.total} Byte"
-            )
+            self._phnix_transfer_event = event
+            self._render_transfer_progress()
         self._apply_debug_event(event)
+
+    def _render_transfer_progress(self):
+        """Render diagnostics separately; the controller phase headline stays stable."""
+        if "phase-c5a8" not in self._flow_steps:
+            return
+        lines = []
+        event = self._phnix_transfer_event
+        controller = self._controller_transfer
+        if event is not None:
+            percent = event.progress
+            self.progress.setValue(round(percent))
+            self.progress.setFormat(f"{percent:.1f} % – PHNIX Originaldienst")
+            lines.append(
+                (f"PHNIX Originaldienst: {percent:.1f} % · {event.current:,} / "
+                 f"{event.total:,} Byte").replace(",", ".")
+            )
+        elif controller is not None:
+            offset, length, percent = controller
+            self.progress.setValue(percent)
+            self.progress.setFormat(f"{percent} % – Controller")
+        if controller is not None:
+            offset, length, percent = controller
+            lines.append(
+                (f"Controller: {percent} % · {offset:,} / {length:,} Byte").replace(",", ".")
+            )
+        self.progress_sources.setText("\n".join(lines))
 
     def _update_existing_debug_step(self, key: str, level: str, text: str) -> None:
         """Refine a visible controller step without creating a new safety fact."""
@@ -252,21 +361,12 @@ class MainWindow(desktop.MainWindow):
                 "preflight-mqtt", "ok",
                 "PHNIX-Originaldienst meldet Aliyun/MQTT als verbunden.",
             )
-        elif kind == "cloud-progress":
-            progress = int(event.progress)
-            if event.code == "0043":
-                self._update_existing_debug_step(
-                    "phase-c5a8", "warn",
-                    f"Firmwaredaten werden an das Mainboard übertragen – PHNIX-Cloudfortschritt {progress} %; Controller bleibt maßgeblich.",
-                )
-            elif event.code == "0053":
-                self._update_existing_debug_step(
-                    "phase-success-report", "warn",
-                    f"PHNIX-Originaldienst meldet Mainboard-OTA-Status {progress} % – abschließende Controllerprüfung läuft.",
-                )
+        # CMD_OTA progress and manufacturer messages remain log-only diagnostics;
+        # controller phases and terminal decisions are never synthesized here.
 
     def _start_automatic_logs(self, manifest: Path) -> None:
         self._finish_automatic_logs()
+        self._phnix_transfer_event = None
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         directory = manifest.parent
         try:
@@ -278,7 +378,14 @@ class MainWindow(desktop.MainWindow):
                     stream.close()
             self._automatic_log = self._lte_log = None
             self._log(f"[Warnung] Automatische Update-Logs konnten nicht angelegt werden: {error}")
-        capture = self._ensure_debug_capture()
+        capture = self._ensure_debug_capture(for_update=True)
+        if not capture.active:
+            self._debug_last_data = None
+            self._debug_connected_since = None
+        capture.add_status_consumer("log", self._debug_log_status, notify_initial=False)
+        capture.add_status_consumer(
+            "progress", lambda status, error: self._debug_signals.status.emit(status, error)
+        )
         if not capture.add_consumer(
             "update", lambda line, event: self._debug_signals.update_line.emit(line, event)
         ):
@@ -292,6 +399,8 @@ class MainWindow(desktop.MainWindow):
     def _finish_automatic_logs(self) -> None:
         if self._debug_capture:
             self._debug_capture.remove_consumer("update")
+            self._debug_capture.remove_status_consumer("log")
+            self._debug_capture.remove_status_consumer("progress")
         for stream_name in ("_automatic_log", "_lte_log"):
             stream = getattr(self, stream_name, None)
             if stream:
@@ -300,6 +409,27 @@ class MainWindow(desktop.MainWindow):
                 except OSError:
                     pass
             setattr(self, stream_name, None)
+
+    def _debug_log_status(self, status: str, error: str | None) -> None:
+        if not self._lte_log:
+            return
+        stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        labels = {
+            "Verbinde …": "Verbinde",
+            "Verbunden": "Verbunden",
+            "Getrennt": "Verbindung getrennt",
+            "Verbindung beendet": "Verbindung beendet",
+            "Verbindung fehlgeschlagen": "Verbindung fehlgeschlagen",
+        }
+        endpoint = self._debug_capture.identity if self._debug_capture else ""
+        detail = (" " + endpoint if status == "Verbinde …" and endpoint else "")
+        if error:
+            detail += f": {error}"
+        try:
+            self._lte_log.write(f"[{stamp}] [DEBUG] {labels.get(status, status)}{detail}\n")
+            self._lte_log.flush()
+        except OSError:
+            pass
 
     def _run(self, op, command, cwd=None):
         if op in {"dry", "update"}:

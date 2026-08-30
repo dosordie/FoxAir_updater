@@ -124,6 +124,11 @@ class MainWindow(QMainWindow):
         clear_button = QPushButton("Protokoll leeren")
         clear_button.clicked.connect(self._clear_log)
         row.addWidget(clear_button)
+        self.lte_log_button = QPushButton("LTE-Modem-Log öffnen")
+        self.lte_log_button.clicked.connect(
+            lambda: getattr(self, "_open_debug_monitor", lambda: None)()
+        )
+        row.addWidget(self.lte_log_button)
         save_button = QPushButton("Log speichern…")
         save_button.clicked.connect(self._save_log)
         row.addWidget(save_button)
@@ -287,13 +292,13 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.update_manifest = QLineEdit()
         self.update_manifest.textChanged.connect(self._manifest_summary)
-        button = QPushButton("Manifest…")
+        button = QPushButton("Update-Datei…")
         button.clicked.connect(lambda: self._pick_manifest(self.update_manifest))
         row.addWidget(self.update_manifest, 1)
         row.addWidget(button)
         layout.addLayout(row)
 
-        self.summary = QLabel("Noch kein Manifest ausgewählt.")
+        self.summary = QLabel("Noch keine Update-Datei ausgewählt.")
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         self.progress_text = QLabel("Kein Update aktiv.")
@@ -303,7 +308,7 @@ class MainWindow(QMainWindow):
         self.progress_text.setFont(progress_font)
         layout.addWidget(self.progress_text)
         self.progress = QProgressBar()
-        self.progress.setMinimumHeight(42)
+        self.progress.setMinimumHeight(54)
         layout.addWidget(self.progress)
         self.ota_reattach_btn = QPushButton("ADB neu verbinden / OTA-Status prüfen")
         self.ota_reattach_btn.clicked.connect(self._reattach_ota)
@@ -563,7 +568,7 @@ class MainWindow(QMainWindow):
 
     def _pick_manifest(self, field):
         file_name, _ = QFileDialog.getOpenFileName(
-            self, "Manifest auswählen", str(Path.home()), "Manifest (*.json)"
+            self, "Update-Datei auswählen", str(Path.home()), "Update-Datei (*.json)"
         )
         if file_name:
             field.setText(file_name)
@@ -1050,7 +1055,7 @@ class MainWindow(QMainWindow):
                 f"Firmware: {data.get('firmware_file', '?')} ({'vorhanden' if firmware.is_file() else 'FEHLT'})"
             )
         except Exception:
-            self.summary.setText("Noch kein gültiges Manifest ausgewählt.")
+            self.summary.setText("Noch keine gültige Update-Datei ausgewählt.")
         self._buttons()
 
     def _buttons(self):

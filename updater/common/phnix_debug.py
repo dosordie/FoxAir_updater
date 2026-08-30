@@ -33,6 +33,15 @@ TRANSLATIONS = {
     "获取sim卡iccid失败": "SIM-ICCID konnte nicht gelesen werden.",
     "重新获取sim卡imsi": "SIM-IMSI wird erneut abgefragt.",
     "获取sim卡imsi失败": "SIM-IMSI konnte nicht gelesen werden.",
+    "上报服务器此轮升级失败": "PHNIX-Originaldienst meldet diese OTA-Runde dem Server als fehlgeschlagen/nicht durchgeführt.",
+    "主板收到服务器新固件信息，回复允许升级": "Mainboard hat neue Firmwareinformationen erhalten und erlaubt das Update.",
+    "主板允许升级": "Mainboard erlaubt das Firmwareupdate.",
+    "board固件MD5校验正确！": "MD5-Prüfung der Mainboard-Firmware erfolgreich.",
+    "获取IMEI": "IMEI wird ermittelt.",
+    "重新采集WF": "WF-Information wird erneut abgefragt.",
+    "等待获取主板productKey": "Warte auf ProductKey vom Mainboard.",
+    "重新采集pk": "ProductKey wird erneut abgefragt.",
+    "等待获取主板2deviceSecret": "Warte auf DeviceSecret-/Cloudzuordnung des Mainboards.",
 }
 
 
@@ -56,6 +65,10 @@ _CMD_JSON = re.compile(
     re.I,
 )
 _CMD_PLAIN = re.compile(r"CMD_OTA.*?code\s*[=: ]+\s*(00(?:43|53)).*?progress\s*[=: ]+\s*(\d{1,3})", re.I)
+_DOWNLOAD = re.compile(r"\bdownload\s+(\d{1,3})\s*%", re.I)
+_FILE_LENGTH = re.compile(r"下载主板升级文件长度[:：]\s*([0-9A-Fa-fx]+)")
+_FILE_OFFSET = re.compile(r"传输主板升级文件偏移[:：]\s*([0-9A-Fa-fx]+)")
+_CHINESE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
 
 def parse_debug_line(line: str) -> DebugEvent | None:
@@ -65,6 +78,12 @@ def parse_debug_line(line: str) -> DebugEvent | None:
         total, current = (int(value, 16) for value in match.groups())
         if total > 0 and 0 <= current <= total:
             return DebugEvent("transfer-progress", total, current, current * 100.0 / total)
+        return None
+    match = _DOWNLOAD.search(line)
+    if match:
+        progress = int(match.group(1))
+        if 0 <= progress <= 100:
+            return DebugEvent("lte-download-progress", progress=float(progress))
         return None
     match = _BLOCK.search(line)
     if match:
@@ -90,21 +109,52 @@ def parse_debug_line(line: str) -> DebugEvent | None:
     return None
 
 
+def translations_for(line: str) -> list[str]:
+    """Return every distinct explanation found in one physical trace line."""
+    matches: list[tuple[int, str]] = []
+    for source, translation in TRANSLATIONS.items():
+        if any(source != other and source in other and other in line for other in TRANSLATIONS):
+            continue
+        start = line.find(source)
+        if start >= 0:
+            matches.append((start, translation))
+    for pattern, label in (
+        (_FILE_LENGTH, "Mainboard-Firmwaredatei geladen / Dateilänge bestätigt: {value}."),
+        (_FILE_OFFSET, "Mainboard-Firmwareübertragung startet/steht bei Offset {value}."),
+    ):
+        for match in pattern.finditer(line):
+            matches.append((match.start(), label.format(value=match.group(1))))
+    result: list[str] = []
+    for _, translation in sorted(matches, key=lambda item: item[0]):
+        if translation not in result:
+            result.append(translation)
+    if "publish success, packet-id=" in line:
+        translation = TRANSLATIONS["publish success, packet-id="]
+        if translation not in result:
+            result.append(translation)
+    return result
+
+
 def translation_for(line: str) -> str | None:
-    return next((translation for source, translation in TRANSLATIONS.items() if source in line), None)
+    translations = translations_for(line)
+    return translations[0] if translations else None
 
 
 def explain_debug_line(line: str) -> str:
-    translation = translation_for(line)
-    if translation:
-        return f"{line}\n        -> {translation}"
+    translations = translations_for(line)
     event = parse_debug_line(line)
+    if event and event.kind == "lte-download-progress":
+        translations.append(f"LTE-DTU lädt Firmwaredatei: {event.progress:.0f} %.")
     if event and event.kind == "transfer-progress":
-        return f"{line}\n        -> PHNIX-Debug: {event.current} / {event.total} Byte ({event.progress:.1f} %)."
+        translations.append(
+            f"PHNIX-Debug: {event.current} / {event.total} Byte ({event.progress:.1f} %)."
+        )
     if event and event.kind == "firmware-block":
         label = "Letzter Firmwareblock" if event.bytes_read != event.block_size else "Firmwareblock"
-        return f"{line}\n        -> {label}: {event.bytes_read} Byte."
-    return line
+        translations.append(f"{label}: {event.bytes_read} Byte.")
+    if not translations and _CHINESE.search(line):
+        translations.append("[Noch keine deutsche Erläuterung vorhanden]")
+    return line + "".join(f"\n        -> {item}" for item in dict.fromkeys(translations))
 
 
 _KEY_VALUE = re.compile(
@@ -194,9 +244,12 @@ class TcpDebugSource:
 
     def read(self, size: int) -> bytes:
         try:
-            return self._socket.recv(size)
+            data = self._socket.recv(size)
         except socket.timeout:
             return b""
+        if data == b"":
+            raise ConnectionError("TCP-Verbindung beendet")
+        return data
 
     def close(self) -> None:
         self._socket.close()
@@ -204,15 +257,18 @@ class TcpDebugSource:
 
 class PhnixDebugCapture:
     """One physical reader shared by named, independently-lived consumers."""
-    def __init__(self, source_factory: Callable[[], ReadSource]):
+    def __init__(self, source_factory: Callable[[], ReadSource], identity: str = ""):
         self._factory = source_factory
+        self.identity = identity
         self._source: ReadSource | None = None
         self._consumers: dict[str, Callable[[str, DebugEvent | None], None]] = {}
+        self._status_consumers: dict[str, Callable[[str, str | None], None]] = {}
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._opened = threading.Event()
         self._thread: threading.Thread | None = None
-        self.status = "Nicht verfügbar"
+        self._restart_requested = False
+        self.status = "Getrennt"
         self.last_error: str | None = None
 
     @property
@@ -224,9 +280,14 @@ class PhnixDebugCapture:
         with self._lock:
             self._consumers[name] = callback
             if self._source is not None or (self._thread is not None and self._thread.is_alive()):
+                if self._stop.is_set():
+                    self._stop.clear()
+                    self._restart_requested = True
                 return True
             self._stop.clear()
             self._opened.clear()
+            self.status = "Verbinde …"
+            self._notify_status()
             self._thread = threading.Thread(target=self._read_loop, daemon=True, name="phnix-debug-reader")
             self._thread.start()
         self._opened.wait(2.0)
@@ -238,6 +299,34 @@ class PhnixDebugCapture:
             if not self._consumers:
                 self._stop.set()
 
+    def has_consumer(self, name: str) -> bool:
+        with self._lock:
+            return name in self._consumers
+
+    def add_status_consumer(
+        self,
+        name: str,
+        callback: Callable[[str, str | None], None],
+        *,
+        notify_initial: bool = True,
+    ) -> None:
+        with self._lock:
+            self._status_consumers[name] = callback
+            status, error = self.status, self.last_error
+        if notify_initial:
+            callback(status, error)
+
+    def remove_status_consumer(self, name: str) -> None:
+        with self._lock:
+            self._status_consumers.pop(name, None)
+
+    def _notify_status(self) -> None:
+        with self._lock:
+            callbacks = list(self._status_consumers.values())
+            status, error = self.status, self.last_error
+        for callback in callbacks:
+            callback(status, error)
+
     def _read_loop(self) -> None:
         pending = ""
         source = None
@@ -247,9 +336,17 @@ class PhnixDebugCapture:
                 if self._stop.is_set() or not self._consumers:
                     return
                 self._source = source
-                self.status = source.description
+                self.status = "Verbunden"
+                self.last_error = None
+            self._notify_status()
             self._opened.set()
-            while not self._stop.is_set():
+            while True:
+                with self._lock:
+                    if self._stop.is_set():
+                        break
+                    # A reconnect that arrived before this stop check successfully
+                    # kept the existing physical reader alive.
+                    self._restart_requested = False
                 chunk = source.read(8192)
                 if not chunk:
                     continue
@@ -266,14 +363,28 @@ class PhnixDebugCapture:
                         callback(safe, event)
         except Exception as error:
             self.last_error = str(error)
+            self.status = "Verbindung beendet" if isinstance(error, ConnectionError) else "Verbindung fehlgeschlagen"
+            self._notify_status()
         finally:
-            with self._lock:
-                if self._source is source:
-                    self._source = None
-                self.status = "Nicht verfügbar"
-            self._opened.set()
             if source is not None:
                 try:
                     source.close()
                 except Exception:
                     pass
+            with self._lock:
+                if self._source is source:
+                    self._source = None
+                restart = self._restart_requested and bool(self._consumers)
+                self._restart_requested = False
+                if restart:
+                    self._stop.clear()
+                    self._opened.clear()
+                    self.status = "Verbinde …"
+                    self._thread = threading.Thread(
+                        target=self._read_loop, daemon=True, name="phnix-debug-reader"
+                    )
+                    self._thread.start()
+                elif self.status == "Verbunden":
+                    self.status = "Getrennt"
+            self._opened.set()
+            self._notify_status()
