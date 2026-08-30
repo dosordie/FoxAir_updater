@@ -267,6 +267,7 @@ class PhnixDebugCapture:
         self._stop = threading.Event()
         self._opened = threading.Event()
         self._thread: threading.Thread | None = None
+        self._restart_requested = False
         self.status = "Getrennt"
         self.last_error: str | None = None
 
@@ -279,6 +280,9 @@ class PhnixDebugCapture:
         with self._lock:
             self._consumers[name] = callback
             if self._source is not None or (self._thread is not None and self._thread.is_alive()):
+                if self._stop.is_set():
+                    self._stop.clear()
+                    self._restart_requested = True
                 return True
             self._stop.clear()
             self._opened.clear()
@@ -299,11 +303,18 @@ class PhnixDebugCapture:
         with self._lock:
             return name in self._consumers
 
-    def add_status_consumer(self, name: str, callback: Callable[[str, str | None], None]) -> None:
+    def add_status_consumer(
+        self,
+        name: str,
+        callback: Callable[[str, str | None], None],
+        *,
+        notify_initial: bool = True,
+    ) -> None:
         with self._lock:
             self._status_consumers[name] = callback
             status, error = self.status, self.last_error
-        callback(status, error)
+        if notify_initial:
+            callback(status, error)
 
     def remove_status_consumer(self, name: str) -> None:
         with self._lock:
@@ -329,7 +340,13 @@ class PhnixDebugCapture:
                 self.last_error = None
             self._notify_status()
             self._opened.set()
-            while not self._stop.is_set():
+            while True:
+                with self._lock:
+                    if self._stop.is_set():
+                        break
+                    # A reconnect that arrived before this stop check successfully
+                    # kept the existing physical reader alive.
+                    self._restart_requested = False
                 chunk = source.read(8192)
                 if not chunk:
                     continue
@@ -349,15 +366,25 @@ class PhnixDebugCapture:
             self.status = "Verbindung beendet" if isinstance(error, ConnectionError) else "Verbindung fehlgeschlagen"
             self._notify_status()
         finally:
-            with self._lock:
-                if self._source is source:
-                    self._source = None
-                if self.status == "Verbunden":
-                    self.status = "Getrennt"
-            self._opened.set()
             if source is not None:
                 try:
                     source.close()
                 except Exception:
                     pass
+            with self._lock:
+                if self._source is source:
+                    self._source = None
+                restart = self._restart_requested and bool(self._consumers)
+                self._restart_requested = False
+                if restart:
+                    self._stop.clear()
+                    self._opened.clear()
+                    self.status = "Verbinde …"
+                    self._thread = threading.Thread(
+                        target=self._read_loop, daemon=True, name="phnix-debug-reader"
+                    )
+                    self._thread.start()
+                elif self.status == "Verbunden":
+                    self.status = "Getrennt"
+            self._opened.set()
             self._notify_status()

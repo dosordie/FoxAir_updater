@@ -170,6 +170,10 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         for kind in ("transfer-complete", "manufacturer-success", "mqtt-normal"):
             self.assertIn(f'kind == "{kind}"', self.lte_ui)
         self.assertNotIn('kind == "cloud-progress"', self.lte_ui)
+        self.assertIn(
+            'capture.add_status_consumer("log", self._debug_log_status, notify_initial=False)',
+            self.lte_ui,
+        )
 
     def test_debug_monitor_controls_status_and_update_page_entry(self):
         self.assertIn('self.mode.setCurrentIndex(1)', self.lte_ui)

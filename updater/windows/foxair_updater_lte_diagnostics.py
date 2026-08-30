@@ -382,7 +382,7 @@ class MainWindow(desktop.MainWindow):
         if not capture.active:
             self._debug_last_data = None
             self._debug_connected_since = None
-        capture.add_status_consumer("log", self._debug_log_status)
+        capture.add_status_consumer("log", self._debug_log_status, notify_initial=False)
         capture.add_status_consumer(
             "progress", lambda status, error: self._debug_signals.status.emit(status, error)
         )

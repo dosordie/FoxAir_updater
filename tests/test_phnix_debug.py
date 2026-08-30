@@ -82,6 +82,50 @@ class PhnixDebugTests(unittest.TestCase):
         capture.remove_consumer("window")
         self._wait_for(lambda: source.closed == 1)
 
+    def test_immediate_last_consumer_reconnect_keeps_single_reader(self):
+        class BlockingSource(FakeSource):
+            def __init__(self):
+                super().__init__()
+                self.read_started = threading.Event()
+                self.release_read = threading.Event()
+                self.first_read = True
+
+            def read(self, size):
+                self.read_thread = threading.get_ident()
+                if self.first_read:
+                    self.first_read = False
+                    self.read_started.set()
+                    self.release_read.wait(1.0)
+                    return b""
+                return super().read(size)
+
+        opens = []
+
+        def factory():
+            source = BlockingSource()
+            source.created_thread = threading.get_ident()
+            opens.append(source)
+            return source
+
+        capture = PhnixDebugCapture(factory)
+        self.assertTrue(capture.add_consumer("window", lambda *_: None))
+        self.assertTrue(opens[0].read_started.wait(1.0))
+        capture.remove_consumer("window")
+        self.assertTrue(capture.add_consumer("window", lambda *_: None))
+        opens[0].release_read.set()
+        time.sleep(0.05)
+        self.assertTrue(capture.active)
+        self.assertEqual(len(opens), 1)
+        self.assertEqual(opens[0].closed, 0)
+        capture.remove_consumer("window")
+        self._wait_for(lambda: opens[0].closed == 1)
+
+    def test_status_consumer_can_suppress_initial_disconnected_notification(self):
+        statuses = []
+        capture = PhnixDebugCapture(lambda: FakeSource())
+        capture.add_status_consumer("log", lambda status, error: statuses.append(status), notify_initial=False)
+        self.assertEqual(statuses, [])
+
     def test_exact_mi04_resolution_and_no_heuristic_fallback(self):
         records = [
             {"instance_id": r"USB\VID_1E0E&PID_9001&MI_03\A", "port": "COM6"},
