@@ -199,17 +199,12 @@ class MainWindow(base.MainWindow):
         layout.insertWidget(3, self.flow_status)
 
         self.progress.setRange(0, 100)
-        self.progress.setMinimumHeight(26)
+        self.progress.setMinimumHeight(54)
         self.progress.setValue(0)
         self.progress.setFormat("Noch keine Firmwareübertragung")
         self.progress_sources = QLabel("")
         self.progress_sources.setWordWrap(True)
         layout.insertWidget(layout.indexOf(self.progress) + 1, self.progress_sources)
-        self.lte_log_button = QPushButton("LTE-Modem-Log öffnen")
-        self.lte_log_button.clicked.connect(
-            lambda: getattr(self, "_open_debug_monitor", lambda: None)()
-        )
-        layout.insertWidget(layout.indexOf(self.progress_sources) + 1, self.lte_log_button)
         self._render_flow()
         return widget
 

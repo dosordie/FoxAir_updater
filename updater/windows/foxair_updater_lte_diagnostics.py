@@ -217,6 +217,8 @@ class MainWindow(desktop.MainWindow):
                 old.remove_status_consumer("ui")
                 old.remove_status_consumer("log")
             self._debug_capture = PhnixDebugCapture(factory, identity)
+            self._debug_last_data = None
+            self._debug_connected_since = None
             if window_was_connected and for_update:
                 self._attach_monitor_consumer(self._debug_capture)
         return self._debug_capture
@@ -230,6 +232,9 @@ class MainWindow(desktop.MainWindow):
         if capture.has_consumer("update") and capture.identity != self._debug_configuration()[0]:
             self._debug_status("Konfiguration geändert", f"Aktiver Update-Stream: {capture.identity}")
             return
+        if not capture.active:
+            self._debug_last_data = None
+            self._debug_connected_since = None
         opened = self._attach_monitor_consumer(capture)
         if not opened:
             self._log("[Warnung] PHNIX LTE-Debugport nicht verfügbar – Diagnose bleibt ohne Stream.")
@@ -238,7 +243,13 @@ class MainWindow(desktop.MainWindow):
         if self._debug_capture:
             self._debug_capture.remove_consumer("window")
             self._debug_capture.remove_status_consumer("ui")
-        self._debug_status("Getrennt", None)
+        if self._debug_window:
+            if self._debug_capture and self._debug_capture.has_consumer("update"):
+                self._debug_window.status.setText(
+                    "Monitor getrennt – LTE-Logging für laufendes Update weiterhin verbunden."
+                )
+            else:
+                self._debug_window.status.setText("Status: Getrennt")
 
     def _open_debug_monitor(self):
         if self._debug_window is None:
@@ -267,6 +278,9 @@ class MainWindow(desktop.MainWindow):
         if status == "Verbunden" and self._last_debug_status != "Verbunden":
             self._debug_connected_since = now
         self._last_debug_status = status
+        if status in {"Getrennt", "Verbindung beendet", "Verbindung fehlgeschlagen"}:
+            self._phnix_transfer_event = None
+            self._render_transfer_progress()
         identity, description, _factory = self._debug_configuration()
         capture = self._debug_capture
         if capture and capture.identity != identity:
@@ -365,7 +379,13 @@ class MainWindow(desktop.MainWindow):
             self._automatic_log = self._lte_log = None
             self._log(f"[Warnung] Automatische Update-Logs konnten nicht angelegt werden: {error}")
         capture = self._ensure_debug_capture(for_update=True)
+        if not capture.active:
+            self._debug_last_data = None
+            self._debug_connected_since = None
         capture.add_status_consumer("log", self._debug_log_status)
+        capture.add_status_consumer(
+            "progress", lambda status, error: self._debug_signals.status.emit(status, error)
+        )
         if not capture.add_consumer(
             "update", lambda line, event: self._debug_signals.update_line.emit(line, event)
         ):
@@ -380,6 +400,7 @@ class MainWindow(desktop.MainWindow):
         if self._debug_capture:
             self._debug_capture.remove_consumer("update")
             self._debug_capture.remove_status_consumer("log")
+            self._debug_capture.remove_status_consumer("progress")
         for stream_name in ("_automatic_log", "_lte_log"):
             stream = getattr(self, stream_name, None)
             if stream:

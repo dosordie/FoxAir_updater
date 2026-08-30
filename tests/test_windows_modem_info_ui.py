@@ -177,11 +177,37 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn('QPushButton("Trennen")', self.lte_ui)
         for status in ("Verbinde …", "Verbunden", "Getrennt", "Verbindung fehlgeschlagen"):
             self.assertIn(status, self.lte_ui + Path("updater/common/phnix_debug.py").read_text(encoding="utf-8"))
-        self.assertIn('QPushButton("LTE-Modem-Log öffnen")', self.app_ui)
-        self.assertIn('setMinimumHeight(26)', self.base_ui + self.app_ui)
+        self.assertIn('QPushButton("LTE-Modem-Log öffnen")', self.base_ui)
+        log_row = self.base_ui.split('clear_button = QPushButton("Protokoll leeren")', 1)[1].split(
+            "layout.addLayout(row)", 1
+        )[0]
+        self.assertIn('QPushButton("LTE-Modem-Log öffnen")', log_row)
+        self.assertIn('save_button = QPushButton("Log speichern…")', log_row)
+        self.assertNotIn('QPushButton("LTE-Modem-Log öffnen")', self.app_ui)
+        self.assertIn('setMinimumHeight(54)', self.base_ui)
+        self.assertIn('setMinimumHeight(54)', self.app_ui)
         update_page = self.base_ui.split("def _update(self):", 1)[1].split("def _status", 1)[0]
         self.assertNotIn("Manifest", update_page)
         self.assertIn("Update-Datei", update_page)
+
+    def test_debug_disconnect_fallback_and_source_timestamp_reset(self):
+        self.assertIn(
+            '"Monitor getrennt – LTE-Logging für laufendes Update weiterhin verbunden."',
+            self.lte_ui,
+        )
+        self.assertIn('self._debug_capture.has_consumer("update")', self.lte_ui)
+        status_handler = self.lte_ui.split("def _debug_status", 1)[1].split(
+            "def _update_debug_line", 1
+        )[0]
+        self.assertIn('self._phnix_transfer_event = None', status_handler)
+        self.assertIn('self._render_transfer_progress()', status_handler)
+        self.assertIn('"Verbindung beendet"', status_handler)
+        self.assertIn('"Verbindung fehlgeschlagen"', status_handler)
+        ensure_capture = self.lte_ui.split("def _ensure_debug_capture", 1)[1].split(
+            "def _attach_monitor_consumer", 1
+        )[0]
+        self.assertIn('self._debug_last_data = None', ensure_capture)
+        self.assertIn('self._debug_connected_since = None', ensure_capture)
 
     def test_completed_flow_phases_are_resolved_to_green(self):
         self.assertIn('self._set_step(key, "ok", text)', self.desktop)
