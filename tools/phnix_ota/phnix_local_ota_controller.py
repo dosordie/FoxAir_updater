@@ -116,9 +116,10 @@ def passive_recovery_is_plausible(
 def passive_helper_exit_is_safe(
     *, passive_monitoring: bool, monitoring_was_lost: bool,
     transfer_started: bool, original_service_authoritative: bool,
+    returncode: int | None,
 ) -> bool:
     return bool(
-        passive_monitoring and monitoring_was_lost
+        returncode == 0 and passive_monitoring and monitoring_was_lost
         and (transfer_started or original_service_authoritative)
     )
 
@@ -1191,12 +1192,20 @@ def run_update(args, adb: AdbClient) -> None:
                     monitoring_was_lost=monitoring_was_lost,
                     transfer_started=transfer_started,
                     original_service_authoritative=original_service_authoritative,
+                    returncode=helper.returncode,
                 ):
-                    # The original service owns C5A8.  A local helper that ended
-                    # during a proven monitoring interruption is no longer an
-                    # OTA authority; keep observing remote terminal evidence.
-                    time.sleep(args.poll_interval)
-                    continue
+                    # The original service owns C5A8.  The stale hook snapshot
+                    # cannot provide a future terminal result after its helper
+                    # exited, so detach without claiming board success.
+                    print_event(
+                        "monitoring-detached-passive",
+                        phase=phase,
+                        service_pid=last_service_pid,
+                        offset=last_offset,
+                        message=("Passive OTA monitoring detached after the local helper exited; "
+                                 "the original service remains authoritative"),
+                    )
+                    return
                 raise OtaError(f"runtime helper exited unexpectedly with code {helper.returncode}")
 
             now = time.monotonic()

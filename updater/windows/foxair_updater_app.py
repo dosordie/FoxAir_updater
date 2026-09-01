@@ -1095,7 +1095,13 @@ class MainWindow(base.MainWindow):
                     "führt das Mainboard-Update selbstständig weiter. Nach Beginn der Übertragung dient ADB "
                     "nur noch zur Überwachung.\n\nDas Update kann insgesamt bis zu etwa 40 Minuten dauern. "
                     "Wärmepumpe und LTE-Modem während dieser Zeit nicht ausschalten. Ein Verlust der "
-                    "ADB-Verbindung bedeutet nicht, dass das Firmwareupdate abgebrochen wurde.",
+                    "ADB-Verbindung bedeutet nicht, dass das Firmwareupdate abgebrochen wurde.\n\n"
+                    "Erst wenn das Update nach bis zu etwa 40 Minuten abgeschlossen sein sollte und das "
+                    "Modem weiterhin nicht erreichbar ist: 1. Verbindung erneut prüfen bzw. ADB neu "
+                    "verbinden. 2. Wenn ADB wieder erreichbar ist, kann phnixIot4G kontrolliert neu "
+                    "gestartet werden. 3. Nur wenn das Modem nach dieser ausreichenden Wartezeit weiterhin "
+                    "nicht erreichbar ist, kann ein Power-Reset erwogen werden. Keinen Power-Reset während "
+                    "eines möglicherweise laufenden C5A8 oder der anschließenden Flash-/Prüfphase durchführen.",
                 )
                 QTimer.singleShot(1500, self._automatic_monitoring_reattach)
             elif guarded:

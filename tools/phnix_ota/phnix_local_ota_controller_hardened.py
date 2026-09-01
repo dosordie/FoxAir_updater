@@ -180,6 +180,16 @@ class RunObserver:
             return
         now = time.monotonic()
 
+        if event == "monitoring-detached-passive":
+            self._write(
+                phase="monitoring-detached-passive",
+                terminal=False,
+                transfer_started=self.transfer_started,
+                point_of_no_return=self.transfer_started,
+                highest_confirmed_offset=self.highest_confirmed_offset,
+            )
+            return
+
         if event == "state-backed-up":
             directory = fields.get("directory")
             if isinstance(directory, str) and directory:

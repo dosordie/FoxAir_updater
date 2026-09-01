@@ -50,12 +50,21 @@ class OtaInfoTests(unittest.TestCase):
         self.assertTrue(passive_helper_exit_is_safe(
             passive_monitoring=True, monitoring_was_lost=True,
             transfer_started=True, original_service_authoritative=True,
+            returncode=0,
         ))
 
     def test_helper_exit_before_authoritative_transfer_remains_error(self):
         self.assertFalse(passive_helper_exit_is_safe(
             passive_monitoring=False, monitoring_was_lost=False,
             transfer_started=False, original_service_authoritative=False,
+            returncode=0,
+        ))
+
+    def test_nonzero_helper_exit_remains_error_after_monitoring_loss(self):
+        self.assertFalse(passive_helper_exit_is_safe(
+            passive_monitoring=True, monitoring_was_lost=True,
+            transfer_started=True, original_service_authoritative=True,
+            returncode=1,
         ))
     def test_adb_monitor_requires_failure_count_and_grace_period(self):
         recovery = AdbMonitorRecovery(generation=object())
