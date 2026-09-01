@@ -310,6 +310,7 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
 
 def _start_runner(
     kind: str, value: str, *, original_ota: bool = False,
+    resume_boot: bool = False,
 ) -> tuple[bool, str]:
     translated = _scenario_to_lab_env(kind, value)
     if translated is None:
@@ -337,7 +338,7 @@ def _start_runner(
         extra_env["CREDENTIAL_STUB"] = "1"
         extra_env["DYNAMIC_LOCAL_OTA"] = "1"
         label = f"foxair-adb-original-ota-{value}"
-    elif kind == "scenario":
+    elif kind == "scenario" and not resume_boot:
         # DTU_runner owns the first and only GDB connection. qemu-user's
         # remote stub is not reliable after detach/re-attach, unlike gdbserver
         # on the physical DTU.
@@ -672,7 +673,7 @@ def apply_control(kind: str, value: str) -> tuple[bool, str]:
         if not preserve_resume:
             reset_ota_runtime()
     scenario = state.get("scenario", "success")
-    return _start_runner("scenario", scenario)
+    return _start_runner("scenario", scenario, resume_boot=preserve_resume)
 
 
 def _df(remote: str) -> tuple[int, bytes]:
