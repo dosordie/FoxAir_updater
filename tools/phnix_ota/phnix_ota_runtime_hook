@@ -684,6 +684,15 @@ cancel_probe_resume_hook() {
 make_gdb_script() {
     JSON=$(tr -d '\r\n' < "$COMMAND")
     ESCAPED=$(printf '%s' "$JSON" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    if test -f /data/phnixIot4G.tls-lab; then
+        # qemu-user raises an emulation-only SIGFPE while executing the
+        # injected parser path.  Passing it through terminates the simulated
+        # service.  Real hardware deliberately keeps the validated `pass`
+        # behaviour below.
+        SIGFPE_POLICY=nopass
+    else
+        SIGFPE_POLICY=pass
+    fi
     PARSER_FLOW=$(cat <<EOF
 break *0x1c4bc
 continue
@@ -708,7 +717,7 @@ set print thread-events off
 set auto-load safe-path /
 set libthread-db-search-path /lib
 handle SIGILL nostop noprint pass
-handle SIGFPE nostop noprint pass
+handle SIGFPE nostop noprint $SIGFPE_POLICY
 file /data/phnixIot4G
 target remote 127.0.0.1:12345
 set \$launcher_armed = 1
