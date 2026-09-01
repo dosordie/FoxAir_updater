@@ -4,136 +4,98 @@
 >
 > Diese Datei dient ausschließlich als Arbeits-/Umbauplan im Branch `DTU_runner`.
 > Nach Abschluss des Umbaus, Übernahme der dauerhaften Erkenntnisse in die normale
-> Dokumentation und erfolgreicher Abnahme soll `docs/dev/` wieder gelöscht werden.
+> Dokumentation und erfolgreicher Abnahme soll `docs/dev/` wieder vollständig gelöscht
+> werden.
 
 Stand: 1. September 2026
 
 ## 1. Zielbild
 
-Der bisherige OTA-Ablauf wird so umgebaut, dass der **kritische Updatevorgang vollständig
-auf dem PHNIX-LTE-Modem ausgeführt und überwacht wird**.
-
+Der kritische Mainboard-OTA-Vorgang soll vollständig auf dem PHNIX-LTE-Modem laufen.
 Windows/ADB übernimmt danach nur noch:
 
 1. Vorprüfung und Paketvorbereitung;
 2. Upload von Runner, Hook, Auftrag und Firmware;
-3. Start eines detached OTA-Runners;
+3. detached Start des OTA-Runners;
 4. read-only Status- und Logabfrage;
-5. optional einen kontrollierten Abort-Request;
+5. optional kontrollierte Requests wie `abort-request`;
 6. Bestätigung eines terminalen Ergebnisses (`ack`);
 7. kontrollierte Bereinigung (`cleanup`).
 
-Nach erfolgreichem Start des Runners darf ein Verlust von Windows, ADB, USB oder des
-Remote-ADB-Servers den laufenden OTA-Vorgang **nicht mehr beeinflussen**.
-
-Zielarchitektur:
+Nach erfolgreichem Start darf ein Verlust von Windows, ADB, USB oder Remote-ADB den
+laufenden OTA-Vorgang nicht beeinflussen.
 
 ```text
 Windows GUI / CLI
       │
-      ├─ Firmware + Manifest lokal prüfen
-      ├─ Runner + Hook + Auftrag + Firmware kopieren
+      ├─ prüfen + Paket kopieren
       ├─ detached starten
-      │
-      └─ nur noch lesen / kontrollierte Requests schreiben
+      └─ danach nur beobachten / kontrollierte Requests
                            │
                            ▼
                  DTU OTA Supervisor
-                   ├─ Auftrag erneut prüfen
+                   ├─ Paket lokal erneut prüfen
                    ├─ exklusiven Run übernehmen
                    ├─ persistenten Run-Zustand führen
-                   ├─ Originalzustand sichern
                    ├─ Runtime-Hook starten
-                   ├─ Hook/OTA lokal überwachen
-                   ├─ Fortschritt persistieren
+                   ├─ OTA lokal überwachen
                    ├─ Recovery lokal entscheiden
-                   ├─ terminales Ergebnis persistieren
-                   └─ auf Ack/Cleanup warten
+                   └─ Ergebnis dauerhaft ablegen
                            │
                            ▼
                  phnix_ota_runtime_hook
                    ├─ Originaldienst verifizieren
                    ├─ C350 auslösen
                    ├─ C357/C5A8 beobachten
-                   ├─ Transfergrenze markieren
-                   ├─ Status 3 / 5 beobachten
+                   ├─ Status 3/5 beobachten
                    └─ Step 12 / terminales Ergebnis
 ```
 
-## 2. Warum `/data` für den Supervisor und `/tmp` für den Hook?
+## 2. `/data` für Supervisor, `/tmp` für Hook
 
-Die beiden Pfade haben bewusst unterschiedliche Aufgaben.
+`/tmp/phnix_ota_hook` bleibt für flüchtigen, an aktuelle Prozesse gekoppelten Zustand:
 
-### `/tmp`: flüchtiger Runtime-Zustand
-
-Der vorhandene Runtime-Hook verwendet `/tmp/phnix_ota_hook` unter anderem für:
-
-- `helper.pid`;
-- `gdb.pid` / `gdbserver.pid`;
+- Helper-/GDB-/GDBServer-PIDs;
+- Watchdog-PIDs;
 - generierte GDB-Skripte;
-- `watchdogs.pids`;
-- Marker wie `run.active`, `transfer-started`, `injection-started` und
-  `original-service-owns`;
-- weitere Daten, die direkt an **aktuell laufende Prozesse** gekoppelt sind.
+- `run.active`, `transfer-started`, `injection-started`, `original-service-owns`;
+- sonstige Runtime-Marker.
 
-Das ist sinnvoll. Nach einem Modem-Neustart sind diese PIDs, Debuggerprozesse und
-Prozessbeziehungen ohnehin ungültig. Dieser Zustand soll daher **nicht als dauerhafte
-Wahrheit** behandelt werden.
+Nach einem DTU-Reboot sind diese Prozessbeziehungen ohnehin ungültig.
 
-### `/data`: dauerhafter übergeordneter Run-Zustand
+Der Supervisor hält dagegen unter `/data/foxair_ota_runner/` dauerhaft:
 
-Der neue Supervisor benötigt dagegen Informationen, die auch nach Verlust der
-ADB-Verbindung noch vorhanden sein müssen:
-
-- Run-ID;
-- Auftrag / Paketidentität;
-- letzte bekannte OTA-Phase;
-- letzter Fortschritt;
-- Zeitpunkt der letzten Aktivität;
-- ob C5A8 bereits begonnen hat;
-- ob der Originaldienst bereits autoritativ ist;
-- terminales Ergebnis;
-- Fehlergrund;
+- Run-ID und Paketidentität;
+- letzte Phase und Fortschritt;
+- Zeitpunkt letzter Aktivität;
+- `transfer_started`;
+- `original_service_authoritative`;
+- terminales Ergebnis oder Fehlergrund;
 - Recovery-Ergebnis;
 - Log;
-- Acknowledgement durch Windows;
-- Cleanup-Status.
+- Acknowledgement und Cleanup-Zustand.
 
-Diese Daten gehören deshalb unter `/data/foxair_ota_runner/`.
+Das Design darf nicht darauf angewiesen sein, dass `/tmp` einen Reboot überlebt. Ob ein
+laufendes OTA nach einem echten DTU-Reboot fortgesetzt werden kann, wird separat real
+untersucht. `/data` soll mindestens eine sichere nachträgliche Klassifizierung erlauben.
 
-Wichtig: Das Design darf **nicht darauf angewiesen sein, dass `/tmp` einen Modem-Reboot
-überlebt**. Ob und in welchem Umfang ein laufender OTA nach einem kompletten DTU-Reboot
-fortgesetzt werden kann, wird separat untersucht. Der persistente `/data`-Status soll
-aber in jedem Fall genug Informationen enthalten, um nach einem Neustart sicher zu
-erkennen, welcher Run zuletzt aktiv war und an welcher Sicherheitsgrenze er stand.
+## 3. Sicherheitsinvarianten
 
-Die Persistenz von `/data` über einen realen Modem-Reboot wird vor Nutzung einer
-Restart-Recovery-Funktion nochmals explizit auf Hardware bestätigt.
+1. Maximal ein aktiver OTA-Run pro DTU.
+2. ADB-Abbruch beendet niemals einen gestarteten OTA-Run.
+3. Nach begonnenem C5A8 bleibt `phnixIot4G` autoritativ.
+4. Generischer Restore bleibt nach begonnenem C5A8 verboten.
+5. 100 % C5A8 ist kein terminaler Erfolg.
+6. Erfolg bleibt an die bestätigte Mainboard-Abschlusssequenz gebunden.
+7. Alte PID-Werte dürfen niemals allein Grundlage eines Kill sein.
+8. Vor Prozessaktionen tatsächliche Prozessidentität prüfen.
+9. Statusdateien immer atomar ersetzen.
+10. Terminale Diagnoseinformationen nicht sofort löschen.
+11. Windows darf den Runner nach Start nicht als Child besitzen.
+12. Unklarer Zustand wird fail-closed behandelt.
+13. OTA-Protokollentscheidungen werden nicht doppelt in Windows und DTU implementiert.
 
-## 3. Sicherheitsinvarianten des neuen Designs
-
-Diese Regeln gelten während des gesamten Umbaus und dürfen nicht durch Komfortfunktionen
-aufgeweicht werden:
-
-1. **Maximal ein aktiver OTA-Run pro DTU.**
-2. Ein ADB-Abbruch beendet niemals automatisch einen gestarteten OTA-Run.
-3. Nach begonnenem C5A8 bleibt der originale `phnixIot4G`-Dienst autoritativ.
-4. Ein generischer Restore ist nach begonnenem C5A8 weiterhin verboten.
-5. `100 %` C5A8 ist kein terminaler Erfolg.
-6. Terminaler Erfolg bleibt an die bestätigte Mainboard-Abschlusssequenz gebunden.
-7. Ein alter PID-Wert allein darf niemals zum Kill eines Prozesses verwendet werden.
-8. Vor Prozessaktionen wird `/proc/<pid>/cmdline` bzw. die tatsächliche Identität geprüft.
-9. Statusdateien werden atomar ersetzt, nie halb geschrieben.
-10. Terminale Diagnoseinformationen werden nicht automatisch unmittelbar gelöscht.
-11. Windows darf den Runner nach dem Start nicht als Child-Prozess besitzen oder über
-    die Lebensdauer einer ADB-Shell kontrollieren.
-12. Ein nicht eindeutig klassifizierbarer Zustand wird fail-closed behandelt.
-13. OTA-Protokollentscheidungen bleiben zentral und dürfen nicht gleichzeitig in
-    Windows und auf dem DTU unterschiedlich implementiert werden.
-
-## 4. Geplantes Dateisystem auf dem DTU
-
-Zielstruktur:
+## 4. Zielstruktur auf dem DTU
 
 ```text
 /data/foxair_ota_runner/
@@ -143,41 +105,31 @@ Zielstruktur:
 │   ├── pid
 │   └── started_at
 ├── last_run_id
-└── runs/
-    └── <RUN-ID>/
-        ├── request.json
-        ├── package.json
-        ├── status.json
-        ├── result.json
-        ├── runner.pid
-        ├── runner.log
-        ├── launcher.log
-        ├── hook.log
-        ├── hook-status.json
-        ├── state/
-        │   ├── ota_info.backup
-        │   ├── ota_info.sha256
-        │   └── weitere notwendige Sicherungen
-        ├── payload/
-        │   ├── firmware.bin
-        │   ├── runtime_hook
-        │   └── ota-command.json
-        ├── abort.request          optional
-        ├── acknowledged           optional
-        └── cleanup.pending        optional
+└── runs/<RUN-ID>/
+    ├── request.json
+    ├── package.json
+    ├── status.json
+    ├── result.json
+    ├── runner.pid
+    ├── runner.log
+    ├── launcher.log
+    ├── hook.log
+    ├── hook-status.json
+    ├── state/
+    ├── payload/
+    │   ├── firmware.bin
+    │   ├── runtime_hook
+    │   └── ota-command.json
+    ├── abort.request       optional
+    └── acknowledged        optional
 ```
 
-Die konkrete Struktur kann während Stage 2 noch vereinfacht werden. Entscheidend ist
-die Trennung zwischen:
-
-- persistentem Supervisorstatus in `/data`;
-- flüchtigem Hook-/Debuggerzustand in `/tmp`.
+Die konkrete Struktur darf noch vereinfacht werden. Entscheidend bleibt die Trennung
+zwischen persistentem Supervisorstatus in `/data` und flüchtigem Hookzustand in `/tmp`.
 
 ## 5. Statusvertrag
 
-Der Supervisor erhält ein eigenes, versionsgebundenes Statusschema.
-
-Beispiel:
+Zielschema mindestens:
 
 ```json
 {
@@ -200,44 +152,10 @@ Beispiel:
 }
 ```
 
-Terminaler Fehler beispielsweise:
+Pflichtfelder: `schema`, `run_id`, `state`, `phase`, `terminal`, `updated_at`,
+`transfer_started`, `original_service_authoritative`, `recovery`.
 
-```json
-{
-  "schema": "foxair-dtu-ota-run-v1",
-  "run_id": "20260901-203000-4711",
-  "state": "failed",
-  "phase": "precondition",
-  "terminal": true,
-  "progress": 0,
-  "transfer_started": false,
-  "original_service_authoritative": false,
-  "recovery": "completed",
-  "reason": "service_pid_changed",
-  "detail": "Expected original service identity no longer matches",
-  "updated_at": 1788290030
-}
-```
-
-### Pflichtfelder
-
-Mindestens:
-
-- `schema`
-- `run_id`
-- `state`
-- `phase`
-- `terminal`
-- `updated_at`
-- `transfer_started`
-- `original_service_authoritative`
-- `recovery`
-
-Fortschrittsfelder sind phasenabhängig.
-
-## 6. Zustandsmodell des Supervisors
-
-Vorgesehene grobe Zustände:
+## 6. Supervisor-Zustandsmodell
 
 ```text
 prepared
@@ -264,264 +182,157 @@ terminal-verification
   └─ recovery-required
 ```
 
-Zusätzliche Supervisorzustände:
+Zusätzlich z. B. `aborted-before-transfer`, `recovery-running`,
+`recovery-completed`, `guarded-hold`, `reboot-detected`, `orphaned-run`.
 
-```text
-aborted-before-transfer
-recovery-running
-recovery-completed
-guarded-hold
-reboot-detected
-orphaned-run
-```
+## 7. Stage 0 – autonomer Minimalrunner – ERLEDIGT
 
-Nicht jeder Zustand muss später als sichtbarer GUI-Text erscheinen. Intern sollen sie
-aber eindeutig sein.
+Real nachgewiesen:
 
-## 7. Stage 0 – bereits erfolgreich nachgewiesen
+- [x] Minimalrunner auf `/data` kopiert.
+- [x] Start via `setsid /system/bin/sh ... &`.
+- [x] Runner läuft nach Ende der ADB-Shell mit PPID 1 weiter.
+- [x] spätere unabhängige ADB-Sitzungen lesen denselben Prozess/Status.
+- [x] Abbruch der Windows-Überwachung beeinflusst den Runner nicht.
+- [x] Testprozess kontrolliert beendet und Testverzeichnis entfernt.
 
-Bereits erledigt im Branch `DTU_runner`:
+## 8. Stage 1 – production-shaped Supervisor ohne OTA – FAST ERLEDIGT
 
-- Minimalrunner auf `/data` kopiert;
-- Start via `setsid /system/bin/sh ... &`;
-- Runner läuft nach Ende der ADB-Shell mit PPID 1 weiter;
-- Status kann von unabhängigen späteren ADB-Sitzungen gelesen werden;
-- Abbruch der Windows-Überwachung beeinflusst den Runner nicht;
-- Testprozess kontrolliert beendet und Testverzeichnis entfernt.
+Der Stage-1-Runner berührt weder Firmware noch `phnixIot4G`, GDB oder OTA.
 
-Dieser Nachweis ist die Grundlage für den weiteren Umbau.
+### Reale Hardwarebestätigung vom 1. September 2026
 
-## 8. Stage 1 – production-shaped Supervisor ohne OTA
+Normaler Lauf `stage1-real-01`:
 
-Aktueller Entwicklungsstand im Branch.
+- Start mit PID `22836`.
+- Initial noch PPID `22834`, danach derselbe Prozess mit PPID `1`.
+- unabhängige Statusabfragen zeigten autonom `29 %`, `54 %` und anschließend
+  `completed / terminal=true / 100 %`.
+- terminaler Status blieb nach Prozessende unter `/data` erhalten.
+- `ack` ließ den Status bestehen; der nachfolgende Cleanup konnte ihn weiterhin lesen.
+- `cleanup` nach terminal + ack entfernte das Run-Verzeichnis kontrolliert.
 
-Ziel: Lebenszyklus und Schnittstellen real auf dem DTU testen, **ohne Firmware,
-Originaldienst, GDB oder OTA anzufassen**.
+Abort-Lauf `stage1-abort-01`:
 
-Funktionen:
+- Start mit PID `29764`, später PPID `1`.
+- `abort.request` wurde ohne ADB-Kill geschrieben.
+- der Runner wechselte selbstständig zu `aborted`, `phase=abort-request`,
+  `terminal=true`, `reason=abort_requested`.
+- ein zweiter Abort auf den bereits terminalen Run wurde vom Windows-Testclient
+  abgelehnt; dies ist korrekt, kann später UX-seitig als Hinweis statt Exception
+  dargestellt werden.
 
-- Run-ID;
-- atomarer `status.json`;
-- Single-Run-Lock;
-- persistentes Run-Verzeichnis;
-- detached Start;
-- begrenztes Log;
-- Statusabfrage über beliebig neue ADB-Sitzungen;
-- kontrolliertes `abort.request`;
-- terminaler Status bleibt erhalten;
-- explizites `ack`;
-- Cleanup erst nach terminal + ack.
+### Stage-1-Abnahmetests
 
-### Stage-1-Abnahmetests auf echter Hardware
-
-- [ ] Normaler Lauf bis `completed`.
-- [ ] ADB/Windows während des Laufs vollständig trennen; Runner läuft weiter.
-- [ ] Spätere neue ADB-Sitzung liest dieselbe Run-ID und fortgeschrittenen Status.
+- [x] Normaler Lauf bis `completed`.
+- [x] Host-Monitoring endet; Runner läuft detached mit PPID 1 weiter.
+- [x] Spätere neue ADB-Abfragen lesen dieselbe Run-ID und fortgeschrittenen Status.
 - [ ] Zweiter paralleler Start wird sicher verweigert.
-- [ ] `abort.request` führt kontrolliert zu `aborted`, nicht zu blindem Prozess-Kill.
-- [ ] Terminalstatus bleibt nach Prozessende vorhanden.
-- [ ] `ack` löscht noch keine Diagnose.
+- [x] `abort.request` führt kontrolliert zu `aborted`, nicht zu blindem Prozess-Kill.
+- [x] Terminalstatus bleibt nach Prozessende vorhanden.
+- [x] `ack` löscht noch keine Diagnose.
 - [ ] `cleanup` vor terminal wird verweigert.
 - [ ] `cleanup` ohne ack wird verweigert.
-- [ ] `cleanup` nach terminal + ack entfernt ausschließlich das richtige Run-Verzeichnis.
+- [x] `cleanup` nach terminal + ack entfernt das richtige Run-Verzeichnis.
 - [ ] Stale-/fremde PID wird nicht beendet.
 
-Erst nach erfolgreicher Hardwareabnahme weiter mit Stage 2.
+Vor Stage 2 sollen mindestens Parallelstart, Cleanup-Sperren und Stale-PID-Test noch
+real geprüft werden.
 
-## 9. Stage 2 – Supervisor + Runtime-Hook, noch ohne echten Firmwaretransfer
+## 9. Stage 2 – Supervisor + Runtime-Hook, noch ohne Firmwaretransfer
 
-Ziel: Der DTU-Supervisor startet und überwacht den bestehenden Runtime-Hook selbst.
-Windows ist nur noch Beobachter.
+Ziel: Der Supervisor startet den bestehenden Hook selbst; Windows beobachtet nur.
 
-Noch keine echte Firmwareübertragung.
-
-Schritte:
-
-- [ ] vorhandenen `phnix_ota_runtime_hook` als Child des Supervisors starten;
-- [ ] Hookstatus in ein Run-spezifisches Ziel schreiben;
-- [ ] Hook-PID und tatsächliche Prozessidentität überwachen;
-- [ ] Hookstatus in das persistente Supervisor-Schema übersetzen;
-- [ ] Hook-Log dauerhaft dem Run zuordnen;
-- [ ] `/tmp`-Marker ausschließlich als lokale Runtime-Signale behandeln;
-- [ ] verlorene/ungültige `/tmp`-Marker nicht als persistente Wahrheit interpretieren;
-- [ ] Read-only `verify` / attach-test als erster Child-Workflow;
-- [ ] absichtlicher ADB-Abbruch während Hook-Lauf;
-- [ ] absichtliches Beenden des Windows-Monitors ohne Auswirkung auf Hook/Supervisor;
-- [ ] kontrolliertes Ende und persistentes Ergebnis.
+- [ ] Hook als Child des Supervisors starten.
+- [ ] Hookstatus Run-spezifisch schreiben.
+- [ ] Hook-PID und Prozessidentität überwachen.
+- [ ] Hookstatus in Supervisorstatus übersetzen.
+- [ ] Hook-Log dauerhaft dem Run zuordnen.
+- [ ] `/tmp` nur als Runtime-Signal behandeln.
+- [ ] Read-only `verify` als erster Child-Workflow.
+- [ ] danach read-only Attach-Test als Child-Workflow.
+- [ ] Windows-Monitor/ADB währenddessen beenden.
+- [ ] Supervisor/Hook müssen unbeeinflusst weiterlaufen.
+- [ ] Ergebnis persistent unter `/data` ablegen.
 
 ## 10. Stage 3 – Paketformat und doppelte lokale Verifikation
 
-Vor einem echten OTA muss das komplette Updatepaket auf dem Modem erneut geprüft werden.
+Windows prüft vor Upload; DTU prüft vor Nutzung erneut.
 
-Windows prüft bereits vor dem Upload. Der Supervisor prüft danach **noch einmal lokal auf
-dem DTU**, damit zwischen Hostprüfung und Nutzung keine ungeprüfte Datei liegt.
+Paketdaten mindestens: Firmwaregröße/MD5/SHA-256, Softwarecode, Display-/Wire-Version,
+Target SSID, Hook-Hash, erwartete `phnixIot4G`-Build-ID/SHA-256, Run-ID und Modus.
 
-`package.json` bzw. `request.json` enthält mindestens:
+- [ ] falscher Firmwarehash → Ablehnung vor Serviceeingriff.
+- [ ] falscher Hookhash → Ablehnung.
+- [ ] falscher Servicebuild → Ablehnung.
+- [ ] unvollständiges Paket → Ablehnung.
+- [ ] falsche Run-ID/Paketzuordnung → Ablehnung.
+- [ ] freier Speicher lokal geprüft.
 
-- Firmwaredateiname;
-- Größe;
-- MD5;
-- SHA-256;
-- Softwarecode;
-- Display-Version;
-- Wire-Version;
-- Target SSID;
-- erwartete Runtime-Hook-Version / Hash;
-- erwartete `phnixIot4G`-Build-ID / SHA-256;
-- Run-ID;
-- gewünschter Modus;
-- Sicherheitsbestätigung des Hosts.
+## 11. Stage 4 – Pre-C5A8-Orchestrierung auf DTU verschieben
 
-Abnahmepunkte:
+- [ ] Originaldienst/Build prüfen.
+- [ ] MQTT/Cloud und Watchdogs prüfen.
+- [ ] OTA_INFO / Resume-Zustand prüfen.
+- [ ] persistenten Ausgangszustand sichern.
+- [ ] Firmware/Staging/HTTP lokal vorbereiten.
+- [ ] OTA-Command erzeugen/verifizieren.
+- [ ] Hook starten und C350 auslösen.
+- [ ] C36E-Annahme klassifizieren.
+- [ ] Same-Version-/Precondition-Ablehnung lokal terminal behandeln.
 
-- [ ] falscher Firmwarehash → terminale Ablehnung vor Serviceeingriff;
-- [ ] falscher Hookhash → terminale Ablehnung;
-- [ ] falscher Servicebuild → terminale Ablehnung;
-- [ ] unvollständiges Paket → terminale Ablehnung;
-- [ ] falsche Run-ID / Paketzuordnung → terminale Ablehnung;
-- [ ] ausreichend freier Speicher wird lokal geprüft.
+Bis C5A8 bleibt nur die heute bereits erlaubte sichere Recovery zulässig.
 
-## 11. Stage 4 – Pre-C5A8-Orchestrierung auf das DTU verschieben
+## 12. Stage 5 – echter C5A8-Transfer autonom auf DTU
 
-Ziel: Der Supervisor übernimmt die heute noch vom Windows-Controller gesteuerten
-Schritte bis zur Annahme des OTA-Auftrags.
+Erst nach Abnahme aller vorherigen Stufen.
 
-Zu verschieben bzw. lokal auszuführen:
+- [ ] erster C5A8 setzt persistent `transfer_started=true`.
+- [ ] Autoritätsübergang persistent markieren.
+- [ ] Fortschritt aus OTA_INFO/Hook lokal übernehmen.
+- [ ] Windows-/ADB-/USB-Ausfall beeinflusst OTA nicht.
+- [ ] Hookfehler nach Autoritätsübergang stoppt Originaldienst nicht generisch.
+- [ ] kein generischer Restore nach C5A8.
+- [ ] erster Realtest mit serieller externer Beobachtung.
 
-- [ ] Originaldienst prüfen;
-- [ ] erwartete Serviceidentität prüfen;
-- [ ] MQTT-/Cloudzustand prüfen;
-- [ ] Watchdogs prüfen;
-- [ ] OTA_INFO prüfen;
-- [ ] keinen aktiven Resume-Zustand bestätigen;
-- [ ] persistenten Ausgangszustand sichern;
-- [ ] Firmware lokal auf dem DTU bereitstellen;
-- [ ] lokalen HTTP-/Stagingpfad vorbereiten;
-- [ ] OTA-Command erzeugen/verifizieren;
-- [ ] Hook starten;
-- [ ] C350 auslösen;
-- [ ] C36E-Annahme klassifizieren;
-- [ ] Same-Version-/Precondition-Ablehnung lokal und terminal behandeln.
+## 13. Stage 6 – terminale Mainboardverifikation lokal
 
-Bis hierhin bleibt Recovery vor C5A8 weiterhin zulässig, sofern der bestehende
-Sicherheitscontroller dies erlaubt.
+Erfolg niemals nur wegen `100 %` oder `promotion-committed`.
 
-## 12. Stage 5 – echter C5A8-Transfer autonom auf dem DTU
-
-Erst nach Abnahme der vorherigen Stufen.
-
-Ziel: Ein kompletter echter Firmwaretransfer läuft nach dem detached Start ohne weitere
-aktive Windows-Steuerung.
-
-Wesentliche Punkte:
-
-- [ ] erster C5A8 setzt persistent `transfer_started=true`;
-- [ ] gleichzeitig persistent `original_service_authoritative=true` setzen, sobald die
-      bestehende Sicherheitslogik diese Grenze bestätigt;
-- [ ] Fortschritt regelmäßig aus OTA_INFO/Hookstatus übernehmen;
-- [ ] Fortschritt atomar unter `/data` persistieren;
-- [ ] Windows-Ausfall hat keinerlei Einfluss;
-- [ ] Remote-ADB-Ausfall hat keinerlei Einfluss;
-- [ ] USB-Verlust hat keinerlei Einfluss;
-- [ ] Hook-/Debuggerfehler nach Autoritätsübergang darf den Originaldienst nicht
-      generisch stoppen;
-- [ ] keine automatische Restore-Funktion nach begonnenem Transfer;
-- [ ] Watchdog-/Dienstentscheidungen bleiben identisch zur heute validierten Logik.
-
-Erster echter Test möglichst mit bereits bekannter/validierter Kombination und
-vollständiger externer serieller Beobachtung.
-
-## 13. Stage 6 – terminale Mainboardverifikation lokal abschließen
-
-Der Supervisor muss den Run selbst terminal klassifizieren können.
-
-Erfolg nur bei der bereits validierten Abschlusslogik, insbesondere nicht nur wegen
-`100 %` oder `promotion-committed`.
-
-Zu übernehmen:
-
-- [ ] Transfer vollständig;
-- [ ] Mainboard-Verarbeitungsphase;
-- [ ] Hersteller-Erfolgsmeldung;
-- [ ] Status 5 / Step 12 entsprechend der bestehenden Sicherheitslogik;
-- [ ] finalen normalen Zustand prüfen, soweit lokal zuverlässig möglich;
-- [ ] `result.json` schreiben;
-- [ ] `status.json` terminal setzen;
-- [ ] Run-Lock freigeben;
-- [ ] Diagnose-/Ergebnisdateien behalten.
-
-Windows darf danach nur noch das bereits terminale Ergebnis anzeigen.
+- [ ] Transfer vollständig erkennen.
+- [ ] Mainboard-Verarbeitungsphase verfolgen.
+- [ ] Hersteller-Erfolgsmeldung berücksichtigen.
+- [ ] Status 5 / Step 12 gemäß validierter Logik bestätigen.
+- [ ] `result.json` schreiben.
+- [ ] `status.json` terminal setzen.
+- [ ] Run-Lock freigeben.
+- [ ] Diagnose behalten.
 
 ## 14. Stage 7 – Recovery und kontrollierter Abort
 
-Abort-Semantik muss phasenabhängig sein.
+Vor C5A8 darf ein kontrollierter Abort nur die bereits als sicher validierte Recovery
+verwenden. Nach begonnenem C5A8 darf `abort.request` keinen generischen Abbruch auslösen;
+der Runner überwacht dann weiter bis zu einem sicheren terminalen Ergebnis.
 
-### Vor OTA-Injection / vor C5A8
+Ein Force-/Emergency-Eingriff ist ein separater Entwicklerpfad und nicht Teil des
+normalen Endanwenderablaufs.
 
-Ein kontrollierter Abort kann ggf.:
+## 15. Stage 8 – DTU-Reboot / Prozessverlust
 
-- Hook sauber beenden;
-- Persistent State zurückspielen;
-- Watchdogs/Dienst normalisieren;
-- temporäre Ressourcen schließen;
-- terminal `aborted` schreiben.
-
-### Nach begonnenem C5A8
-
-`abort.request` darf **keinen generischen Abbruch** auslösen.
-
-Stattdessen beispielsweise:
-
-```json
-{
-  "state": "running",
-  "phase": "c5a8",
-  "terminal": false,
-  "abort_requested": true,
-  "abort_allowed": false,
-  "reason": "original_service_authoritative"
-}
-```
-
-Der Runner überwacht weiter bis zu einem sicheren terminalen Ergebnis.
-
-### Notfallabbruch
-
-Ein echter Force-/Emergency-Eingriff darf nur separat, explizit und mit zusätzlichen
-Bestätigungen implementiert werden. Er ist **nicht** Teil des normalen Endanwenderpfads.
-
-## 15. Stage 8 – Verhalten bei Modem-Reboot / Prozessverlust
-
-Dies ist getrennt von einfachem ADB-Verlust zu behandeln.
-
-Zuerst reale Tests ohne OTA:
+Zuerst ohne OTA real prüfen:
 
 - [ ] bleibt `/data/foxair_ota_runner` nach DTU-Reboot erhalten?
-- [ ] bleiben atomar geschriebene Statusdateien konsistent?
-- [ ] wie werden `setsid`-Prozesse bei Modem-Reboot beendet? (erwartet: komplett beendet)
-- [ ] welche Init-/Watchdogmechanismen starten `phnixIot4G` neu?
+- [ ] bleiben atomare Statusdateien konsistent?
+- [ ] erwartetes Ende aller `setsid`-Prozesse bestätigen.
+- [ ] Neustartverhalten von `phnixIot4G` erfassen.
+- [ ] Pre-C5A8 / Post-C5A8 / terminal aus persistentem Status klassifizieren.
 
-Danach Recovery-Klassifizierung definieren.
+Nie alte `/tmp`-PIDs/Marker nach Reboot wiederverwenden. Automatische OTA-Fortsetzung
+nach DTU-Reboot wird erst nach realer Analyse entschieden.
 
-Nach Reboot niemals alte `/tmp`-PIDs/Marker blind weiterverwenden.
+## 16. Stage 9 – Windows auf dünnen Client reduzieren
 
-Der Supervisorstatus in `/data` muss genug Informationen enthalten, um mindestens zu
-klassifizieren:
-
-- Run war noch vor C5A8;
-- Run hatte C5A8 bereits begonnen;
-- Originaldienst war autoritativ;
-- letzter bekannter Offset / Phase;
-- Run war bereits terminal.
-
-Ob ein OTA nach echtem DTU-Reboot automatisch fortgesetzt werden darf, wird **nicht
-vorab angenommen**. Das wird erst nach gezielter Analyse entschieden.
-
-## 16. Stage 9 – Windows-Controller auf dünnen Client reduzieren
-
-Erst nachdem der DTU-Pfad real abgenommen ist.
-
-Windows-Kommandos bzw. interne Operationen werden auf folgende Semantik reduziert:
+Zielkommandos:
 
 ```text
 prepare
@@ -534,185 +345,130 @@ ack
 cleanup
 ```
 
-Windows darf nach `start` keine sicherheitskritische Prozesssteuerung mehr besitzen.
+- [ ] Run-ID anzeigen.
+- [ ] DTU-Status pollen.
+- [ ] ADB-Ausfall nur als Monitoringverlust darstellen.
+- [ ] nach Reconnect denselben Run fortsetzen.
+- [ ] niemals automatisch zweiten Run starten.
+- [ ] terminale Ergebnisse per Popup anzeigen.
+- [ ] Ack/Cleanup getrennt behandeln.
+- [ ] neue OTA/Dry-Run-Versuche bei aktivem Run sperren.
 
-GUI-Aufgaben:
+Die bestehende serielle Windows-Fallbacklogik bleibt bis zur mindestens gleichwertigen
+Realvalidierung des autonomen DTU-Pfads bestehen.
 
-- [ ] Run-ID anzeigen;
-- [ ] persistenten DTU-Status regelmäßig lesen;
-- [ ] ADB-Ausfall nur als Monitoringverlust darstellen;
-- [ ] nach Reconnect denselben Run weiter anzeigen;
-- [ ] niemals automatisch einen zweiten Run starten;
-- [ ] terminale Ergebnisse als Popup anzeigen;
-- [ ] Log abrufbar machen;
-- [ ] Ack/Cleanup getrennt behandeln;
-- [ ] bei nicht terminalem Zustand Buttons für neuen OTA/Dry-Run sperren.
+## 17. Stage 10 – Simulator an neuen Runnervertrag anpassen
 
-Die bisherige serielle Windows-Fallbacklogik kann erst entfernt oder vereinfacht werden,
-wenn der autonome DTU-Pfad mindestens gleichwertig real validiert ist.
+Mindestens simulieren:
 
-## 17. Stage 10 – Simulator an die neue Architektur anpassen
+- [ ] normaler Erfolg und Same-Version.
+- [ ] Fehler vor C5A8.
+- [ ] ADB-Verlust/Reconnect während C5A8.
+- [ ] `promotion-committed` ohne terminalen Erfolg.
+- [ ] später `success + terminal=true`.
+- [ ] Hookverlust vor/nach C5A8.
+- [ ] Runner-Abbruch, stale lock, kaputte Statusdatei.
+- [ ] Modem-Reboot mit persistentem letztem Run.
 
-Der Simulator soll dieselbe Host↔Runner-Schnittstelle abbilden.
-
-Zu simulieren:
-
-- [ ] normaler Erfolg;
-- [ ] Same-Version;
-- [ ] Fehler vor C5A8;
-- [ ] ADB-Verlust während C5A8;
-- [ ] ADB-Reconnect bei laufendem Transfer;
-- [ ] `promotion-committed` ohne terminalen Erfolg;
-- [ ] späterer `success + terminal=true`;
-- [ ] Hook-Prozessverlust vor C5A8;
-- [ ] Hook-/Monitoringverlust nach C5A8;
-- [ ] Runner-Abbruch;
-- [ ] stale lock;
-- [ ] kaputte Statusdatei;
-- [ ] Modem-Reboot-Simulation / persistenter letzter Run.
-
-Insbesondere soll der bekannte aktuelle Fall vermieden werden, bei dem die GUI
-„Abschlusskontrolle läuft“ anzeigt, aber kein weiterer automatischer terminaler Zustand
-mehr geliefert wird.
+Der aktuelle Simulatorfehler des Stage-1-Runners ist kein Hardwareblocker; reale DTU
+hat den detached Stage-1-Lauf bestätigt.
 
 ## 18. Stage 11 – automatisches Reattach-/Statuspolling in Windows
 
-Bis zur vollständigen DTU-Umstellung bzw. auch danach sinnvoll:
+Wenn ADB wieder erreichbar, Run aber noch nicht terminal:
 
-Wenn ADB wieder erreichbar ist, der Run aber noch nicht terminal ist:
+- [ ] alle etwa 5–10 s read-only `status` pollen.
+- [ ] bei terminal sauber beenden.
+- [ ] bei erneutem ADB-Verlust Monitoringverlust darstellen.
+- [ ] keine falsche dauerhafte Anzeige „Abschlusskontrolle läuft“, wenn kein Polling läuft.
+- [ ] niemals OTA-Aktion aus dem Polling auslösen.
 
-- [ ] automatisches read-only Polling, z. B. alle 5–10 Sekunden;
-- [ ] bei `terminal=true` sauber beenden;
-- [ ] bei erneutem ADB-Verlust wieder Monitoringverlust anzeigen;
-- [ ] nach sinnvoller lokalen UI-Frist keine falsche Aussage „Kontrolle läuft“ stehen
-      lassen, wenn tatsächlich nicht weiter gepollt wird;
-- [ ] keine OTA-Aktion aus diesem Polling heraus auslösen.
+## 19. Stage 12 – Cleanup und Retention
 
-## 19. Stage 12 – Cleanup- und Retention-Modell
+1. terminales `status.json`/`result.json` schreiben;
+2. Windows liest Ergebnis;
+3. Windows setzt `acknowledged`;
+4. erst danach normaler Cleanup;
+5. kleiner Abschlussbericht kann länger erhalten bleiben.
 
-Terminale Ergebnisse dürfen nicht sofort verschwinden.
+Optional: Payload nach z. B. 24 h entfernen, N alte Resultate behalten, Logs begrenzen.
+Nicht terminale Runs niemals allein wegen Alters löschen.
 
-Vorgesehenes Modell:
+## 20. Stage 13 – Failover-/Chaos-Tests
 
-1. Runner schreibt terminales `status.json` und `result.json`.
-2. Windows liest das Ergebnis.
-3. Windows setzt explizit `acknowledged`.
-4. Erst danach darf ein normaler Cleanup Payload/temporäre Dateien löschen.
-5. Ein kleiner Abschlussbericht kann länger erhalten bleiben.
+- [ ] Windows-Prozess beenden / PC herunterfahren.
+- [ ] Remote-ADB stoppen / USB trennen / ADB offline.
+- [ ] ADB reconnect.
+- [ ] Hook vor C5A8 beenden.
+- [ ] Hook nach C5A8 verlieren.
+- [ ] Status während atomarem Schreiben lesen.
+- [ ] Speicher knapp / Loglimit.
+- [ ] Service-/Watchdog-PID-Wechsel.
+- [ ] MQTT-Ausfall.
+- [ ] langsamer C5A8.
+- [ ] Polling minutenlang aussetzen.
+- [ ] neuer Host verbindet sich an denselben Run.
+- [ ] zweiter Start während aktivem Run.
+- [ ] DTU-Reboot vor C5A8.
+- [ ] DTU-Reboot nach C5A8 nur mit definierter sicherer Strategie.
 
-Zusätzlich optional:
+## 21. Stage 14 – produktive Integration
 
-- automatische Payload-Bereinigung nach z. B. 24 Stunden;
-- terminale `result.json` länger behalten;
-- maximal N alte Runs archivieren;
-- Logs größenbegrenzt halten.
+- [ ] Runner aus `devtools` in Produktpfad verschieben.
+- [ ] Runner-/Hook-Version und Hash prüfen.
+- [ ] Windows-/Linux-Launcher umstellen.
+- [ ] alte Host-Orchestrierung deaktivieren.
+- [ ] redundante Guard-/Fallbacklogik erst nach Realabnahme entfernen.
+- [ ] Regressionstests und Buildsystem aktualisieren.
+- [ ] Upgradepfad testen.
 
-Keine automatische Bereinigung eines **nicht terminalen** Runs allein aufgrund seines
-Alters.
+Endzustand: nur eine produktive OTA-Orchestrierung.
 
-## 20. Stage 13 – Failover-, Stromausfall- und Chaos-Tests
+## 22. Stage 15 – endgültige Dokumentation und `docs/dev` löschen
 
-Vor Endanwenderfreigabe gezielt testen:
+Dauerhaft übernehmen:
 
-- [ ] Windows-Prozess beenden;
-- [ ] Windows-PC herunterfahren;
-- [ ] Remote-ADB-Server stoppen;
-- [ ] USB-Verbindung trennen;
-- [ ] ADB `offline`;
-- [ ] ADB reconnect;
-- [ ] Runner-Child/Hook vor C5A8 beenden;
-- [ ] Hook nach C5A8 verlieren;
-- [ ] Statusdatei während Schreiben lesen;
-- [ ] Log voll / Speicher knapp;
-- [ ] unerwarteter Service-PID-Wechsel;
-- [ ] Watchdog-PID-Wechsel;
-- [ ] MQTT kurzfristig weg;
-- [ ] bewusst langsamer C5A8-Transfer;
-- [ ] Statuspolling minutenlang aussetzen;
-- [ ] erneuter Host verbindet sich an denselben Run;
-- [ ] zweiter Startversuch während aktivem Run;
-- [ ] DTU-Reboot vor C5A8;
-- [ ] DTU-Reboot nach C5A8 nur nach vorher definierter sicherer Teststrategie.
-
-## 21. Stage 14 – produktive Integration und Altpfad entfernen
-
-Erst nach vollständiger Realvalidierung.
-
-- [ ] neue Runner-Dateien aus `devtools` in endgültigen Produktpfad verschieben;
-- [ ] Versions-/Hashprüfung für Runner integrieren;
-- [ ] Windows- und Linux-Launcher auf neue Schnittstelle umstellen;
-- [ ] alte Host-Orchestrierung deaktivieren;
-- [ ] redundante Guard-/Fallbacklogik entfernen, sofern durch DTU-Supervisor ersetzt;
-- [ ] Regressionstests aktualisieren;
-- [ ] Releases / Buildsystem anpassen;
-- [ ] Upgradepfad für vorhandene Nutzer testen.
-
-Während der Migration kann ein versteckter Entwickler-Fallback auf den alten Pfad
-bestehen bleiben. Im Endzustand soll jedoch nur **eine** produktive OTA-Orchestrierung
-existieren.
-
-## 22. Stage 15 – endgültige Dokumentation
-
-Nach erfolgreichem Umbau:
-
-Dauerhaft dokumentieren:
-
-- Architektur des autonomen DTU-Runners;
+- autonome Architektur;
 - Host↔Runner-Statusvertrag;
 - Sicherheitsgrenzen vor/nach C5A8;
-- Recovery- und Rebootverhalten;
+- Recovery-/Rebootverhalten;
 - Cleanup/Retention;
 - reale Testmatrix;
 - Endanwenderablauf.
 
-Historische Erkenntnisse aus `docs/dev/` nur dort übernehmen, wo sie dauerhaft relevant
-sind.
+Danach:
 
-Anschließend:
-
-- [ ] diese Roadmap als erledigt markieren;
-- [ ] relevante Erkenntnisse in normale Dokus übertragen;
-- [ ] **`docs/dev/` vollständig löschen**.
+- [ ] Roadmap erledigt markieren.
+- [ ] Erkenntnisse in normale Dokus übertragen.
+- [ ] **`docs/dev/` vollständig löschen.**
 
 ## 23. Definition of Done
 
-Der Umbau gilt erst als abgeschlossen, wenn alle folgenden Punkte erfüllt sind:
+- [ ] reales Mainboardupdate läuft nach Start ohne Windows autonom weiter.
+- [ ] ADB kann beliebig ausfallen und später denselben Run lesen.
+- [ ] DTU entscheidet selbst über sicherheitskritische OTA-Phasen.
+- [ ] Monitoringfehler kann begonnenen C5A8 nicht stoppen.
+- [ ] generischer Restore nach C5A8 ausgeschlossen.
+- [ ] terminaler Erfolg lokal eindeutig und dauerhaft gespeichert.
+- [ ] terminale Fehler mit belastbarem Grund/Recoverystatus.
+- [ ] Diagnose bleibt bis Bestätigung erhalten.
+- [ ] parallele OTA-Runs ausgeschlossen.
+- [ ] stale Locks/PIDs führen nie zu falschem Kill/Cleanup.
+- [ ] Rebootverhalten real untersucht.
+- [ ] Simulator bildet Runnervertrag ab.
+- [ ] Windows nach `start` nur Client/Beobachter.
+- [ ] alte redundante Host-Orchestrierung entfernt oder klar isoliert.
+- [ ] Unit-/Simulator-/Hardwaretests dokumentiert.
+- [ ] dauerhafte Dokumentation aktualisiert.
+- [ ] `docs/dev/` anschließend entfernt.
 
-- [ ] Ein reales Mainboardupdate kann vollständig gestartet werden, danach kann Windows
-      sofort beendet werden, und der OTA-Run läuft autonom weiter.
-- [ ] ADB kann während des Transfers beliebig ausfallen und später denselben Run wieder
-      lesen.
-- [ ] Der DTU-Runner entscheidet selbst über alle sicherheitskritischen OTA-Phasen.
-- [ ] Kein Windows-/ADB-Monitoringfehler kann einen begonnenen C5A8-Transfer stoppen.
-- [ ] Nach C5A8 ist generischer Restore weiterhin sicher ausgeschlossen.
-- [ ] Terminaler Erfolg wird lokal eindeutig erkannt und dauerhaft gespeichert.
-- [ ] Terminale Fehler enthalten einen belastbaren Grund und Recoverystatus.
-- [ ] Diagnoseinformationen bleiben bis zur Bestätigung erhalten.
-- [ ] Zweite parallele OTA-Runs sind ausgeschlossen.
-- [ ] Stale Locks/PIDs können nicht zu einem falschen Kill oder Cleanup führen.
-- [ ] Rebootverhalten ist real untersucht und dokumentiert.
-- [ ] Simulator bildet den neuen Runnervertrag korrekt ab.
-- [ ] Windows ist nach `start` nur noch Client/Beobachter.
-- [ ] Alte redundante Host-Orchestrierung ist entfernt oder klar als Entwicklerfallback
-      isoliert.
-- [ ] Alle relevanten Unit-/Simulator-/Hardwaretests sind grün bzw. dokumentiert.
-- [ ] Dauerhafte Dokumentation ist aktualisiert.
-- [ ] `docs/dev/` ist danach wieder entfernt.
+## 24. Unmittelbare Reihenfolge
 
-## 24. Empfohlene unmittelbare Reihenfolge
-
-Als nächstes nicht direkt den echten Firmwaretransfer anbinden.
-
-Empfohlene Reihenfolge:
-
-1. Stage 1 auf echter DTU-Hardware vollständig abnehmen.
-2. Stage 2: vorhandenen Hook als harmlosen `verify`-/Attach-Child des Supervisors starten.
+1. Restliche Stage-1-Hardwaretests: Parallelstart, Cleanup-Sperren, stale PID.
+2. Stage 2: Hook zunächst als harmlosen `verify`-/Attach-Child starten.
 3. ADB-Abbruch/Reattach mit diesem Child testen.
 4. Paketformat + lokale Hashprüfung implementieren.
 5. Pre-C5A8-Orchestrierung verschieben.
-6. Erst danach einen echten C5A8-Lauf autonom auf dem DTU testen.
+6. Erst danach echten C5A8-Lauf autonom auf DTU testen.
 7. Terminalverifikation und Recovery lokal abschließen.
-8. Windows erst zum Schluss auf den dünnen Client umbauen.
-
-Damit bleiben die Änderungsschritte klein, rückverfolgbar und auf echter Hardware
-jeweils einzeln testbar.
+8. Windows erst zum Schluss auf dünnen Client umbauen.
