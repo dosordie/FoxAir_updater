@@ -168,10 +168,12 @@ chmod 700 "$HOOK_FILE" 2>/dev/null \
 
 # The read-only attach-test uses the hook's global /tmp runtime directory.
 # Never let this diagnostic test enter an existing OTA/guarded state. A stale
-# SAFE_TO_CLEAN marker by itself is harmless, but any active/transfer/authority
-# marker is treated as a hard conflict and the test fails closed before GDB.
+# SAFE_TO_CLEAN marker by itself is harmless, but active OTA markers and old
+# process-PID markers are hard conflicts. The latter matters because the hook's
+# cleanup code can act on these files; PID reuse must never turn a stale file
+# into authority over an unrelated process.
 if test "$MODE" = attach-test; then
-    for marker in run.active transfer-started injection-started original-service-owns; do
+    for marker in run.active transfer-started injection-started original-service-owns helper.pid gdb.pid gdbserver.pid; do
         if test -e "$HOOK_RUNTIME_DIR/$marker"; then
             terminal_exit failed hook-preflight 37 existing_hook_runtime_state \
                 "Refusing attach-test because $HOOK_RUNTIME_DIR/$marker already exists." 0
