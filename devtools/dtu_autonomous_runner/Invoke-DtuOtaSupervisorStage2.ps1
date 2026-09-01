@@ -2,6 +2,8 @@
 param(
     [ValidateSet("Start", "Status", "Log", "Ack", "Cleanup")]
     [string] $Action = "Start",
+    [ValidateSet("Verify", "AttachTest")]
+    [string] $HookMode = "Verify",
     [string] $RunId,
     [string] $AdbPath = (Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"),
     [string] $AdbServerSocket = "tcp:192.168.10.50:5038",
@@ -111,6 +113,7 @@ function Start-Run {
     $id = if ($RunId) { $RunId } else { "stage2-{0}-{1}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), (Get-Random -Minimum 1000 -Maximum 9999) }
     Assert-RunId -Value $id
 
+    $remoteHookAction = if ($HookMode -eq "AttachTest") { "attach-test" } else { "verify" }
     $runDir = "$remoteRuns/$id"
     $payloadDir = "$runDir/payload"
     $remoteSupervisor = "$runDir/dtu_ota_supervisor_stage2.sh"
@@ -120,6 +123,7 @@ function Start-Run {
 
     Write-Host "Preparing Stage-2 DTU run $id ..."
     Write-Host "Runtime hook SHA-256: $hookSha256"
+    Write-Host "Hook mode: $remoteHookAction"
 
     Invoke-Adb -Arguments @("shell", "mkdir -p '$payloadDir'") | Out-Null
     Invoke-Adb -Arguments @("push", $localSupervisor, $remoteSupervisor) | Out-Null
@@ -127,10 +131,16 @@ function Start-Run {
     Invoke-Adb -Arguments @("shell", "chmod 700 '$remoteSupervisor' '$remoteHook'") | Out-Null
     Invoke-Adb -Arguments @("shell", "printf '%s\n' '$hookSha256' > '$expectedHashFile'") | Out-Null
 
-    Write-Host "Starting detached Stage-2 supervisor (hook action: verify only) ..."
+    if ($remoteHookAction -eq "attach-test") {
+        Write-Host "Starting detached Stage-2 supervisor (read-only GDB attach/detach test; no C350/OTA) ..."
+    }
+    else {
+        Write-Host "Starting detached Stage-2 supervisor (hook action: verify only) ..."
+    }
+
     Invoke-Adb -Arguments @(
         "shell",
-        "setsid /system/bin/sh '$remoteSupervisor' '$id' verify </dev/null >'$runDir/launcher.log' 2>&1 & sleep 2"
+        "setsid /system/bin/sh '$remoteSupervisor' '$id' '$remoteHookAction' </dev/null >'$runDir/launcher.log' 2>&1 & sleep 2"
     ) | Out-Null
 
     try {
@@ -148,7 +158,7 @@ function Start-Run {
     Show-Status -Status $status
 
     if ([bool]$status.terminal) {
-        Write-Host "Stage-2 verify already reached a terminal state. Diagnostic files remain stored on the modem."
+        Write-Host "Stage-2 $remoteHookAction already reached a terminal state. Diagnostic files remain stored on the modem."
         Write-Host "Run ID: $id"
         return
     }
