@@ -1,6 +1,6 @@
 #define MyAppName "FoxAir Updater"
 #define MyAppExeName "FoxAir_Updater.exe"
-#define MyAppVersion "0.3.96"
+#define MyAppVersion "0.3.97"
 #define MyAppPublisher "DosOrDie"
 
 [Setup]
