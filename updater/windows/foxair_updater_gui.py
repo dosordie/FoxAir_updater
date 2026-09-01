@@ -101,10 +101,10 @@ class MainWindow(QMainWindow):
 
         warning = QLabel(
             "<b>Firmwareupdate – Nutzung auf eigenes Risiko</b><br>"
-            "Ein realer Versionswechsel von V3.3 auf V3.4 wurde erfolgreich durchgeführt. "
-            "Andere Firmwarestände und Hardwarevarianten sind noch nicht vollständig getestet. "
-            "Ein Firmwareupdate verändert die Mainboard-Firmware und kann bei einem Fehler zum "
-            "Ausfall des Geräts führen."
+            "Ein Firmwareupdate verändert die Mainboard-Firmware und erfolgt auf eigenes Risiko. "
+            "Firmwareupdates auf V3.4 wurden auf realer Hardware erfolgreich durchgeführt. "
+            "Andere Firmwareziele oder Hardwarevarianten sind möglicherweise noch nicht "
+            "vollständig validiert."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet("QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px}")
@@ -967,9 +967,9 @@ class MainWindow(QMainWindow):
                 self,
                 "Firmwareupdate starten",
                 "Ein Firmwareupdate verändert die Mainboard-Firmware und erfolgt auf eigenes "
-                "Risiko. Der Versionswechsel V3.3 → V3.4 wurde real erfolgreich getestet; "
-                "andere Firmwarestände oder Hardwarevarianten sind möglicherweise noch nicht "
-                "validiert.\n\nFirmwareupdate jetzt starten?",
+                "Risiko. Firmwareupdates auf V3.4 wurden auf realer Hardware erfolgreich "
+                "durchgeführt. Andere Firmwareziele oder Hardwarevarianten sind möglicherweise "
+                "noch nicht vollständig validiert.\n\nFirmwareupdate jetzt starten?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -1087,8 +1087,11 @@ class MainWindow(QMainWindow):
         self.backup_button.setEnabled(enabled and adb_ready)
         self.status_btn.setEnabled(enabled and adb_ready)
         self.restore_btn.setEnabled(enabled and adb_ready)
-        self.dry.setEnabled(enabled and adb_ready and update_manifest_ready)
-        self.update_btn.setEnabled(enabled and adb_ready and update_manifest_ready and self.risk.isChecked())
+        update_start_allowed = enabled and not getattr(self, "_ota_serial_guard_active", False)
+        self.dry.setEnabled(update_start_allowed and adb_ready and update_manifest_ready)
+        self.update_btn.setEnabled(
+            update_start_allowed and adb_ready and update_manifest_ready and self.risk.isChecked()
+        )
         self.manifest_preview_btn.setEnabled(enabled and firmware_ready)
         self.manifest_full_btn.setEnabled(enabled and firmware_ready)
         self.manifest_btn.setEnabled(enabled and firmware_ready)
