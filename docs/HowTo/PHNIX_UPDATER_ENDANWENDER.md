@@ -1,15 +1,17 @@
 # PHNIX-Firmware-Updater – Anleitung für Anwender
 
-Stand: 29. August 2026
+Stand: 1. September 2026
 
 > [!CAUTION]
-> ## V3.3 → V3.4 wurde auf realer Hardware erfolgreich durchgeführt
+> ## V1.2 → V3.4 und V3.3 → V3.4 wurden auf realer Hardware erfolgreich durchgeführt
 >
 > Ein vollständiger Mainboard-Firmwarewechsel von **V3.3 auf V3.4** wurde mit dem FoxAir Updater auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt und anschließend über **C36E Status 5 / Board-Step 12** sowie die neue C544-Version `0034` bestätigt.
 >
+> Zusätzlich wurde inzwischen auch ein direktes Update von **V1.2 (Auslieferungszustand) auf V3.4** auf realer Hardware erfolgreich durchgeführt.
+>
 > Zusätzlich wurde **V3.3 → V3.3** bis zur erwarteten Gleichversionsablehnung getestet; dabei wurden keine C5A8-Firmwaredaten übertragen.
 >
-> Andere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht in gleicher Tiefe live validiert. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt **auf eigenes Risiko**.
+> Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht in gleicher Tiefe live validiert. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt **auf eigenes Risiko**.
 
 Diese Anleitung beschreibt den normalen Endanwenderweg. Für Windows ist die grafische Anwendung der empfohlene Bedienweg. Unter Linux/Raspberry Pi steht weiterhin der Launcher `./foxair-updater` mit demselben gemeinsamen OTA-Kern zur Verfügung.
 
@@ -38,6 +40,7 @@ Real bestätigt sind unter Windows bzw. über den Windows-/Remote-ADB-Pfad unter
 - Dry-Run;
 - V3.3→V3.3 bis zur sicheren Gleichversionsablehnung;
 - vollständiger realer Firmwarewechsel **V3.3 → V3.4**;
+- vollständiger realer Firmwarewechsel **V1.2 (Auslieferungszustand) → V3.4**;
 - Mainboard-OTA-Vorgangszähler-Wartung.
 
 Die Windows-GUI verwendet weiterhin dieselbe gemeinsame OTA-Logik wie der Linux-Weg. Der Windows-Sicherheitswrapper ergänzt nur Hostfunktionen wie Full-Abgleich, lokale Zustandsverwaltung und LTE-Cache-Sicherung.
@@ -131,7 +134,9 @@ Technische Details:
 
 ## Reale V3.3→V3.4-Laufzeit
 
-Der bestätigte Live-Lauf zeigte:
+Zusätzlich zum dokumentierten V3.3→V3.4-Lauf wurde auch **V1.2 (Auslieferungszustand) → V3.4** real erfolgreich durchgeführt. Die folgenden Laufzeitangaben stammen weiterhin ausschließlich aus dem dokumentierten V3.3→V3.4-Lauf.
+
+Der bestätigte V3.3→V3.4-Live-Lauf zeigte:
 
 ```text
 C350 / C36E Status 1
@@ -155,7 +160,7 @@ Deshalb bleibt der Fortschrittsbalken nach 100 % bei 100 %, während die Mainboa
 
 Nach dem terminalen Mainboardergebnis wartet der Updater bis zu **120 Sekunden** auf einen vollständig normalen LTE-/Cloudzustand.
 
-Details zum Live-Lauf:
+Details zum dokumentierten V3.3→V3.4-Live-Lauf:
 
 [`../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](../reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
 
@@ -366,7 +371,7 @@ Die Lizenz ist keine Zusage, dass ein Firmwareupdate auf jeder Hardware-/Firmwar
 4. Dry-Run durchführen.
 5. Firmwareupdate starten und bis Status 5 / Board-Step 12 beobachten.
 
-**V3.3 → V3.4 wurde real erfolgreich durchgeführt.**
+**V3.3 → V3.4 und V1.2 (Auslieferungszustand) → V3.4 wurden real erfolgreich durchgeführt.**
 
 ### Linux / Raspberry Pi
 
