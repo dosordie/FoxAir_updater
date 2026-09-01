@@ -196,7 +196,7 @@ Real nachgewiesen:
 - [x] Abbruch der Windows-Überwachung beeinflusst den Runner nicht.
 - [x] Testprozess kontrolliert beendet und Testverzeichnis entfernt.
 
-## 8. Stage 1 – production-shaped Supervisor ohne OTA – NUR STALE-PID-TEST OFFEN
+## 8. Stage 1 – production-shaped Supervisor ohne OTA – ERLEDIGT
 
 Der Stage-1-Runner berührt weder Firmware noch `phnixIot4G`, GDB oder OTA.
 
@@ -237,6 +237,20 @@ Lock-/Cleanup-Lauf `stage1-lock-01` / `stage1-lock-02`:
   PowerShell-Harness danach fälschlich noch als „Monitoring detached“ bezeichnet; der
   Harness wurde anschließend korrigiert, ohne Runner-/Lock-Semantik zu ändern.
 
+Stale-/Fremd-PID-Test mit `stage1-lock-02`:
+
+- ein absichtlich gestarteter fremder detached Shell-Prozess lief mit PID `28360`.
+- dessen PID wurde bewusst als falscher Wert in `stage1-lock-02/runner.pid` geschrieben.
+- Cleanup erkannte, dass PID `28360` zu einem anderen Prozess gehört, und meldete
+  ausdrücklich, dass dieser Prozess nicht angefasst wird.
+- das terminale und bestätigte Run-Verzeichnis wurde dennoch kontrolliert entfernt.
+- anschließend war `/proc/28360` weiterhin vorhanden (`FOREIGN_PROCESS_STILL_ALIVE`).
+- erst der explizite Test-Cleanup beendete den fremden Prozess.
+- während der Vorbereitung dieses Tests wurde ein Quoting-Fehler in der ersten
+  PowerShell-Cleanup-Prüfung gefunden; die fehlerhafte Prüfung blieb fail-closed und
+  verweigerte Cleanup. Die Prüfung wurde danach auf konkrete, numerisch validierte PID
+  und separate `/proc/<pid>/cmdline`-Abfrage umgestellt.
+
 ### Stage-1-Abnahmetests
 
 - [x] Normaler Lauf bis `completed`.
@@ -249,25 +263,41 @@ Lock-/Cleanup-Lauf `stage1-lock-01` / `stage1-lock-02`:
 - [x] `cleanup` vor terminal wird verweigert.
 - [x] `cleanup` ohne ack wird verweigert.
 - [x] `cleanup` nach terminal + ack entfernt das richtige Run-Verzeichnis.
-- [ ] Stale-/fremde PID wird nicht beendet.
+- [x] Stale-/fremde PID wird nicht beendet.
 
-Vor Stage 2 bleibt nur noch der Stale-/Fremd-PID-Test auf realer Hardware offen.
+Stage 1 ist damit auf realer DTU-Hardware vollständig abgenommen.
 
-## 9. Stage 2 – Supervisor + Runtime-Hook, noch ohne Firmwaretransfer
+## 9. Stage 2 – Supervisor + Runtime-Hook, noch ohne Firmwaretransfer – IMPLEMENTIERT, REALTEST OFFEN
 
 Ziel: Der Supervisor startet den bestehenden Hook selbst; Windows beobachtet nur.
 
-- [ ] Hook als Child des Supervisors starten.
-- [ ] Hookstatus Run-spezifisch schreiben.
-- [ ] Hook-PID und Prozessidentität überwachen.
-- [ ] Hookstatus in Supervisorstatus übersetzen.
-- [ ] Hook-Log dauerhaft dem Run zuordnen.
-- [ ] `/tmp` nur als Runtime-Signal behandeln.
-- [ ] Read-only `verify` als erster Child-Workflow.
-- [ ] danach read-only Attach-Test als Child-Workflow.
-- [ ] Windows-Monitor/ADB währenddessen beenden.
-- [ ] Supervisor/Hook müssen unbeeinflusst weiterlaufen.
-- [ ] Ergebnis persistent unter `/data` ablegen.
+Erster implementierter Teilstand:
+
+- `dtu_ota_supervisor_stage2.sh` führt ausschließlich `phnix_ota_runtime_hook verify` aus.
+- `Invoke-DtuOtaSupervisorStage2.ps1` lädt Supervisor und Hook pro Run hoch und startet
+  den Supervisor detached via `setsid`.
+- lokaler Hook-SHA-256 wird vor Start auf dem DTU erneut gegen den hochgeladenen Hook
+  geprüft.
+- Hook-PID, `hook-status.json`, `hook.log`, `runner.log`, `result.json` und persistenter
+  Supervisorstatus liegen im Run-Verzeichnis unter `/data`.
+- `verify` ist bewusst read-only: kein GDB-Attach, kein Stoppen von Service/Watchdogs,
+  kein C350 und kein Firmwaretransfer.
+- Stage-2-Status verwendet bereits `foxair-dtu-ota-run-v1` mit
+  `transfer_started=false` und `original_service_authoritative=false`.
+- ein fehlender/unerwarteter Hook-Erfolgsstatus wird fail-closed als Fehler behandelt.
+
+### Stage-2-Abnahmepunkte
+
+- [ ] Hook als Child des Supervisors startet auf realer DTU.
+- [ ] Hookstatus wird Run-spezifisch geschrieben.
+- [ ] Hook-PID und Prozessidentität werden korrekt behandelt.
+- [ ] `verify` endet lokal mit `phase=verified` und Supervisor `hook-verify-ok`.
+- [ ] Hook-Log bleibt dauerhaft dem Run zugeordnet.
+- [ ] terminales `result.json` bleibt bis Ack/Cleanup erhalten.
+- [ ] anschließend read-only Attach-Test als Child-Workflow implementieren.
+- [ ] Windows-Monitor/ADB während eines ausreichend langen Child-Laufs beenden.
+- [ ] Supervisor/Hook müssen dabei unbeeinflusst weiterlaufen.
+- [ ] `/tmp` ausschließlich als Runtime-Signal behandeln.
 
 ## 10. Stage 3 – Paketformat und doppelte lokale Verifikation
 
@@ -478,10 +508,10 @@ Danach:
 
 ## 24. Unmittelbare Reihenfolge
 
-1. Letzter Stage-1-Hardwaretest: stale/fremde PID darf nicht beendet werden.
-2. Stage 2: Hook zunächst als harmlosen `verify`-/Attach-Child starten.
-3. ADB-Abbruch/Reattach mit diesem Child testen.
-4. Paketformat + lokale Hashprüfung implementieren.
+1. Stage-2-`verify` auf der realen DTU ausführen und persistente Logs/Status prüfen.
+2. Danach den vorhandenen read-only `attach-test` als nächsten Child-Modus integrieren.
+3. ADB-Abbruch/Reattach während eines ausreichend langen Stage-2-Child-Laufs testen.
+4. Paketformat + lokale Hashprüfung für Firmware/Auftrag vervollständigen.
 5. Pre-C5A8-Orchestrierung verschieben.
 6. Erst danach echten C5A8-Lauf autonom auf DTU testen.
 7. Terminalverifikation und Recovery lokal abschließen.
