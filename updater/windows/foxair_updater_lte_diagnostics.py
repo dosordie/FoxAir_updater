@@ -891,6 +891,11 @@ class MainWindow(desktop.MainWindow):
                 )
                 self._set_step("adb-reattach", "warn", recovery_note)
                 self._log("[Hinweis] " + recovery_note)
+                QMessageBox.warning(
+                    self,
+                    "Firmwareupdate erfolgreich – ADB nicht erreichbar",
+                    recovery_note,
+                )
                 self.ota_reattach_btn.setVisible(True)
 
         if op == "ota-reattach" and self._ota_serial_guard_active:

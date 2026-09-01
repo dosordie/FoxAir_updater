@@ -57,6 +57,16 @@ class WindowsOtaResilienceTests(unittest.TestCase):
         self.assertIn('self._set_step("adb-reattach", "warn", recovery_note)', lte)
         self.assertIn('self._log("[Hinweis] " + recovery_note)', lte)
 
+    def test_terminal_reattach_shows_compact_success_popup(self):
+        gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        reattach = gui.split('if op == "ota-reattach":', 1)[1].split('elif op == "adb":', 1)[0]
+        terminal = reattach.split('if phase == "success" and hook.get("terminal") is True:', 1)[1].split(
+            'elif phase in {"success-report"}', 1
+        )[0]
+        self.assertIn("QMessageBox.information(", terminal)
+        self.assertIn('"Firmwareupdate erfolgreich"', terminal)
+        self.assertIn('"Das Firmwareupdate wurde erfolgreich abgeschlossen."', terminal)
+
     def test_detached_fallback_still_requires_complete_strict_sequence(self):
         sequence = SerialCompletionSequence(9)
         events = (

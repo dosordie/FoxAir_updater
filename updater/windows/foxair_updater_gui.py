@@ -786,6 +786,11 @@ class MainWindow(QMainWindow):
                 info = status.get("ota_info") if isinstance(status.get("ota_info"), dict) else {}
                 if phase == "success" and hook.get("terminal") is True:
                     self.progress_text.setText("Firmwareupdate erfolgreich abgeschlossen.")
+                    QMessageBox.information(
+                        self,
+                        "Firmwareupdate erfolgreich",
+                        "Das Firmwareupdate wurde erfolgreich abgeschlossen.",
+                    )
                 elif phase in {"success-report"} or (
                     info.get("crc_ok") is True and info.get("length", 0) > 0
                     and info.get("offset") == info.get("length")
