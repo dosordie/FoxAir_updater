@@ -18,6 +18,15 @@ INJECTION_STARTED=$STATE_DIR/injection-started
 ORIGINAL_SERVICE_OWNS=$STATE_DIR/original-service-owns
 STATE_BACKUP=$STATE_DIR/original-state
 DEFAULT_STATUS=/tmp/phnix_ota_status.json
+GDB_BIN=/usr/bin/gdb
+YIELD_BREAK_CONDITION=
+if test -f /data/phnixIot4G.tls-lab; then
+    test -x /usr/bin/gdb-multiarch && GDB_BIN=/usr/bin/gdb-multiarch
+    # qemu-user reaches 0x1FE40 once with uart_send_flag=1 during cold boot.
+    # The physical DTU hook intentionally retains its live-validated behavior;
+    # only the lab skips that simulator-only early hit.
+    YIELD_BREAK_CONDITION='condition 1 *(unsigned int *)0x930dc == 0 && *(unsigned char *)0x98a94 == 12'
+fi
 
 fail() {
     printf '{"phase":"error","terminal":true,"message":"%s"}\n' "$1" > "${STATUS:-$DEFAULT_STATUS}"
@@ -31,19 +40,33 @@ write_status_json() {
 }
 
 service_pid() {
-    pidof phnixIot4G | awk '{print $1}'
+    PID=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
+    if test -z "$PID" && test -f /data/phnixIot4G.tls-lab; then
+        for proc in /proc/[0-9]*; do
+            cmd=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
+            case "$cmd" in *qemu-arm-static*phnixIot4G.tls-lab*) basename "$proc"; return 0 ;; esac
+        done
+    fi
+    printf '%s\n' "$PID"
 }
 
 watchdog_pids() {
-    ps | awk '$4 == "{helloworld}" {print $1}'
+    WDS=$(ps | awk '$4 == "{helloworld}" {print $1}')
+    if test -z "$WDS" && test -f /data/phnixIot4G.tls-lab; then
+        # The VM scenario supervisor replaces the physical watchdog pair.
+        # Signals to these sentinel PIDs are deliberately best-effort.
+        WDS='4001
+4002'
+    fi
+    printf '%s\n' "$WDS"
 }
 
 verify() {
     test -x "$SERVICE" || fail "original service missing"
     ACTUAL_SHA256=$(sha256sum "$SERVICE" | awk '{print $1}')
     test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || fail "service build mismatch"
-    test -x /usr/bin/gdb || fail "gdb missing"
-    test -x /usr/bin/gdbserver || fail "gdbserver missing"
+    test -x "$GDB_BIN" || fail "gdb missing"
+    test -x /usr/bin/gdbserver || test -f /data/phnixIot4G.tls-lab || fail "gdbserver missing"
     busybox --list | grep -qx httpd || fail "busybox httpd missing"
     PID=$(service_pid)
     test -n "$PID" || fail "original service not running"
@@ -54,6 +77,18 @@ verify() {
     test "$TRACER" = 0 || fail "service is already traced"
     printf '{"phase":"verified","terminal":false,"service_pid":%s,"watchdogs":[%s]}\n' "$PID" "$WDS_JSON" > "${STATUS:-$DEFAULT_STATUS}"
     echo "verified service_pid=$PID watchdogs=$WDS sha256=$ACTUAL_SHA256"
+}
+
+start_debug_server() {
+    LOG_PATH=$1
+    if test -f /data/phnixIot4G.tls-lab; then
+        # QEMU already exposes the guest at the same remote-GDB endpoint.
+        rm -f "$GDBSERVER_PID"
+        printf 'using existing QEMU GDB stub on 127.0.0.1:12345\n' > "$LOG_PATH"
+        return 0
+    fi
+    gdbserver --attach 127.0.0.1:12345 "$PID" > "$LOG_PATH" 2>&1 &
+    echo $! > "$GDBSERVER_PID"
 }
 
 resume_watchdogs() {
@@ -197,9 +232,8 @@ attach_test() {
     watchdog_pids > "$WATCHDOG_PIDS"
     trap cleanup EXIT INT TERM
     touch "$SAFE_TO_CLEAN"
-    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-test.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    start_debug_server "$STATE_DIR/gdbserver-test.log"
     sleep 1
     cat > "$GDB_SCRIPT" <<EOF
 set architecture arm
@@ -214,7 +248,7 @@ detach
 quit
 EOF
     printf '{"phase":"attach-test","terminal":false}\n' > "$STATUS"
-    if ! gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/attach-test.log" 2>&1; then
+    if ! "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/attach-test.log" 2>&1; then
         fail "read-only GDB attach/detach test failed"
     fi
     printf '{"phase":"attach-test-ok","terminal":true}\n' > "$STATUS"
@@ -228,9 +262,8 @@ breakpoint_test() {
     watchdog_pids > "$WATCHDOG_PIDS"
     trap cleanup EXIT INT TERM
     touch "$SAFE_TO_CLEAN"
-    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-breakpoint-test.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    start_debug_server "$STATE_DIR/gdbserver-breakpoint-test.log"
     sleep 1
     cat > "$GDB_SCRIPT" <<EOF
 set architecture arm
@@ -253,7 +286,7 @@ detach
 quit
 EOF
     printf '{"phase":"breakpoint-test","terminal":false}\n' > "$STATUS"
-    if ! gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/breakpoint-test.log" 2>&1; then
+    if ! "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/breakpoint-test.log" 2>&1; then
         fail "GDB breakpoint install/remove test failed"
     fi
     printf '{"phase":"breakpoint-test-ok","terminal":true}\n' > "$STATUS"
@@ -267,9 +300,8 @@ cancel_breakpoint_test() {
     watchdog_pids > "$WATCHDOG_PIDS"
     trap cleanup EXIT INT TERM
     touch "$SAFE_TO_CLEAN"
-    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-cancel-breakpoint-test.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    start_debug_server "$STATE_DIR/gdbserver-cancel-breakpoint-test.log"
     sleep 1
     cat > "$GDB_SCRIPT" <<EOF
 set architecture arm
@@ -290,7 +322,7 @@ detach
 quit
 EOF
     printf '{"phase":"cancel-breakpoint-test","terminal":false}\n' > "$STATUS"
-    if ! gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-breakpoint-test.log" 2>&1; then
+    if ! "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-breakpoint-test.log" 2>&1; then
         fail "GDB cancel breakpoint install/remove test failed"
     fi
     printf '{"phase":"cancel-breakpoint-test-ok","terminal":true,"breakpoints":8}\n' > "$STATUS"
@@ -366,9 +398,8 @@ c350_breakpoint_test() {
     watchdog_pids > "$WATCHDOG_PIDS"
     trap cleanup EXIT INT TERM
     touch "$SAFE_TO_CLEAN"
-    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-c350-breakpoint-test.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    start_debug_server "$STATE_DIR/gdbserver-c350-breakpoint-test.log"
     sleep 1
     cat > "$GDB_SCRIPT" <<EOF
 set architecture arm
@@ -387,7 +418,7 @@ detach
 quit
 EOF
     printf '{"phase":"c350-breakpoint-test","terminal":false}\n' > "$STATUS"
-    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/c350-breakpoint-test.log" 2>&1 || fail "C350 breakpoint test failed"
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/c350-breakpoint-test.log" 2>&1 || fail "C350 breakpoint test failed"
     printf '{"phase":"c350-breakpoint-test-ok","terminal":true,"breakpoints":5}\n' > "$STATUS"
 }
 
@@ -410,13 +441,12 @@ c350_probe_hook() {
     watchdog_pids > "$WATCHDOG_PIDS"
     iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
     iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
-    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
     make_c350_probe_gdb_script
     JSON_STATUS='{"phase":"c350-probe-attaching","terminal":false}' write_status_json
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-c350-probe.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    start_debug_server "$STATE_DIR/gdbserver-c350-probe.log"
     sleep 1
-    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/c350-probe.log" 2>&1 &
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/c350-probe.log" 2>&1 &
     echo $! > "$GDB_PID"
     wait "$(cat "$GDB_PID")"
 }
@@ -624,13 +654,12 @@ cancel_probe_hook() {
     watchdog_pids > "$WATCHDOG_PIDS"
     iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
     iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
-    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
     make_cancel_probe_gdb_script
     printf '{"phase":"cancel-probe-attaching","terminal":false}\n' > "$STATUS"
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-cancel-probe.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    start_debug_server "$STATE_DIR/gdbserver-cancel-probe.log"
     sleep 1
-    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-probe.log" 2>&1 &
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-probe.log" 2>&1 &
     echo $! > "$GDB_PID"
     wait "$(cat "$GDB_PID")"
 }
@@ -645,10 +674,9 @@ cancel_probe_resume_hook() {
     trap cleanup EXIT INT TERM
     make_cancel_probe_gdb_script
     printf '{"phase":"cancel-resume-attaching","terminal":false}\n' > "$STATUS"
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver-cancel-resume.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    start_debug_server "$STATE_DIR/gdbserver-cancel-resume.log"
     sleep 1
-    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-resume.log" 2>&1 &
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/cancel-resume.log" 2>&1 &
     echo $! > "$GDB_PID"
     wait "$(cat "$GDB_PID")"
 }
@@ -672,6 +700,7 @@ set \$local_ota_active = 0
 set \$terminal_pending = 0
 
 break *0x1fe40
+$YIELD_BREAK_CONDITION
 
 shell echo '{"phase":"waiting-for-yield-loop","terminal":false}' > $STATUS
 continue
@@ -840,13 +869,12 @@ run_hook() {
         iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
         iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
     fi
-    while read -r wd; do kill -STOP "$wd"; done < "$WATCHDOG_PIDS"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
     make_gdb_script
     printf '{"phase":"attaching","terminal":false}\n' > "$STATUS"
-    gdbserver --attach 127.0.0.1:12345 "$PID" > "$STATE_DIR/gdbserver.log" 2>&1 &
-    echo $! > "$GDBSERVER_PID"
+    start_debug_server "$STATE_DIR/gdbserver.log"
     sleep 1
-    gdb -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/gdb.log" 2>&1 &
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/gdb.log" 2>&1 &
     echo $! > "$GDB_PID"
     GDB_RC=0
     wait "$(cat "$GDB_PID")" || GDB_RC=$?

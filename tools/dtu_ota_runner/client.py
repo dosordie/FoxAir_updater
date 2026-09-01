@@ -1,0 +1,145 @@
+"""Reusable host client for the persistent DTU OTA runner contract."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+from updater.common.adb_transport import AdbClient
+from updater.common.firmware_manifest import FirmwareManifest
+
+from .package import DtuOtaPackage, RUN_ID_RE, ota_command_bytes
+
+
+REMOTE_BASE = "/data/foxair_ota_runner"
+
+
+class RunnerClientError(RuntimeError):
+    pass
+
+
+def _run_id(value: str) -> str:
+    if not RUN_ID_RE.fullmatch(value):
+        raise RunnerClientError("invalid run_id")
+    return value
+
+
+class DtuOtaClient:
+    def __init__(self, adb: AdbClient, *, source_root: Path | None = None):
+        self.adb = adb
+        self.source_root = source_root or Path(__file__).resolve().parents[2]
+        self.supervisor = self.source_root / "tools/dtu_ota_runner/dtu_ota_supervisor.sh"
+        self.hook = self.source_root / "tools/phnix_ota/phnix_ota_runtime_hook"
+
+    def _run_dir(self, run_id: str) -> str:
+        return f"{REMOTE_BASE}/runs/{_run_id(run_id)}"
+
+    def current_run_id(self) -> str:
+        value = self.adb.shell(f"cat {REMOTE_BASE}/last_run_id 2>/dev/null || true")
+        if not value:
+            raise RunnerClientError("DTU has no last_run_id")
+        return _run_id(value.strip())
+
+    def prepare(
+        self,
+        *,
+        manifest_path: Path,
+        firmware_path: Path | None = None,
+        run_id: str | None = None,
+        mode: str = "full",
+        restart_service_before_update: bool = False,
+        isolate_mqtt: bool = False,
+    ) -> dict[str, Any]:
+        run_id = _run_id(run_id or time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 10000:04d}")
+        manifest = FirmwareManifest.load(manifest_path)
+        firmware = manifest.resolve_firmware(manifest_path, firmware_path)
+        package = DtuOtaPackage.build(
+            run_id=run_id, manifest=manifest, firmware=firmware, hook=self.hook,
+            supervisor=self.supervisor, mode=mode,
+            restart_service_before_update=restart_service_before_update,
+            isolate_mqtt=isolate_mqtt,
+        )
+        run_dir = self._run_dir(run_id)
+        payload = f"{run_dir}/payload"
+        self.adb.shell(f"mkdir -p '{payload}' '{run_dir}/state'")
+        self.adb.push(self.supervisor, f"{payload}/dtu_ota_supervisor.sh")
+        self.adb.push(self.hook, f"{payload}/runtime_hook")
+        self.adb.push(firmware, f"{payload}/firmware.bin")
+        with tempfile.TemporaryDirectory() as temp:
+            package_path = Path(temp) / "package.json"
+            package_path.write_bytes(package.canonical_bytes())
+            command_path = Path(temp) / "ota-command.json"
+            command_path.write_bytes(ota_command_bytes(manifest))
+            self.adb.push(package_path, f"{run_dir}/package.json")
+            self.adb.push(command_path, f"{payload}/ota-command.json")
+        self.adb.shell(
+            f"printf '%s\\n' '{package.sha256}' > '{run_dir}/package.sha256'; "
+            f"chmod 700 '{payload}/dtu_ota_supervisor.sh' '{payload}/runtime_hook'"
+        )
+        self.adb.shell(
+            f"SH=/system/bin/sh; test -x \"$SH\" || SH=/bin/sh; "
+            f"\"$SH\" '{payload}/dtu_ota_supervisor.sh' preflight '{run_id}'"
+        )
+        return self.status(run_id, reconcile=False)
+
+    def start(self, run_id: str) -> dict[str, Any]:
+        run_dir = self._run_dir(run_id)
+        command = (
+            f"SH=/system/bin/sh; test -x \"$SH\" || SH=/bin/sh; "
+            f"setsid \"$SH\" '{run_dir}/payload/dtu_ota_supervisor.sh' run '{run_id}' "
+            f"</dev/null >>'{run_dir}/launcher.log' 2>&1 & sleep 1"
+        )
+        self.adb.shell(command)
+        return self.status(run_id, reconcile=False)
+
+    def status(self, run_id: str | None = None, *, reconcile: bool = True) -> dict[str, Any]:
+        run_id = _run_id(run_id or self.current_run_id())
+        run_dir = self._run_dir(run_id)
+        if reconcile:
+            self.adb.shell(
+                f"SH=/system/bin/sh; test -x \"$SH\" || SH=/bin/sh; "
+                f"\"$SH\" '{run_dir}/payload/dtu_ota_supervisor.sh' classify '{run_id}'",
+                check=False,
+            )
+        raw = self.adb.shell(f"cat '{run_dir}/status.json'")
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise RunnerClientError(f"invalid DTU status JSON: {error}") from error
+        required = {"schema", "run_id", "state", "phase", "terminal", "updated_at",
+                    "transfer_started", "original_service_authoritative", "abort_allowed", "recovery"}
+        missing = sorted(required - value.keys())
+        if missing or value.get("schema") != "foxair-dtu-ota-run-v1" or value.get("run_id") != run_id:
+            raise RunnerClientError(f"invalid status contract (missing={missing})")
+        return value
+
+    def log(self, run_id: str | None = None) -> str:
+        run_id = _run_id(run_id or self.current_run_id())
+        return self.adb.shell(f"cat '{self._run_dir(run_id)}/runner.log' 2>/dev/null || true")
+
+    def abort_request(self, run_id: str | None = None) -> dict[str, Any]:
+        run_id = _run_id(run_id or self.current_run_id())
+        self.adb.shell(f"touch '{self._run_dir(run_id)}/abort.request'")
+        return self.status(run_id, reconcile=False)
+
+    def _lifecycle(self, action: str, run_id: str | None = None) -> dict[str, Any] | None:
+        run_id = _run_id(run_id or self.current_run_id())
+        run_dir = self._run_dir(run_id)
+        self.adb.shell(
+            f"SH=/system/bin/sh; test -x \"$SH\" || SH=/bin/sh; "
+            f"\"$SH\" '{run_dir}/payload/dtu_ota_supervisor.sh' {action} '{run_id}'"
+        )
+        if action == "cleanup":
+            return None
+        return self.status(run_id, reconcile=False)
+
+    def acknowledge(self, run_id: str | None = None) -> dict[str, Any]:
+        value = self._lifecycle("ack", run_id)
+        assert value is not None
+        return value
+
+    def cleanup(self, run_id: str | None = None) -> None:
+        self._lifecycle("cleanup", run_id)

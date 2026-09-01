@@ -1,0 +1,203 @@
+#!/bin/sh
+set -eu
+
+CONFIG=/etc/default/foxair-fake-adb
+INSTALL_DIR=${FOXAIR_FAKE_ADB_INSTALL_DIR:-/opt/foxair-fake-adb}
+# qemu_lab_adapter.py remains the rootfs/process base; this wrapper invokes the
+# Work-VM runtime layer that starts run_scenario_lab.sh and emulates ADB shell.
+ADAPTER="$INSTALL_DIR/qemu_work_lab_backend.py"
+SERVICE=foxair-fake-adb.service
+DEBUG_SERVICE=foxair-debug-stream.service
+
+if [ -f "$CONFIG" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$CONFIG"
+    set +a
+fi
+
+need_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Bitte mit sudo ausführen: sudo foxair-fake-adbctl $*" >&2
+        exit 2
+    fi
+}
+
+adapter() {
+    need_root "$@"
+    python3 "$ADAPTER" "$@"
+}
+
+usage() {
+    cat <<'EOF'
+FoxAir Fake ADB / Work-QEMU-Lab Control
+
+Befehle:
+  status                         Dienste, ADB, QEMU-RootFS und aktuellen Runner anzeigen
+  info                           IP/Ports für Windows sowie vollständigen Backendstatus anzeigen
+
+Simulator und ADB:
+  online                         ADB-Gerät für neue Verbindungen sichtbar machen
+  offline                        ADB-Gerät für neue Verbindungen offline schalten
+                                 OTA/QEMU laufen weiter; bestehende ADB-Shell kann offen bleiben
+  simulator-start [NAME]         ADB online; optional zusätzlich scenario NAME neu starten
+  simulator-stop                 Alias für offline; beendet NICHT phnixIot4G/QEMU/OTA
+  restart                        nur TCP-Fake-ADB-Dienst neu starten (nicht während OTA verwenden)
+  runner-stop                    QEMU-/PHNIX-Runner beenden (bricht einen laufenden OTA-Test ab)
+  reset [NAME]                   Zustand löschen und Runner mit NAME (Standard: success) starten
+
+Board und OTA-Szenarien:
+  scenario NAME                  Runner mit passender RS485-Störung neu starten
+                                 im DTU_runner-Branch bleibt QEMU-GDB frei;
+                                 nur der produktive Runtime-Hook verbindet sich
+  board-version NNNN             Mainboard-Version setzen und Runner neu starten (0033/0034)
+  cancel-scenario NAME           vorhandene Cancel-ACK-Funktion des RS485-Fakers verwenden
+  handshake-scenario NAME        vorhandene C350/C357-Fehlerbilder verwenden
+  same-version-scenario NAME     vorhandene C350-Status0/Status1-Fehlerbilder verwenden
+
+Diagnose und simulierte Eingaben:
+  modem-log on|off|status        TCP 5039 persistent aktivieren/stummschalten
+                                 Port bleibt bei off erreichbar; keine spätere Datenwiedergabe
+  mqtt-send status-request       während eines OTA einen FC03-Statusread per MQTT senden
+  mqtt-send raw HEX              rohe MQTT-/user/get-Nutzdaten einmalig senden (nur Lab)
+  logs                           Fake-ADB-Log verfolgen
+  debug-logs                     TCP-Debugstream-Service-Log verfolgen
+  lab-log                        Ausgabe des aktuell gestarteten Work-Lab-Runners verfolgen
+
+ADB-Unterbrechung während eines OTA:
+  sudo foxair-fake-adbctl offline
+  sudo foxair-fake-adbctl online
+  Dies betrifft sicher neue ADB-Anfragen, trennt aber keine bereits laufende
+  ADB-Shell garantiert. Ein separater harter adb-link-Schalter existiert noch nicht.
+
+Direkt auf dem vorhandenen Work-Lab abbildbar:
+  scenario success
+  scenario success-real-timing  -> gemessene V3.4-Zeiten, Laufzeit bis 60 Minuten
+  scenario same-version          -> FAULT_SCENARIO=c350-status0
+  scenario stall-c350            -> FAULT_SCENARIO=no-c350-status
+  scenario stall-c5a8            -> FAULT_SCENARIO=no-block-ack
+  scenario restart-at-50-resume  -> LTE/QEMU restart, persistent C5A8 resume
+  handshake-scenario success
+  handshake-scenario missing-status-2 -> no-c357-status
+  same-version-scenario success  -> c350-status0
+  same-version-scenario status-1 -> success
+  cancel-scenario success        -> CANCEL_ACK=1
+  cancel-scenario no-response    -> CANCEL_ACK=0
+
+Beispiele:
+  sudo foxair-fake-adbctl status
+  sudo foxair-fake-adbctl board-version 0034
+  sudo foxair-fake-adbctl scenario success-real-timing
+  sudo foxair-fake-adbctl modem-log off
+  sudo foxair-fake-adbctl mqtt-send status-request
+
+Nicht direkt durch rs485_fault_emulator.py unterstützte alte Python-Simulator-
+Szenarien werden absichtlich mit Exit 3 abgelehnt statt nur ungefähr emuliert.
+EOF
+}
+
+cmd=${1:-status}
+shift || true
+case "$cmd" in
+    status)
+        need_root status
+        systemctl --no-pager --full status "$SERVICE" || true
+        systemctl --no-pager --full status "$DEBUG_SERVICE" || true
+        echo
+        adapter status
+        ;;
+    scenario|board-version|cancel-scenario|handshake-scenario|same-version-scenario)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        adapter "$cmd" "$1"
+        ;;
+    mqtt-send)
+        [ "$#" -ge 1 ] && [ "$#" -le 2 ] || { usage; exit 2; }
+        adapter mqtt-send "$@"
+        ;;
+    reset)
+        adapter reset "${1:-success}"
+        ;;
+    runner-stop)
+        adapter runner-stop
+        ;;
+    online)
+        adapter online
+        ;;
+    offline)
+        adapter offline
+        ;;
+    simulator-start)
+        adapter online
+        if [ "$#" -eq 1 ]; then
+            adapter scenario "$1"
+        elif [ "$#" -gt 1 ]; then
+            usage
+            exit 2
+        fi
+        ;;
+    simulator-stop)
+        [ "$#" -eq 0 ] || { usage; exit 2; }
+        adapter offline
+        ;;
+    restart)
+        need_root restart
+        systemctl restart "$SERVICE"
+        systemctl --no-pager --full status "$SERVICE"
+        ;;
+    logs)
+        need_root logs
+        journalctl -u "$SERVICE" -f
+        ;;
+    debug-logs)
+        need_root debug-logs
+        journalctl -u "$DEBUG_SERVICE" -f
+        ;;
+    modem-log)
+        need_root modem-log
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        state_file=${FOXAIR_DEBUG_STREAM_STATE:-${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}/debug-stream.state}
+        case "$1" in
+            on|off)
+                install -d -m 0750 "$(dirname "$state_file")"
+                printf '%s\n' "$1" > "$state_file"
+                if [ "$1" = on ]; then
+                    echo "Modem-Log auf TCP ${FOXAIR_DEBUG_PORT:-5039}: aktiv (nur neue Daten)"
+                else
+                    echo "Modem-Log auf TCP ${FOXAIR_DEBUG_PORT:-5039}: stumm; Port bleibt erreichbar"
+                fi
+                ;;
+            status)
+                mode=on
+                [ -f "$state_file" ] && mode=$(tr -d '[:space:]' < "$state_file")
+                echo "Modem-Log auf TCP ${FOXAIR_DEBUG_PORT:-5039}: $mode"
+                ;;
+            *) usage; exit 2 ;;
+        esac
+        ;;
+    lab-log)
+        need_root lab-log
+        tail -n 100 -f "${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}/qemu-adb/scenario-lab.out"
+        ;;
+    info)
+        need_root info
+        port=${FOXAIR_FAKE_ADB_PORT:-5038}
+        debug_port=${FOXAIR_DEBUG_PORT:-5039}
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        echo "VM-IP: ${ip:-<VM-IP>}"
+        echo "ADB-Port: $port"
+        echo "Debug-Port: $debug_port (roher phnixIot4G-/dev/ttyGS0-Strom)"
+        "$0" modem-log status
+        echo "Windows GUI: Remote ADB Server aktivieren, IP=${ip:-<VM-IP>}, Port=$port"
+        echo "PowerShell: \$env:ADB_SERVER_SOCKET=\"tcp:${ip:-<VM-IP>}:$port\""
+        echo
+        adapter status
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        echo "Unbekannter Befehl: $cmd" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

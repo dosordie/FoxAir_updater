@@ -1,0 +1,16 @@
+[Unit]
+Description=FoxAir PHNIX ttyGS0 debug stream on TCP
+After=network-online.target foxair-fake-adb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/default/foxair-fake-adb
+ExecStart=/usr/bin/python3 /opt/foxair-fake-adb/foxair_debug_stream_server.py
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

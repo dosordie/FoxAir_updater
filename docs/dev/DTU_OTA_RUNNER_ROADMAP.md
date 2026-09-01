@@ -8,6 +8,27 @@
 
 Stand: 1. September 2026
 
+## Aktueller Implementierungsstand im Branch
+
+Der erste zusammenhängende Backendpfad ist implementiert und als Zwischenstand
+prüfbar:
+
+- produktionsnaher DTU-Supervisor unter `/data/foxair_ota_runner/runs/<RUN-ID>/`;
+- paketierte Host- und DTU-Prüfung von Firmware, Manifest, Hook, Runner,
+  Originaldienst-SHA und Build-ID;
+- stabile Python-/CLI-Operationen `prepare`, `start`, `status`, `log`,
+  `abort-request`, `ack`, `cleanup`, `current` und `active`;
+- detached Start per `setsid`, atomare Status-/Result-Dateien und exklusiver Run-Lock;
+- Same-Version im Work-QEMU-Lab erfolgreich bis C350/C36E Status 0 getestet,
+  ohne C357/C5A8 und mit bestätigter Wiederherstellung;
+- Simulatoradapter verwendet für den Runtime-Hook den echten QEMU-GDB-/RS485-Pfad;
+- vorbereitete Runs werden nicht als verwaist klassifiziert; ein nachweislich toter
+  Lock-Owner wird klassifiziert und gibt nur den Run-Lock frei, während seine
+  Diagnose erhalten bleibt.
+
+Noch nicht als abgeschlossen markieren: vollständiger Success-/Failure-/Chaos-Matrixlauf
+und die begrenzte Abnahme auf der realen DTU.
+
 ## 1. Ziel und klarer Scope
 
 Der komplette Mainboard-OTA-Vorgang soll autonom auf dem PHNIX-LTE-Modem laufen.
@@ -123,6 +144,14 @@ Das Design darf nicht davon abhängen, dass `/tmp` einen Reboot überlebt.
 13. OTA-Protokollentscheidungen liegen nur auf dem DTU, nicht zusätzlich im Host.
 14. `abort-request` darf nach dem Point-of-no-return keinen unsicheren Abbruch erzwingen.
 15. Ein Dry-Run darf keinen GDB-Attach und kein C350 auslösen.
+16. Auf der realen MDM9607-DTU mit einem ARMv7-Kern darf der Supervisor keinen
+    Busy-Loop verwenden: reguläres Polling mindestens im 2-Sekunden-Takt,
+    Hashprüfungen nur bei Preflight/Phasenwechsel und keine zyklische Vollanalyse
+    großer Logs.
+17. Der reale Rebootvertrag ist bestätigt: `/data/foxair_ota_runner` bleibt erhalten,
+    `/tmp/phnix_ota_hook` verschwindet; alte GDB-, GDBServer- und OTA-HTTP-Prozesse
+    sind nach Boot nicht vorhanden. Rebootzustände werden nur klassifiziert und
+    niemals automatisch fortgesetzt.
 
 ## 5. Zielstruktur auf dem DTU
 
