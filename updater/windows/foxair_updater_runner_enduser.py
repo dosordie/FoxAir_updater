@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from html import escape
 from pathlib import Path
 
@@ -28,11 +29,40 @@ class MainWindow(user_gui.MainWindow):
         self._runner_progress_length: int | None = None
         self._runner_transfer_visible = False
         super().__init__()
+        self.update_btn.setText("Firmwareupdate starten")
         self._log(f"[FoxAir Updater] Version {base.APP_VERSION} – autonomer DTU-Runner")
 
     # ------------------------------------------------------------------
     # Automatic update logs
     # ------------------------------------------------------------------
+    def _log(self, text):
+        """Keep the on-screen protocol unchanged, but timestamp every automatic log line."""
+        automatic_log = getattr(self, "_automatic_log", None)
+        if automatic_log is None:
+            super()._log(text)
+            return
+
+        # The inherited implementation also writes to _automatic_log. Temporarily
+        # hide that stream so the GUI protocol is still handled normally without
+        # duplicating the file entry, then write the timestamped file line here.
+        self._automatic_log = None
+        try:
+            super()._log(text)
+        finally:
+            self._automatic_log = automatic_log
+
+        try:
+            lines = str(text).splitlines() or [""]
+            for line in lines:
+                stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                automatic_log.write(f"[{stamp}] {line}\n")
+            automatic_log.flush()
+        except OSError as error:
+            self._automatic_log = None
+            super()._log(
+                f"[Warnung] Automatisches Controller-Log konnte nicht weitergeschrieben werden: {error}"
+            )
+
     def _run_runner(self, op: str, *args: str) -> None:
         # Use exactly the established automatic logging implementation from the
         # previous GUI.  It creates:
