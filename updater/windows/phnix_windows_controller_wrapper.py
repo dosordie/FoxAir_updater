@@ -398,6 +398,11 @@ def main() -> int:
             elif phase == "success":
                 clear_cache_pending()
                 note("Update terminal erfolgreich: offener Cache-Sicherungsmarker wurde gelöscht.")
+            elif phase == "monitoring-detached-passive":
+                note(
+                    "Controllerüberwachung geordnet beendet; der autoritative Originaldienst "
+                    "läuft weiter und der Cache-Sicherungsmarker bleibt bis zur Bestätigung offen."
+                )
             else:
                 fail(f"Unerwarteter terminaler Updatezustand trotz Exit 0: {phase}")
         else:

@@ -27,6 +27,10 @@ from PySide6.QtWidgets import (
 import foxair_updater_desktop as desktop
 from updater.common.adb_transport import AdbClient
 from updater.common.phnix_modem_info import PhnixModemInfo, format_seconds, read_phnix_modem_info
+from updater.common.phnix_service_restart import (
+    restart_phnix_iot_service,
+    wait_for_phnix_runtime_ready,
+)
 from updater.common.phnix_debug import (
     PhnixDebugCapture,
     SerialCompletionSequence,
@@ -37,11 +41,17 @@ from updater.common.phnix_debug import (
     resolve_phnix_debug_port,
 )
 
+SERIAL_FALLBACK_TAIL_MS = 40 * 60 * 1000
+
 
 class DebugSignals(QObject):
     line = Signal(str, object)
     update_line = Signal(int, str, object)
     status = Signal(str, object)
+
+
+class PreUpdateRestartSignals(QObject):
+    done = Signal(bool, str)
 
 
 class QtSerialDebugSource:
@@ -134,6 +144,9 @@ class MainWindow(desktop.MainWindow):
         self._debug_signals.line.connect(self._debug_line)
         self._debug_signals.update_line.connect(self._update_debug_line_for_run)
         self._debug_signals.status.connect(self._debug_status)
+        self._pre_update_restart_signals = PreUpdateRestartSignals()
+        self._pre_update_restart_signals.done.connect(self._pre_update_restart_finished)
+        self._pending_update_start = None
         self._debug_capture: PhnixDebugCapture | None = None
         self._debug_window: PhnixDebugWindow | None = None
         self._automatic_log = None
@@ -225,12 +238,32 @@ class MainWindow(desktop.MainWindow):
             return "local:MI_04", "Quelle: Lokal\nEndpunkt: MI_04", lambda: (_ for _ in ()).throw(OSError("COM-Port MI_04 nicht verfügbar"))
         return f"local:{port}", f"Quelle: Lokal\nEndpunkt: {port} / MI_04", lambda: QtSerialDebugSource(port)
 
+    def _update_debug_configuration(self):
+        """Resolve MI_04 anew on every open after USB re-enumeration."""
+        if self.adb_remote.isChecked():
+            return (*self._debug_configuration(), None)
+
+        def open_current_mi04():
+            port = resolve_phnix_debug_port()
+            if not port:
+                raise OSError("COM-Port MI_04 nicht verfügbar")
+            return QtSerialDebugSource(port)
+
+        return (
+            "local:MI_04", "Quelle: Lokal\nEndpunkt: MI_04 (automatischer Reconnect)",
+            open_current_mi04, 1.5,
+        )
+
     def _new_debug_capture(self) -> PhnixDebugCapture:
         identity, _description, factory = self._debug_configuration()
         return PhnixDebugCapture(factory, identity)
 
     def _ensure_debug_capture(self, *, for_update=False) -> PhnixDebugCapture:
-        identity, description, factory = self._debug_configuration()
+        reconnect_interval = None
+        if for_update:
+            identity, description, factory, reconnect_interval = self._update_debug_configuration()
+        else:
+            identity, description, factory = self._debug_configuration()
         old = self._debug_capture
         if old is None or (old.identity != identity and not old.has_consumer("update")):
             window_was_connected = bool(old and old.has_consumer("window"))
@@ -238,7 +271,9 @@ class MainWindow(desktop.MainWindow):
                 old.remove_consumer("window")
                 old.remove_status_consumer("ui")
                 old.remove_status_consumer("log")
-            self._debug_capture = PhnixDebugCapture(factory, identity)
+            self._debug_capture = PhnixDebugCapture(
+                factory, identity, reconnect_interval=reconnect_interval
+            )
             self._debug_source_description = description
             self._debug_last_data = None
             self._debug_connected_since = None
@@ -497,7 +532,10 @@ class MainWindow(desktop.MainWindow):
             self._serial_c5a8_started = True
         if record.get("transfer_started") is True:
             self._serial_transfer_started = True
-        if record.get("event") == "monitoring-connection-lost":
+        if record.get("event") in {
+            "monitoring-connection-lost", "monitoring-recovered-passive",
+            "monitoring-detached-passive",
+        }:
             self._serial_monitoring_lost = True
             if (
                 self._serial_sequence
@@ -619,6 +657,51 @@ class MainWindow(desktop.MainWindow):
                 manifest = None
             if manifest and manifest.is_file():
                 self._start_automatic_logs(manifest)
+        if op == "update" and getattr(self, "restart_before_update", None) is not None:
+            if self.restart_before_update.isChecked():
+                adb_path = self._require_adb()
+                if not adb_path:
+                    self._finish_automatic_logs()
+                    return
+                self.busy = True
+                self._buttons()
+                self._pending_update_start = (op, list(command), cwd)
+                client = AdbClient(adb_path, env=self._process_env())
+
+                def work():
+                    try:
+                        message = restart_phnix_iot_service(client)
+                        pid = wait_for_phnix_runtime_ready(client)
+                    except Exception as error:
+                        self._pre_update_restart_signals.done.emit(False, str(error))
+                    else:
+                        self._pre_update_restart_signals.done.emit(
+                            True, f"{message}\nDienst und MQTT bereit (PID {pid})."
+                        )
+
+                threading.Thread(
+                    target=work, daemon=True, name="phnix-pre-update-restart"
+                ).start()
+                return
+        super()._run(op, command, cwd)
+
+    def _pre_update_restart_finished(self, success: bool, message: str) -> None:
+        pending = self._pending_update_start
+        self._pending_update_start = None
+        self.busy = False
+        self._buttons()
+        if not success or pending is None:
+            self._log(f"[Fehler] Kontrollierter phnixIot4G-Neustart fehlgeschlagen: {message}")
+            self._finish_automatic_logs()
+            QMessageBox.critical(
+                self, "Firmwareupdate nicht gestartet",
+                "Der kontrollierte Neustart oder die anschließende LTE-/MQTT-Bereitschaft "
+                "konnte nicht bestätigt werden. Das Firmwareupdate wurde nicht gestartet.\n\n"
+                + message,
+            )
+            return
+        self._log(message)
+        op, command, cwd = pending
         super()._run(op, command, cwd)
 
     def _done(self, op, code, output):
@@ -644,7 +727,10 @@ class MainWindow(desktop.MainWindow):
                         pass
                     self._automatic_log = None
                 if keep_serial_tail:
-                    QTimer.singleShot(600000, lambda: self._finish_automatic_logs(generation))
+                    QTimer.singleShot(
+                        SERIAL_FALLBACK_TAIL_MS,
+                        lambda: self._finish_automatic_logs(generation),
+                    )
             else:
                 # Must happen before the base implementation can open a modal QMessageBox.
                 self._finish_automatic_logs()
@@ -654,6 +740,36 @@ class MainWindow(desktop.MainWindow):
             # reinterpret the controller's non-zero monitoring-loss exit.
             super()._done("handled-result", code, output)
             self._serial_reattach(generation)
+            return
+        if op == "update" and self._has_event(
+            self._records(output), "monitoring-detached-passive"
+        ):
+            super()._done("handled-result", code, output)
+            self._flow_title = "Passive Firmwareüberwachung"
+            self._set_step(
+                "update-result", "warn",
+                "ADB-/Controllerüberwachung beendet; PHNIX-Originaldienst und serieller Debugkanal laufen weiter.",
+            )
+            self.progress_text.setText(
+                "ADB-/Controllerüberwachung wurde beendet. Der PHNIX-Originaldienst führt das "
+                "Firmwareupdate selbstständig weiter. Der serielle PHNIX-Debugkanal wird weiterhin überwacht."
+            )
+            self._render_flow()
+            QMessageBox.warning(
+                self,
+                "Passive Firmwareüberwachung",
+                "Keine Panik – das Firmwareupdate läuft sehr wahrscheinlich weiter.\n\n"
+                "Die ADB-/Controllerüberwachung wurde beendet. Der PHNIX-Originaldienst führt "
+                "das Mainboard-Update selbstständig weiter. Der serielle PHNIX-Debugkanal wird "
+                "weiterhin überwacht.\n\nDas Update kann insgesamt bis zu etwa 40 Minuten dauern. "
+                "Wärmepumpe und LTE-Modem während dieser Zeit nicht ausschalten.\n\nErst wenn "
+                "das Update nach dieser ausreichenden Wartezeit abgeschlossen sein sollte: "
+                "1. ADB-Verbindung erneut prüfen. 2. Wenn ADB wieder erreichbar ist, kann "
+                "phnixIot4G kontrolliert neu gestartet werden. 3. Wenn das Modem weiterhin "
+                "nicht erreichbar ist, erst dann einen Power-Reset erwägen. Keinen Power-Reset "
+                "während eines möglicherweise laufenden C5A8 oder der anschließenden "
+                "Flash-/Prüfphase durchführen.",
+            )
             return
         super()._done(op, code, output)
         if op == "ota-reattach" and self._serial_fallback_success:
@@ -684,7 +800,11 @@ class MainWindow(desktop.MainWindow):
                 self.ota_reattach_btn.setVisible(True)
             else:
                 self.progress_text.setText(
-                    "Firmwareupdate erfolgreich über PHNIX bestätigt. "
+                    "Firmwareupdate wurde vom PHNIX-Originaldienst erfolgreich bestätigt. "
+                    "Die ADB-Verbindung zum LTE-Modem ist weiterhin unterbrochen; das "
+                    "Mainboardupdate ist abgeschlossen. Das LTE-Modem kann jetzt erneut "
+                    "verbunden werden. Remote-Aufräumarbeiten werden beim nächsten "
+                    "erfolgreichen Verbindungsaufbau nachgeholt. "
                     "ADB-Abschlusskontrolle derzeit nicht möglich."
                 )
                 self.ota_reattach_btn.setVisible(True)

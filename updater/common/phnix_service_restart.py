@@ -37,3 +37,30 @@ def restart_phnix_iot_service(adb, *, timeout: float = 25.0, poll_interval: floa
                 f"Alte PID: {old_pid}\nNeue PID: {current[0]}"
             )
     raise RuntimeError("phnixIot4G-Neustart konnte nicht bestätigt werden.")
+
+
+def wait_for_phnix_runtime_ready(
+    adb, *, timeout: float = 25.0, poll_interval: float = 1.0,
+) -> str:
+    """Wait read-only for a stable service PID and its MQTT connection."""
+    deadline = time.monotonic() + timeout
+    stable_pid = ""
+    stable_count = 0
+    while time.monotonic() < deadline:
+        pid = adb.shell("pidof phnixIot4G", check=False).split()
+        current_pid = pid[0] if pid and pid[0].isdigit() else ""
+        if current_pid and current_pid == stable_pid:
+            stable_count += 1
+        else:
+            stable_pid = current_pid
+            stable_count = 1 if current_pid else 0
+        mqtt = adb.shell(
+            "netstat -tn 2>/dev/null | awk '$4 ~ /:1883$/ || $5 ~ /:1883$/ {print}'",
+            check=False,
+        )
+        if stable_count >= 2 and any("ESTABLISHED" in line for line in mqtt.splitlines()):
+            return stable_pid
+        time.sleep(poll_interval)
+    raise RuntimeError(
+        "phnixIot4G läuft nach dem Neustart noch nicht stabil mit wiederhergestellter MQTT-Verbindung."
+    )

@@ -20,6 +20,9 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     remote_status,
     restore_original_runtime,
     mqtt_tcp_established,
+    passive_helper_exit_is_safe,
+    passive_adb_detach_is_safe,
+    passive_recovery_is_plausible,
 )
 from updater.common.firmware_manifest import FirmwareManifest
 
@@ -37,6 +40,49 @@ def test_manifest():
 
 
 class OtaInfoTests(unittest.TestCase):
+    def test_permanent_adb_loss_detaches_only_after_authoritative_grace(self):
+        self.assertTrue(passive_adb_detach_is_safe(
+            grace_expired=True, transfer_started=True,
+            original_service_authoritative=True,
+        ))
+        self.assertFalse(passive_adb_detach_is_safe(
+            grace_expired=False, transfer_started=True,
+            original_service_authoritative=True,
+        ))
+
+    def test_adb_loss_before_authoritative_transfer_does_not_detach(self):
+        self.assertFalse(passive_adb_detach_is_safe(
+            grace_expired=True, transfer_started=False,
+            original_service_authoritative=False,
+        ))
+
+    def test_passive_recovery_same_service_and_forward_offset(self):
+        self.assertTrue(passive_recovery_is_plausible(
+            transfer_started=True, original_service_authoritative=True,
+            previous_pid="1322", recovered_pid="1322",
+            previous_offset=89376, recovered_offset=120288,
+        ))
+
+    def test_helper_exit_after_confirmed_loss_is_not_firmware_error(self):
+        self.assertTrue(passive_helper_exit_is_safe(
+            passive_monitoring=True, monitoring_was_lost=True,
+            transfer_started=True, original_service_authoritative=True,
+            returncode=0,
+        ))
+
+    def test_helper_exit_before_authoritative_transfer_remains_error(self):
+        self.assertFalse(passive_helper_exit_is_safe(
+            passive_monitoring=False, monitoring_was_lost=False,
+            transfer_started=False, original_service_authoritative=False,
+            returncode=0,
+        ))
+
+    def test_nonzero_helper_exit_remains_error_after_monitoring_loss(self):
+        self.assertFalse(passive_helper_exit_is_safe(
+            passive_monitoring=True, monitoring_was_lost=True,
+            transfer_started=True, original_service_authoritative=True,
+            returncode=1,
+        ))
     def test_adb_monitor_requires_failure_count_and_grace_period(self):
         recovery = AdbMonitorRecovery(generation=object())
         self.assertFalse(recovery.failed(100.0))

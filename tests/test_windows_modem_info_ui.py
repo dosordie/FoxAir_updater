@@ -268,7 +268,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertLess(cleanup, modal_base_done)
         self.assertIn('op in {"dry", "update"}', done)
         self.assertIn("keep_serial_tail", done)
-        self.assertIn("QTimer.singleShot(600000", done)
+        self.assertIn("SERIAL_FALLBACK_TAIL_MS", done)
 
     def test_serial_completion_is_run_bound_and_reuses_reattach(self):
         self.assertIn("self._update_run_generation += 1", self.lte_ui)
@@ -338,7 +338,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
             "def _log", 1
         )[0]
         serial_exit = done.split('if op == "update" and self._serial_fallback_success:', 1)[1].split(
-            "super()._done(op, code, output)", 1
+            'if op == "update" and self._has_event(', 1
         )[0]
         self.assertIn('super()._done("handled-result", code, output)', serial_exit)
         self.assertIn("return", serial_exit)
@@ -384,7 +384,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("if keep_success_tail or keep_serial_tail:", done)
         self.assertIn("self._automatic_log.close()", done)
         timeout_block = done.split("if keep_serial_tail:", 1)[1].split("else:", 1)[0]
-        self.assertIn("QTimer.singleShot(600000", timeout_block)
+        self.assertIn("SERIAL_FALLBACK_TAIL_MS", timeout_block)
         self.assertNotIn("QTimer.singleShot(600000", done.split("keep_success_tail =", 1)[0])
         finish = self.lte_ui.split("def _finish_automatic_logs", 1)[1].split(
             "def _debug_log_status", 1
