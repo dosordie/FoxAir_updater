@@ -632,7 +632,7 @@ class MainWindow(base.MainWindow):
                 "Mainboard-Update abgeschlossen – normaler LTE-/Cloudzustand wird geprüft.",
             )
             self.progress_text.setText(
-                "Mainboard-Update abgeschlossen – normaler LTE-/Cloudzustand wird geprüft …"
+                "Firmware übertragen – Abschlusskontrolle läuft."
             )
             self.progress.setValue(100)
             self.progress.setFormat("100 % – Firmwaredaten vollständig übertragen")
@@ -669,7 +669,7 @@ class MainWindow(base.MainWindow):
             self.progress.setFormat("100 % – Firmwareupdate abgeschlossen")
         elif event == "monitoring-recovery":
             self.progress_text.setText(
-                "Update läuft vermutlich weiter – Überwachung wird wiederhergestellt."
+                "ADB-Verbindung unterbrochen – Wiederverbindung läuft."
             )
             self._set_step(
                 "monitoring-recovery", "warn", "ADB-Verbindung wird erneut geprüft …"
@@ -685,13 +685,13 @@ class MainWindow(base.MainWindow):
                 "ADB-Verbindung wiederhergestellt – der weitergelaufene Originaldienst wird passiv überwacht.",
             )
             self.progress_text.setText(
-                "Firmwaretransfer läuft im PHNIX-Originaldienst weiter – passive Überwachung aktiv."
+                "ADB wieder verbunden – passive Überwachung aktiv."
             )
         elif event == "monitoring-connection-lost":
             self.ota_monitoring_lost = True
             self.ota_reattach_btn.setVisible(True)
             self.progress_text.setText(
-                "ADB-Verbindung verloren – Firmwareupdate kann auf LTE-Modem/Mainboard weiterlaufen."
+                "ADB-Verbindung unterbrochen – passive Überwachung aktiv."
             )
             self._set_step(
                 "monitoring-lost", "warn",

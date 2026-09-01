@@ -425,13 +425,11 @@ class MainWindow(desktop.MainWindow):
             kind = getattr(event, "kind", None)
             if kind == "manufacturer-success":
                 self.progress_text.setText(
-                    "PHNIX-Originaldienst meldet erfolgreichen Mainboard-Abschluss – "
-                    "vollständige Abschlusssequenz wird noch geprüft."
+                    "Mainboard-Abschluss gemeldet – Bestätigung läuft."
                 )
             elif kind in {"transfer-complete", "cloud-progress", "manufacturer-finished"}:
                 self.progress_text.setText(
-                    "PHNIX-Originaldienst meldet Mainboard-Fortschritt – "
-                    "Controllerstatus derzeit nicht bestätigt."
+                    "Firmwareupdate wird weiter verarbeitet …"
                 )
         if self._serial_monitoring_lost and complete and not self._serial_fallback_success:
             self._confirm_serial_completion(generation)
@@ -458,8 +456,7 @@ class MainWindow(desktop.MainWindow):
         )
         self.progress.setValue(100)
         self.progress_text.setText(
-            "Firmwareupdate erfolgreich über PHNIX bestätigt. "
-            "ADB-Verbindung wird zur Abschlusskontrolle erneut hergestellt …"
+            "Firmwareupdate erfolgreich – ADB-Abschlusskontrolle läuft."
         )
         self.ota_reattach_btn.setVisible(True)
         if hasattr(self, "_stop_ota_elapsed"):
@@ -831,8 +828,7 @@ class MainWindow(desktop.MainWindow):
                 "ADB-/Controllerüberwachung beendet; PHNIX-Originaldienst und serieller Debugkanal laufen weiter.",
             )
             self.progress_text.setText(
-                "ADB-/Controllerüberwachung wurde beendet. Der PHNIX-Originaldienst führt das "
-                "Firmwareupdate selbstständig weiter. Der serielle PHNIX-Debugkanal wird weiterhin überwacht."
+                "ADB-Verbindung unterbrochen – passive Überwachung aktiv."
             )
             self._render_flow()
             QMessageBox.warning(
@@ -869,17 +865,20 @@ class MainWindow(desktop.MainWindow):
             )
             if terminal_success:
                 self.progress_text.setText(
-                    "Firmwareupdate erfolgreich über PHNIX bestätigt. ADB-Abschlusskontrolle abgeschlossen."
+                    "Firmwareupdate erfolgreich abgeschlossen."
                 )
                 self.ota_reattach_btn.setVisible(False)
             elif code == 0 and status is not None:
                 self.progress_text.setText(
-                    "Firmwareupdate erfolgreich über PHNIX bestätigt. "
-                    "ADB-Verbindung wiederhergestellt – Abschlusskontrolle noch nicht terminal bestätigt."
+                    "ADB wieder verbunden – Abschlusskontrolle läuft."
+                )
+                self._set_step(
+                    "adb-reattach", "warn",
+                    "ADB-Verbindung wiederhergestellt – Abschlusskontrolle noch nicht terminal bestätigt.",
                 )
                 self.ota_reattach_btn.setVisible(True)
             else:
-                self.progress_text.setText(
+                recovery_note = (
                     "Firmwareupdate wurde vom PHNIX-Originaldienst erfolgreich bestätigt. "
                     "Die ADB-Verbindung zum LTE-Modem ist weiterhin unterbrochen; das "
                     "Mainboardupdate ist abgeschlossen. Das LTE-Modem kann jetzt erneut "
@@ -887,6 +886,11 @@ class MainWindow(desktop.MainWindow):
                     "erfolgreichen Verbindungsaufbau nachgeholt. "
                     "ADB-Abschlusskontrolle derzeit nicht möglich."
                 )
+                self.progress_text.setText(
+                    "Firmwareupdate erfolgreich – ADB weiterhin nicht erreichbar."
+                )
+                self._set_step("adb-reattach", "warn", recovery_note)
+                self._log("[Hinweis] " + recovery_note)
                 self.ota_reattach_btn.setVisible(True)
 
         if op == "ota-reattach" and self._ota_serial_guard_active:

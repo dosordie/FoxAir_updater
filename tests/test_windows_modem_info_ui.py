@@ -298,8 +298,10 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         reattach_result = self.lte_ui.split('if op == "ota-reattach"', 1)[1].split(
             "def _log", 1
         )[0]
-        self.assertIn("Firmwareupdate erfolgreich über PHNIX bestätigt", reattach_result)
+        self.assertIn("Firmwareupdate erfolgreich – ADB weiterhin nicht erreichbar.", reattach_result)
         self.assertIn("ADB-Abschlusskontrolle derzeit nicht möglich", reattach_result)
+        self.assertIn('self._set_step("adb-reattach", "warn", recovery_note)', reattach_result)
+        self.assertIn('self._log("[Hinweis] " + recovery_note)', reattach_result)
         self.assertNotIn("Firmwareupdate fehlgeschlagen", reattach_result)
 
     def test_serial_success_finishes_only_local_wrapper_marker(self):
@@ -317,6 +319,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn('hook.get("phase") == "success"', result)
         self.assertIn('hook.get("terminal") is True', result)
         self.assertIn("Abschlusskontrolle noch nicht terminal bestätigt", result)
+        self.assertIn("ADB wieder verbunden – Abschlusskontrolle läuft.", result)
         self.assertIn("self.ota_reattach_btn.setVisible(True)", result)
 
     def test_monitoring_loss_confirms_already_complete_current_sequence(self):

@@ -305,6 +305,8 @@ class MainWindow(QMainWindow):
         progress_font.setPointSize(max(12, progress_font.pointSize() + 2))
         progress_font.setBold(True)
         self.progress_text.setFont(progress_font)
+        self.progress_text.setWordWrap(True)
+        self.progress_text.setMinimumWidth(0)
         layout.addWidget(self.progress_text)
         self.progress = QProgressBar()
         self.progress.setFixedHeight(20)
@@ -789,19 +791,27 @@ class MainWindow(QMainWindow):
                     and info.get("offset") == info.get("length")
                 ):
                     self.progress_text.setText(
-                        "Firmwareübertragung abgeschlossen – Mainboard verarbeitet das Update weiter."
+                        "Firmware übertragen – Mainboard verarbeitet das Update."
                     )
                 elif status.get("transfer_started") is True or phase == "c5a8":
                     self.progress_text.setText("Firmwareupdate läuft weiter.")
                 else:
+                    self._log(
+                        "[Hinweis] OTA-Zustand konnte nicht sicher bestimmt werden. "
+                        "Keine automatische Aktion ausgeführt."
+                    )
                     self.progress_text.setText(
-                        "OTA-Zustand konnte nicht sicher bestimmt werden. Keine automatische Aktion ausgeführt."
+                        "OTA-Status nicht bestätigt."
                     )
             else:
                 self.ota_monitoring_lost = True
                 self.ota_reattach_btn.setVisible(True)
+                self._log(
+                    "[Hinweis] OTA-Zustand konnte nicht sicher bestimmt werden. "
+                    "Keine automatische Aktion ausgeführt."
+                )
                 self.progress_text.setText(
-                    "OTA-Zustand konnte nicht sicher bestimmt werden. Keine automatische Aktion ausgeführt."
+                    "OTA-Status nicht bestätigt."
                 )
             self._buttons()
         elif op == "adb":

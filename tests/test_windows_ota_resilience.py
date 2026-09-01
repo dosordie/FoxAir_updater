@@ -37,6 +37,26 @@ class _ReplacementSource:
 
 
 class WindowsOtaResilienceTests(unittest.TestCase):
+    def test_progress_headline_wraps_without_forcing_window_width(self):
+        gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        update_ui = gui.split("self.progress_text = QLabel", 1)[1].split(
+            "self.progress = QProgressBar", 1
+        )[0]
+        self.assertIn("self.progress_text.setWordWrap(True)", update_ui)
+        self.assertIn("self.progress_text.setMinimumWidth(0)", update_ui)
+
+    def test_detached_and_serial_reattach_headlines_stay_compact(self):
+        lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ADB-Verbindung unterbrochen – passive Überwachung aktiv.", lte)
+        self.assertIn("Firmwareupdate erfolgreich – ADB weiterhin nicht erreichbar.", lte)
+        self.assertIn("ADB wieder verbunden – Abschlusskontrolle läuft.", lte)
+        self.assertIn("recovery_note = (", lte)
+        self.assertIn("Remote-Aufräumarbeiten werden beim nächsten", lte)
+        self.assertIn('self._set_step("adb-reattach", "warn", recovery_note)', lte)
+        self.assertIn('self._log("[Hinweis] " + recovery_note)', lte)
+
     def test_detached_fallback_still_requires_complete_strict_sequence(self):
         sequence = SerialCompletionSequence(9)
         events = (
