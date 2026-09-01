@@ -41,6 +41,8 @@ from updater.common.phnix_debug import (
     resolve_phnix_debug_port,
 )
 
+SERIAL_FALLBACK_TAIL_MS = 40 * 60 * 1000
+
 
 class DebugSignals(QObject):
     line = Signal(str, object)
@@ -725,7 +727,10 @@ class MainWindow(desktop.MainWindow):
                         pass
                     self._automatic_log = None
                 if keep_serial_tail:
-                    QTimer.singleShot(600000, lambda: self._finish_automatic_logs(generation))
+                    QTimer.singleShot(
+                        SERIAL_FALLBACK_TAIL_MS,
+                        lambda: self._finish_automatic_logs(generation),
+                    )
             else:
                 # Must happen before the base implementation can open a modal QMessageBox.
                 self._finish_automatic_logs()
@@ -750,6 +755,21 @@ class MainWindow(desktop.MainWindow):
                 "Firmwareupdate selbstständig weiter. Der serielle PHNIX-Debugkanal wird weiterhin überwacht."
             )
             self._render_flow()
+            QMessageBox.warning(
+                self,
+                "Passive Firmwareüberwachung",
+                "Keine Panik – das Firmwareupdate läuft sehr wahrscheinlich weiter.\n\n"
+                "Die ADB-/Controllerüberwachung wurde beendet. Der PHNIX-Originaldienst führt "
+                "das Mainboard-Update selbstständig weiter. Der serielle PHNIX-Debugkanal wird "
+                "weiterhin überwacht.\n\nDas Update kann insgesamt bis zu etwa 40 Minuten dauern. "
+                "Wärmepumpe und LTE-Modem während dieser Zeit nicht ausschalten.\n\nErst wenn "
+                "das Update nach dieser ausreichenden Wartezeit abgeschlossen sein sollte: "
+                "1. ADB-Verbindung erneut prüfen. 2. Wenn ADB wieder erreichbar ist, kann "
+                "phnixIot4G kontrolliert neu gestartet werden. 3. Wenn das Modem weiterhin "
+                "nicht erreichbar ist, erst dann einen Power-Reset erwägen. Keinen Power-Reset "
+                "während eines möglicherweise laufenden C5A8 oder der anschließenden "
+                "Flash-/Prüfphase durchführen.",
+            )
             return
         super()._done(op, code, output)
         if op == "ota-reattach" and self._serial_fallback_success:

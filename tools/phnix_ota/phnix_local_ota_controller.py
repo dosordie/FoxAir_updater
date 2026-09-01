@@ -124,6 +124,16 @@ def passive_helper_exit_is_safe(
     )
 
 
+def passive_adb_detach_is_safe(
+    *, grace_expired: bool, transfer_started: bool,
+    original_service_authoritative: bool,
+) -> bool:
+    """Allow only an already-authoritative OTA to outlive host ADB monitoring."""
+    return bool(
+        grace_expired and (transfer_started or original_service_authoritative)
+    )
+
+
 @dataclass
 class OtaInfo:
     crc_ok: bool
@@ -1108,6 +1118,22 @@ def run_update(args, adb: AdbClient) -> None:
                         message=("Monitoring was lost after OTA acceptance; original service "
                                  "remains authoritative and was not stopped"),
                     )
+                if passive_adb_detach_is_safe(
+                    grace_expired=monitoring_lost,
+                    transfer_started=transfer_started,
+                    original_service_authoritative=original_service_authoritative,
+                ):
+                    print_event(
+                        "monitoring-detached-passive",
+                        phase=previous_phase or "unknown",
+                        service_pid=last_service_pid,
+                        offset=last_offset,
+                        transfer_started=transfer_started,
+                        original_service_authoritative=original_service_authoritative,
+                        message=("ADB monitoring remained unavailable beyond its grace period; "
+                                 "the original service remains authoritative"),
+                    )
+                    return
                 # Only probe passively: reconnecting could terminate the
                 # persistent ADB shell that owns the already-running hook.
                 try:

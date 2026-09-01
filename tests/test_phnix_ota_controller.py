@@ -21,6 +21,7 @@ from tools.phnix_ota.phnix_local_ota_controller import (
     restore_original_runtime,
     mqtt_tcp_established,
     passive_helper_exit_is_safe,
+    passive_adb_detach_is_safe,
     passive_recovery_is_plausible,
 )
 from updater.common.firmware_manifest import FirmwareManifest
@@ -39,6 +40,22 @@ def test_manifest():
 
 
 class OtaInfoTests(unittest.TestCase):
+    def test_permanent_adb_loss_detaches_only_after_authoritative_grace(self):
+        self.assertTrue(passive_adb_detach_is_safe(
+            grace_expired=True, transfer_started=True,
+            original_service_authoritative=True,
+        ))
+        self.assertFalse(passive_adb_detach_is_safe(
+            grace_expired=False, transfer_started=True,
+            original_service_authoritative=True,
+        ))
+
+    def test_adb_loss_before_authoritative_transfer_does_not_detach(self):
+        self.assertFalse(passive_adb_detach_is_safe(
+            grace_expired=True, transfer_started=False,
+            original_service_authoritative=False,
+        ))
+
     def test_passive_recovery_same_service_and_forward_offset(self):
         self.assertTrue(passive_recovery_is_plausible(
             transfer_started=True, original_service_authoritative=True,
