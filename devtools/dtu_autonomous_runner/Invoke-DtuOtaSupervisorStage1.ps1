@@ -17,12 +17,24 @@ $previousAdbServerSocket = $env:ADB_SERVER_SOCKET
 function Invoke-Adb {
     param([Parameter(Mandatory)][string[]] $Arguments)
 
-    $output = & $AdbPath @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $detail = ($output | Out-String).Trim()
-        throw "ADB failed with exit code $LASTEXITCODE`: $detail"
+    # Windows PowerShell 5.x turns native stderr output into NativeCommandError
+    # records. adb uses stderr for normal progress messages such as "file pushed",
+    # so the script must decide success from adb's exit code, not from the stream.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $AdbPath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
     }
-    return ($output | Out-String).Trim()
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    $text = (($output | ForEach-Object { $_.ToString() }) | Out-String).Trim()
+    if ($exitCode -ne 0) {
+        throw "ADB failed with exit code $exitCode`: $text"
+    }
+    return $text
 }
 
 function Assert-RunId {
