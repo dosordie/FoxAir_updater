@@ -37,6 +37,36 @@ class _ReplacementSource:
 
 
 class WindowsOtaResilienceTests(unittest.TestCase):
+    def test_progress_headline_wraps_without_forcing_window_width(self):
+        gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        update_ui = gui.split("self.progress_text = QLabel", 1)[1].split(
+            "self.progress = QProgressBar", 1
+        )[0]
+        self.assertIn("self.progress_text.setWordWrap(True)", update_ui)
+        self.assertIn("self.progress_text.setMinimumWidth(0)", update_ui)
+
+    def test_detached_and_serial_reattach_headlines_stay_compact(self):
+        lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ADB-Verbindung unterbrochen – passive Überwachung aktiv.", lte)
+        self.assertIn("Firmwareupdate erfolgreich – ADB weiterhin nicht erreichbar.", lte)
+        self.assertIn("ADB wieder verbunden – Abschlusskontrolle läuft.", lte)
+        self.assertIn("recovery_note = (", lte)
+        self.assertIn("Remote-Aufräumarbeiten werden beim nächsten", lte)
+        self.assertIn('self._set_step("adb-reattach", "warn", recovery_note)', lte)
+        self.assertIn('self._log("[Hinweis] " + recovery_note)', lte)
+
+    def test_terminal_reattach_shows_compact_success_popup(self):
+        gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        reattach = gui.split('if op == "ota-reattach":', 1)[1].split('elif op == "adb":', 1)[0]
+        terminal = reattach.split('if phase == "success" and hook.get("terminal") is True:', 1)[1].split(
+            'elif phase in {"success-report"}', 1
+        )[0]
+        self.assertIn("QMessageBox.information(", terminal)
+        self.assertIn('"Firmwareupdate erfolgreich"', terminal)
+        self.assertIn('"Das Firmwareupdate wurde erfolgreich abgeschlossen."', terminal)
+
     def test_detached_fallback_still_requires_complete_strict_sequence(self):
         sequence = SerialCompletionSequence(9)
         events = (
@@ -101,6 +131,74 @@ class WindowsOtaResilienceTests(unittest.TestCase):
         self.assertIn('"monitoring-detached-passive",', lte)
         self.assertIn("Das Firmwareupdate wurde nicht gestartet", lte)
         self.assertLess(lte.index("self._start_automatic_logs(manifest)"), lte.index("restart_phnix_iot_service("))
+
+    def test_pre_update_restart_has_visible_running_success_and_error_steps(self):
+        lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"pre-update-restart", "warn"', lte)
+        self.assertIn('"pre-update-restart", "ok"', lte)
+        self.assertIn('"pre-update-restart", "error"', lte)
+        self.assertIn("PHNIX-LTE-Dienst erfolgreich neu gestartet und betriebsbereit", lte)
+        failure = lte.split("def _pre_update_restart_finished", 1)[1].split("def _done", 1)[0]
+        self.assertLess(failure.index('"pre-update-restart", "error"'), failure.index("return"))
+        self.assertLess(failure.index('"pre-update-restart", "ok"'), failure.index("super()._run"))
+
+    def test_detached_ota_guard_disables_only_new_update_actions(self):
+        gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("self._ota_serial_guard_active = True", lte)
+        self.assertIn('record.get("event") == "monitoring-detached-passive"', lte)
+        self.assertIn('record.get("original_service_authoritative") is True', lte)
+        self.assertIn('not getattr(self, "_ota_serial_guard_active", False)', gui)
+        button_block = gui.split("def _buttons(self):", 1)[1].split("def _log", 1)[0]
+        self.assertIn("self.dry.setEnabled(update_start_allowed", button_block)
+        self.assertIn("self.update_btn.setEnabled(", button_block)
+        self.assertNotIn("update_start_allowed", button_block.split("self.status_btn.setEnabled", 1)[0])
+
+    def test_guard_tracks_only_parsed_ota_activity_and_keeps_full_window(self):
+        lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
+            encoding="utf-8"
+        )
+        handler = lte.split("def _update_debug_line", 1)[1].split(
+            "def _serial_fallback_allowed", 1
+        )[0]
+        for kind in (
+            "transfer-progress", "transfer-complete", "manufacturer-success",
+            "cloud-progress", "manufacturer-finished",
+        ):
+            self.assertIn(f'"{kind}"', handler)
+        self.assertNotIn('"mqtt-normal"', handler.split("_ota_serial_last_activity_at", 1)[0])
+        expiry = lte.split("def _expire_ota_serial_guard", 1)[1].split(
+            "def _serial_reattach", 1
+        )[0]
+        self.assertIn("SERIAL_FALLBACK_TAIL_MS", expiry)
+        self.assertIn("self._ota_serial_last_activity_at", expiry)
+        self.assertIn("QTimer.singleShot(remaining_ms", expiry)
+
+    def test_guard_clears_on_serial_or_reattached_terminal_success(self):
+        lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
+            encoding="utf-8"
+        )
+        confirm = lte.split("def _confirm_serial_completion", 1)[1].split(
+            "def _activate_ota_serial_guard", 1
+        )[0]
+        self.assertIn("self._clear_ota_serial_guard(generation, confirmed=True)", confirm)
+        reattach = lte.split('if op == "ota-reattach" and self._ota_serial_guard_active:', 1)[1]
+        self.assertIn('hook.get("phase") == "success"', reattach)
+        self.assertIn('hook.get("terminal") is True', reattach)
+        self.assertIn("self._clear_ota_serial_guard(generation, confirmed=True)", reattach)
+
+    def test_firmware_warning_is_version_independent_about_source(self):
+        gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        dialog = gui.split('"Firmwareupdate starten",', 1)[1].split(
+            "QMessageBox.Yes | QMessageBox.No", 1
+        )[0]
+        self.assertNotIn("V3.3", dialog)
+        self.assertIn("auf eigenes", dialog)
+        self.assertIn("Andere Firmwareziele oder Hardwarevarianten", dialog)
 
     def test_detached_fallback_tail_and_user_help_cover_full_ota_window(self):
         lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(

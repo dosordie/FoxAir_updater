@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -167,6 +168,10 @@ class MainWindow(desktop.MainWindow):
         self._serial_success_tail_generation: int | None = None
         self._serial_reattach_pending_generation: int | None = None
         self._serial_reattach_started_generation: int | None = None
+        self._ota_serial_guard_active = False
+        self._ota_serial_guard_generation: int | None = None
+        self._ota_serial_guard_started_at: float | None = None
+        self._ota_serial_last_activity_at: float | None = None
         super().__init__()
         self._debug_status_timer = QTimer(self)
         self._debug_status_timer.setInterval(1000)
@@ -382,7 +387,17 @@ class MainWindow(desktop.MainWindow):
                 self._lte_log = None
                 self._log(f"[Warnung] Automatisches LTE-Log konnte nicht weitergeschrieben werden: {error}")
         # Supplementary progress is shown only once the controller has authoritatively entered C5A8.
-        if getattr(event, "kind", None) == "transfer-progress" and "phase-c5a8" in self._flow_steps:
+        kind = getattr(event, "kind", None)
+        if self._ota_serial_guard_active and kind in {
+            "transfer-progress", "transfer-complete", "manufacturer-success",
+            "cloud-progress", "manufacturer-finished",
+        }:
+            self._ota_serial_last_activity_at = time.monotonic()
+            self._set_step(
+                "ota-serial-guard", "warn",
+                "PHNIX-Debugkanal zeigt weiterhin Firmwareaktivität. Neuer Updateversuch ist bis zum bestätigten Abschluss gesperrt.",
+            )
+        if kind == "transfer-progress" and "phase-c5a8" in self._flow_steps:
             self._phnix_transfer_event = event
             self._render_transfer_progress()
         self._apply_debug_event(event)
@@ -410,13 +425,11 @@ class MainWindow(desktop.MainWindow):
             kind = getattr(event, "kind", None)
             if kind == "manufacturer-success":
                 self.progress_text.setText(
-                    "PHNIX-Originaldienst meldet erfolgreichen Mainboard-Abschluss – "
-                    "vollständige Abschlusssequenz wird noch geprüft."
+                    "Mainboard-Abschluss gemeldet – Bestätigung läuft."
                 )
             elif kind in {"transfer-complete", "cloud-progress", "manufacturer-finished"}:
                 self.progress_text.setText(
-                    "PHNIX-Originaldienst meldet Mainboard-Fortschritt – "
-                    "Controllerstatus derzeit nicht bestätigt."
+                    "Firmwareupdate wird weiter verarbeitet …"
                 )
         if self._serial_monitoring_lost and complete and not self._serial_fallback_success:
             self._confirm_serial_completion(generation)
@@ -429,6 +442,7 @@ class MainWindow(desktop.MainWindow):
         except OSError as error:
             self._log(f"[Warnung] Lokaler Update-Schutz konnte nicht abgeschlossen werden: {error}")
         self._serial_fallback_success = True
+        self._clear_ota_serial_guard(generation, confirmed=True)
         self._serial_success_tail_generation = generation
         self._serial_reattach_pending_generation = generation
         self._flow_title = "Firmwareupdate erfolgreich"
@@ -442,8 +456,7 @@ class MainWindow(desktop.MainWindow):
         )
         self.progress.setValue(100)
         self.progress_text.setText(
-            "Firmwareupdate erfolgreich über PHNIX bestätigt. "
-            "ADB-Verbindung wird zur Abschlusskontrolle erneut hergestellt …"
+            "Firmwareupdate erfolgreich – ADB-Abschlusskontrolle läuft."
         )
         self.ota_reattach_btn.setVisible(True)
         if hasattr(self, "_stop_ota_elapsed"):
@@ -451,6 +464,51 @@ class MainWindow(desktop.MainWindow):
         self._render_flow()
         QTimer.singleShot(3000, lambda: self._finish_automatic_logs(generation))
         QTimer.singleShot(100, lambda: self._serial_reattach(generation))
+
+    def _activate_ota_serial_guard(self, generation: int) -> None:
+        if generation != self._update_run_generation:
+            return
+        now = time.monotonic()
+        self._ota_serial_guard_active = True
+        self._ota_serial_guard_generation = generation
+        self._ota_serial_guard_started_at = now
+        self._ota_serial_last_activity_at = now
+        self._set_step(
+            "ota-serial-guard", "warn",
+            "Firmwareupdate läuft im PHNIX-Originaldienst weiter. Neuer Updateversuch ist bis zum bestätigten Abschluss gesperrt.",
+        )
+        self._buttons()
+        QTimer.singleShot(SERIAL_FALLBACK_TAIL_MS, lambda: self._expire_ota_serial_guard(generation))
+
+    def _clear_ota_serial_guard(self, generation: int, *, confirmed: bool) -> None:
+        if generation != self._ota_serial_guard_generation:
+            return
+        self._ota_serial_guard_active = False
+        self._ota_serial_guard_generation = None
+        self._ota_serial_guard_started_at = None
+        self._ota_serial_last_activity_at = None
+        if confirmed:
+            self._set_step("ota-serial-guard", "ok", "Firmwareupdate abgeschlossen.")
+        self._buttons()
+
+    def _expire_ota_serial_guard(self, generation: int) -> None:
+        if not self._ota_serial_guard_active or generation != self._ota_serial_guard_generation:
+            return
+        now = time.monotonic()
+        latest = max(
+            self._ota_serial_guard_started_at or now,
+            self._ota_serial_last_activity_at or 0,
+        )
+        remaining_ms = SERIAL_FALLBACK_TAIL_MS - int((now - latest) * 1000)
+        if remaining_ms > 0:
+            QTimer.singleShot(remaining_ms, lambda: self._expire_ota_serial_guard(generation))
+            return
+        self._clear_ota_serial_guard(generation, confirmed=False)
+        self._flow_title = "Firmwareupdate nicht terminal bestätigt"
+        self._set_step(
+            "ota-serial-guard", "error",
+            "Der vorherige OTA-Zustand konnte innerhalb des Schutzzeitraums nicht terminal bestätigt werden. Ein neuer Updateversuch startet nicht automatisch.",
+        )
 
     def _serial_reattach(self, generation: int) -> None:
         if (
@@ -537,6 +595,13 @@ class MainWindow(desktop.MainWindow):
             "monitoring-detached-passive",
         }:
             self._serial_monitoring_lost = True
+            if (
+                record.get("event") == "monitoring-detached-passive"
+                and self._serial_c5a8_started
+                and self._serial_transfer_started
+                and record.get("original_service_authoritative") is True
+            ):
+                self._activate_ota_serial_guard(self._update_run_generation)
             if (
                 self._serial_sequence
                 and self._serial_sequence.complete
@@ -665,6 +730,10 @@ class MainWindow(desktop.MainWindow):
                     return
                 self.busy = True
                 self._buttons()
+                self._set_step(
+                    "pre-update-restart", "warn",
+                    "phnixIot4G wird vor dem Firmwareupdate kontrolliert neu gestartet …",
+                )
                 self._pending_update_start = (op, list(command), cwd)
                 client = AdbClient(adb_path, env=self._process_env())
 
@@ -691,6 +760,10 @@ class MainWindow(desktop.MainWindow):
         self.busy = False
         self._buttons()
         if not success or pending is None:
+            self._set_step(
+                "pre-update-restart", "error",
+                "PHNIX-LTE-Dienst konnte nicht sicher neu gestartet werden. Firmwareupdate wurde nicht gestartet.",
+            )
             self._log(f"[Fehler] Kontrollierter phnixIot4G-Neustart fehlgeschlagen: {message}")
             self._finish_automatic_logs()
             QMessageBox.critical(
@@ -700,6 +773,10 @@ class MainWindow(desktop.MainWindow):
                 + message,
             )
             return
+        self._set_step(
+            "pre-update-restart", "ok",
+            "PHNIX-LTE-Dienst erfolgreich neu gestartet und betriebsbereit.",
+        )
         self._log(message)
         op, command, cwd = pending
         super()._run(op, command, cwd)
@@ -751,8 +828,7 @@ class MainWindow(desktop.MainWindow):
                 "ADB-/Controllerüberwachung beendet; PHNIX-Originaldienst und serieller Debugkanal laufen weiter.",
             )
             self.progress_text.setText(
-                "ADB-/Controllerüberwachung wurde beendet. Der PHNIX-Originaldienst führt das "
-                "Firmwareupdate selbstständig weiter. Der serielle PHNIX-Debugkanal wird weiterhin überwacht."
+                "ADB-Verbindung unterbrochen – passive Überwachung aktiv."
             )
             self._render_flow()
             QMessageBox.warning(
@@ -789,17 +865,20 @@ class MainWindow(desktop.MainWindow):
             )
             if terminal_success:
                 self.progress_text.setText(
-                    "Firmwareupdate erfolgreich über PHNIX bestätigt. ADB-Abschlusskontrolle abgeschlossen."
+                    "Firmwareupdate erfolgreich abgeschlossen."
                 )
                 self.ota_reattach_btn.setVisible(False)
             elif code == 0 and status is not None:
                 self.progress_text.setText(
-                    "Firmwareupdate erfolgreich über PHNIX bestätigt. "
-                    "ADB-Verbindung wiederhergestellt – Abschlusskontrolle noch nicht terminal bestätigt."
+                    "ADB wieder verbunden – Abschlusskontrolle läuft."
+                )
+                self._set_step(
+                    "adb-reattach", "warn",
+                    "ADB-Verbindung wiederhergestellt – Abschlusskontrolle noch nicht terminal bestätigt.",
                 )
                 self.ota_reattach_btn.setVisible(True)
             else:
-                self.progress_text.setText(
+                recovery_note = (
                     "Firmwareupdate wurde vom PHNIX-Originaldienst erfolgreich bestätigt. "
                     "Die ADB-Verbindung zum LTE-Modem ist weiterhin unterbrochen; das "
                     "Mainboardupdate ist abgeschlossen. Das LTE-Modem kann jetzt erneut "
@@ -807,7 +886,30 @@ class MainWindow(desktop.MainWindow):
                     "erfolgreichen Verbindungsaufbau nachgeholt. "
                     "ADB-Abschlusskontrolle derzeit nicht möglich."
                 )
+                self.progress_text.setText(
+                    "Firmwareupdate erfolgreich – ADB weiterhin nicht erreichbar."
+                )
+                self._set_step("adb-reattach", "warn", recovery_note)
+                self._log("[Hinweis] " + recovery_note)
+                QMessageBox.warning(
+                    self,
+                    "Firmwareupdate erfolgreich – ADB nicht erreichbar",
+                    recovery_note,
+                )
                 self.ota_reattach_btn.setVisible(True)
+
+        if op == "ota-reattach" and self._ota_serial_guard_active:
+            status = None
+            json_start = output.find("{")
+            if json_start >= 0:
+                try:
+                    candidate = json.loads(output[json_start:])
+                    status = candidate if isinstance(candidate, dict) else None
+                except json.JSONDecodeError:
+                    pass
+            hook = status.get("hook") if isinstance(status, dict) and isinstance(status.get("hook"), dict) else {}
+            if code == 0 and hook.get("phase") == "success" and hook.get("terminal") is True:
+                self._clear_ota_serial_guard(generation, confirmed=True)
 
     def _log(self, text):
         super()._log(text)

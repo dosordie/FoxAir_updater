@@ -104,14 +104,14 @@ class MainWindow(traffic.MainWindow):
                 "restoring-original",
                 "warn",
                 "LTE-Originalbetrieb wird nach dem Mainboard-Update wiederhergestellt.",
-                "Mainboard-Update abgeschlossen – LTE-Originalbetrieb wird wiederhergestellt.",
+                "LTE-Originalbetrieb wird wiederhergestellt.",
                 "100 % – Originalbetrieb wird wiederhergestellt",
             ),
             "success": (
                 "phase-success",
                 "ok",
                 "Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.",
-                "Mainboard-Update erfolgreich – Originalbetrieb wird abschließend geprüft.",
+                "Firmwareupdate erfolgreich – Abschlusskontrolle läuft.",
                 "100 % – Mainboard-Update erfolgreich",
             ),
         }
@@ -141,13 +141,13 @@ class MainWindow(traffic.MainWindow):
                 else "Firmwareübertragung vollständig abgeschlossen.",
             )
             self.progress_text.setText(
-                "Übertragung abgeschlossen – Firmware wird im Staging-Bereich geprüft."
+                "Firmware übertragen – Staging-Prüfung läuft."
             )
             self.progress.setValue(100)
             self.progress.setFormat(self._byte_progress_text(offset, length))
         elif event == "services-restored" and record.get("ok") is True:
             self.progress_text.setText(
-                "Firmwareupdate erfolgreich – LTE-/Cloudzustand ist vollständig geprüft."
+                "Firmwareupdate erfolgreich abgeschlossen."
             )
             self.progress.setValue(100)
             self.progress.setFormat("100 % – Firmwareupdate erfolgreich abgeschlossen")
