@@ -155,21 +155,20 @@ function Cleanup-Run {
     }
 
     $runDir = "$remoteRuns/$Id"
-    $check = Invoke-Adb -Arguments @(
-        "shell",
+    $checkCommand = 
         "if [ ! -f '$runDir/acknowledged' ]; then echo ACK_MISSING; exit 41; fi; " +
-        "pid=$(cat '$runDir/runner.pid' 2>/dev/null || true); " +
-        "if [ -n \"$pid\" ] && [ -r \"/proc/$pid/cmdline\" ] && tr '\0' ' ' <\"/proc/$pid/cmdline\" | grep -q 'dtu_ota_supervisor_stage1.sh'; then echo RUNNER_STILL_ACTIVE; exit 42; fi; " +
+        "pid=`$(cat '$runDir/runner.pid' 2>/dev/null || true); " +
+        "if [ -n `"`$pid`" ] && [ -r `"/proc/`$pid/cmdline`" ]; then " +
+        "cmd=`$(tr '\0' ' ' <`"/proc/`$pid/cmdline`" 2>/dev/null || true); " +
+        "case `"`$cmd`" in *dtu_ota_supervisor_stage1.sh*) echo RUNNER_STILL_ACTIVE; exit 42 ;; esac; fi; " +
         "echo OK"
-    )
+    $check = Invoke-Adb -Arguments @("shell", $checkCommand)
     if ($check -ne "OK") {
         throw "Cleanup precondition failed: $check"
     }
 
-    Invoke-Adb -Arguments @(
-        "shell",
-        "TARGET='$runDir'; case \"$TARGET\" in '$remoteRuns/'*) rm -rf \"$TARGET\" ;; *) exit 43 ;; esac"
-    ) | Out-Null
+    $cleanupCommand = "TARGET='$runDir'; case `"`$TARGET`" in '$remoteRuns/'*) rm -rf `"`$TARGET`" ;; *) exit 43 ;; esac"
+    Invoke-Adb -Arguments @("shell", $cleanupCommand) | Out-Null
     Write-Host "Run directory removed after terminal status and explicit acknowledgement."
 }
 
