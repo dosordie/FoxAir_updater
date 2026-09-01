@@ -3,9 +3,9 @@
 Die Windows-Version ist bewusst als **dünne GUI vor dem bestehenden gemeinsamen OTA-Backend** gebaut. Die sicherheitsrelevante OTA-Logik wird nicht als separate Windows-Implementierung gepflegt.
 
 > [!IMPORTANT]
-> **Real bestätigt sind derzeit:** lokale und Remote-ADB-Verbindung, Originalstatus, read-only LTE-Backup/Firmware-Download, Dry-Run, V3.3→V3.3 bis zur sicheren Gleichversionsablehnung sowie ein vollständiger realer Mainboard-Firmwarewechsel **V3.3 → V3.4**.
+> **Real bestätigt sind derzeit:** lokale und Remote-ADB-Verbindung, Originalstatus, read-only LTE-Backup/Firmware-Download, Dry-Run, V3.3→V3.3 bis zur sicheren Gleichversionsablehnung sowie vollständige reale Mainboard-Firmwarewechsel **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4**.
 >
-> Beim V3.3→V3.4-Lauf wurden die vollständige C5A8-Datenübertragung, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließend die neue C544-Version `0034` beobachtet. Andere Firmwarestände und Hardwarevarianten sind weiterhin nicht vollständig live validiert.
+> Beim dokumentierten V3.3→V3.4-Lauf wurden die vollständige C5A8-Datenübertragung, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließend die neue C544-Version `0034` beobachtet. Das Update V1.2→V3.4 wurde ebenfalls real erfolgreich durchgeführt. Weitere Firmwarestände und Hardwarevarianten sind weiterhin nicht vollständig live validiert.
 
 Öffentliche Windows-Versionen stehen als Portable-ZIP und Setup-EXE auf der normalen GitHub-Releases-Seite bereit:
 
@@ -196,7 +196,7 @@ Während C5A8 zeigt die GUI den vom Originaldienst gemeldeten `offset/length`-Fo
 > [!WARNING]
 > **100 % bedeutet nur: alle Firmwaredaten wurden übertragen.** Es bedeutet noch nicht, dass das Mainboard bereits geflasht, promoted und neu gestartet ist.
 
-Der reale V3.3→V3.4-Lauf zeigte:
+Der dokumentierte reale V3.3→V3.4-Lauf zeigte:
 
 ```text
 C5A8 vollständig übertragen
@@ -207,12 +207,14 @@ C5A8 vollständig übertragen
 → neuer normaler Mainboard-/C544-Verkehr mit Version 0034
 ```
 
-Gemessene Zeiten:
+Gemessene Zeiten dieses V3.3→V3.4-Laufs:
 
 - C5A8-Transfer: ca. **28:56 min**;
 - letzter C5A8 → Status 3: ca. **2 s**;
 - letzter C5A8 → Status 5: ca. **5:16 min**;
 - bis zur ersten neuen C544-Versionsmeldung insgesamt rund **35 min**.
+
+Der separate V1.2→V3.4-Lauf wurde ebenfalls erfolgreich abgeschlossen; aus den oben genannten V3.3→V3.4-Laufzeiten werden dafür keine eigenen Zeitwerte abgeleitet.
 
 Erst **Status 5 / Board-Step 12** ist der terminale Mainboard-Erfolg.
 
@@ -250,9 +252,10 @@ Auf realer Hardware wurden bestätigt:
 - Dry-Run;
 - V3.3→V3.3 bis zur sicheren Gleichversionsablehnung ohne C5A8;
 - vollständiger V3.3→V3.4-Transfer mit C5A8;
-- C36E Status 3 und Status 5;
-- terminaler Board-Step 12;
-- anschließende C544-Versionsmeldung `0034`;
+- vollständiger Versionswechsel **V1.2 (Auslieferungszustand) → V3.4**;
+- C36E Status 3 und Status 5 beim dokumentierten V3.3→V3.4-Lauf;
+- terminaler Board-Step 12 beim dokumentierten V3.3→V3.4-Lauf;
+- anschließende C544-Versionsmeldung `0034` beim dokumentierten V3.3→V3.4-Lauf;
 - Rückkehr des normalen LTE-/MQTT-Zustands;
 - Mainboard-OTA-Vorgangszähler-Wartung.
 
