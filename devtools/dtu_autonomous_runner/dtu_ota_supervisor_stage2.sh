@@ -189,4 +189,6 @@ if test "$HOOK_RC" = 0 && grep -q '"phase":"verified"' "$HOOK_STATUS" 2>/dev/nul
     terminal_exit completed hook-verify-ok 0 "" "Runtime hook verify completed successfully on the DTU; no debugger attach or OTA action was performed." "$HOOK_PID"
 fi
 
-terminal_exit failed hook-verify-failed "$HOOK_RC" hook_verify_failed "Runtime hook verify failed (rc=$HOOK_RC); inspect hook-status.json and hook.log." "$HOOK_PID"
+FAIL_RC=$HOOK_RC
+test "$FAIL_RC" != 0 || FAIL_RC=36
+terminal_exit failed hook-verify-failed "$FAIL_RC" hook_verify_failed "Runtime hook verify failed (rc=$HOOK_RC); inspect hook-status.json and hook.log." "$HOOK_PID"
