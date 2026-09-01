@@ -1,6 +1,6 @@
 # Mainboard-Firmware V3.3 – UPM4L-Durchflusskalibrierung mit H31 und MAIN:1022
 
-Stand: 27. August 2026
+Stand: 1. September 2026
 
 Dieses Dokument ergänzt die statische Pumpen-/PWM-Reverse-Engineering-Dokumentation um reale Messreihen an einer FoxAir mit Grundfos UPM4L und externem Wärmemengenzähler (WMZ).
 
@@ -25,15 +25,49 @@ Die verwendete Grundfos UPM4L liefert auf ihrer PWM-Rückmeldung in dieser Ausf�
 
 V3.3 interpretiert `MAIN:2116` jedoch abhängig von `H31` über feste Pumpenkennlinien als Durchfluss.
 
-Für die beiden hier relevanten Grundfos-Kennlinien gilt näherungsweise:
+## 1.1 Vollständige H31-Kennlinien
+
+Die Firmware unterscheidet folgende Pumpentypen/Kennlinien:
+
+| H31 | Pumpentyp | Kennlinie aus Rückmeldesignal | Max. berechneter Durchfluss |
+|---:|---|---|---:|
+| **0** | keine Durchflussauswertung | kein berechneter Flow | – |
+| **1** | Grundfos 25–75 | `Q = Feedback[%] × 0,0300` | **2,10 m³/h** |
+| **2** | Grundfos 25–105 | `Q = Feedback[%] × 0,0570` | **4,00 m³/h** |
+| **3** | Grundfos 25–125 | `Q = Feedback[%] × 0,0570` | **4,00 m³/h** |
+| **4** | APM25 9–130 | bis 5 % = 0; danach `Q = (Feedback[%] - 5) × 0,0646` | **4,50 m³/h** |
+| **5** | APM25 12–130 | `Q = Feedback[%] × 0,0570` | **4,00 m³/h** |
+
+Damit ergeben sich die Rechenwege:
 
 ```text
+H31 = 0:
+keine Durchflussauswertung aus dem Pumpen-Rückmeldesignal
+
 H31 = 1:
-Q_base[m³/h] ~= 0,030 x MAIN:2116[%]
+Q_base[m³/h] ~= 0,0300 x MAIN:2116[%]
 
 H31 = 2:
-Q_base[m³/h] ~= 0,057 x MAIN:2116[%]
+Q_base[m³/h] ~= 0,0570 x MAIN:2116[%]
+
+H31 = 3:
+Q_base[m³/h] ~= 0,0570 x MAIN:2116[%]
+
+H31 = 4:
+wenn MAIN:2116 <= 5 %:
+    Q_base = 0
+sonst:
+    Q_base[m³/h] ~= (MAIN:2116[%] - 5) x 0,0646
+
+H31 = 5:
+Q_base[m³/h] ~= 0,0570 x MAIN:2116[%]
 ```
+
+Auffällig ist, dass `H31=2`, `H31=3` und `H31=5` dieselbe lineare Skalierung verwenden. `H31=4` besitzt dagegen eine Totzone bis 5 % Feedback und anschließend eine steilere Kennlinie. `H31=0` deaktiviert die aus dem Pumpenfeedback berechnete Durchflussauswertung.
+
+Die Pumpenbezeichnungen stammen aus der Zuordnung der Firmware/DWIN-Parameter; die Rechenkennlinien selbst sind für V3.3 **Binary bestätigt**.
+
+Für die hier praktisch getestete Grundfos UPM4L sind insbesondere H31=1 und H31=2 relevant.
 
 Anschließend wird `MAIN:1022` als signed Offset in 0,01 m³/h addiert:
 
