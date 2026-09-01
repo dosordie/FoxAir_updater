@@ -34,6 +34,17 @@ prüfbar:
   `state=completed`, `phase=success`.
 - Der Supervisor verbrauchte während des mehrminütigen Transfers praktisch keine
   messbare CPU-Zeit und hielt den Zwei-Sekunden-Polltakt ein.
+- ADB wurde während eines aktiven C5A8-Laufs 20 Sekunden vollständig getrennt;
+  derselbe autonome Run lief ohne Offsetverlust weiter und war nach Reconnect
+  wieder lesbar.
+- Ein simulierter LTE-/Dienstneustart nach begonnenem C5A8 wird konservativ als
+  `original-service-active-unmonitored` mit `recovery=required` klassifiziert;
+  der letzte bestätigte Offset bleibt dauerhaft erhalten und es erfolgt kein
+  generischer Restore.
+- Der Simulator bewahrt dabei OTA_INFO und Board-Resumezustand. Die neue
+  Originaldienst-Instanz nimmt nach C544/C37B selbst den nachgewiesenen
+  C350/C36E-1/C357/C36E-2-Rehandshake auf, akzeptiert einen wiederholten letzten
+  Block und setzt C5A8 anschließend am nächsten Block fort.
 
 Der QEMU-Pfad unterdrückt ausschließlich bei vorhandenem
 `/data/phnixIot4G.tls-lab` ein emulationsbedingtes `SIGFPE`. Auf realer DTU bleibt

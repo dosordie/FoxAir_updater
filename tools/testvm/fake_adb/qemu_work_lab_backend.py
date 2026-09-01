@@ -428,6 +428,7 @@ def _start_runner(
                     )
                 gdb_log = run_dir / "gdb-local-ota-handler.log"
                 rs485_log = run_dir / "ttyHSL2-transcript.txt"
+                gdb_text = rs485_text = ""
                 try:
                     gdb_text = gdb_log.read_text(errors="replace")
                     rs485_text = rs485_log.read_text(errors="replace")
@@ -441,6 +442,23 @@ def _start_runner(
                     board_ready = "product-key-frame" in rs485_text
                 except OSError:
                     detached = board_ready = False
+                resume_ready = (
+                    resume_boot
+                    and "c544-software-info" in rs485_text
+                    and "DTU -> BOARD 63 10 c5 a8" in rs485_text
+                )
+                if resume_ready:
+                    meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
+                    meta["run_dir"] = str(run_dir)
+                    meta["resume_boot"] = True
+                    _runner_meta().write_text(
+                        json.dumps(meta, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    return True, (
+                        f"Work-QEMU-Szenario {kind}={value} nach persistentem "
+                        "C544/C5A8-Resume wieder aktiv"
+                    )
                 if detached and board_ready:
                     meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
                     meta["run_dir"] = str(run_dir)
