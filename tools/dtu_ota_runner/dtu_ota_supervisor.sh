@@ -487,6 +487,9 @@ cleanup_action() {
         runner_identity "$lock_pid" "$RUN_ID" && { echo "ERROR: live lock owner" >&2; exit 104; }
         rm -f "$LOCK/run_id" "$LOCK/pid" "$LOCK/started_at"; rmdir "$LOCK" 2>/dev/null || true
     fi
+    if test "$(cat "$BASE/last_run_id" 2>/dev/null || true)" = "$RUN_ID"; then
+        rm -f "$BASE/last_run_id"
+    fi
     rm -rf "$RUN_DIR"
 }
 

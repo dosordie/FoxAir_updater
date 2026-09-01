@@ -43,6 +43,12 @@ class DtuOtaClient:
             raise RunnerClientError("DTU has no last_run_id")
         return _run_id(value.strip())
 
+    def active_run_id(self) -> str | None:
+        value = self.adb.shell(f"cat {REMOTE_BASE}/active.lock/run_id 2>/dev/null || true")
+        if not value:
+            return None
+        return _run_id(value.strip())
+
     def prepare(
         self,
         *,

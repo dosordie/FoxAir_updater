@@ -30,6 +30,8 @@ class FakeAdb:
             })
         if "last_run_id" in command and command.startswith("cat "):
             return "run-1"
+        if "active.lock/run_id" in command and command.startswith("cat "):
+            return ""
         return ""
 
     def push(self, local, remote):
@@ -102,6 +104,12 @@ class DtuOtaPackageTests(unittest.TestCase):
         adb.shell = wrong
         with self.assertRaises(RunnerClientError):
             client.status("run-1", reconcile=False)
+
+    def test_active_run_is_independent_from_stale_last_run(self):
+        adb = FakeAdb()
+        client = DtuOtaClient(adb)
+        self.assertIsNone(client.active_run_id())
+        self.assertEqual(client.current_run_id(), "run-1")
 
     def test_prepare_reports_persisted_preflight_reason(self):
         with tempfile.TemporaryDirectory() as temp:
