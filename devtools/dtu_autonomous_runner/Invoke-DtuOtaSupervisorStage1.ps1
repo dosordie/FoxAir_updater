@@ -173,20 +173,47 @@ function Cleanup-Run {
     }
 
     $runDir = "$remoteRuns/$Id"
-    $checkCommand = 
-        "if [ ! -f '$runDir/acknowledged' ]; then echo ACK_MISSING; exit 41; fi; " +
-        "pid=`$(cat '$runDir/runner.pid' 2>/dev/null || true); " +
-        "if [ -n `"`$pid`" ] && [ -r `"/proc/`$pid/cmdline`" ]; then " +
-        "cmd=`$(tr '\0' ' ' <`"/proc/`$pid/cmdline`" 2>/dev/null || true); " +
-        "case `"`$cmd`" in *dtu_ota_supervisor_stage1.sh*) echo RUNNER_STILL_ACTIVE; exit 42 ;; esac; fi; " +
-        "echo OK"
-    $check = Invoke-Adb -Arguments @("shell", $checkCommand)
-    if ($check -ne "OK") {
-        throw "Cleanup precondition failed: $check"
+
+    # Keep the shell commands deliberately simple. In particular, do not use a
+    # remote shell variable such as $pid inside a PowerShell double-quoted string:
+    # Windows PowerShell would expand it before adb reaches the modem.
+    $ackState = Invoke-Adb -Arguments @(
+        "shell",
+        "if [ -f '$runDir/acknowledged' ]; then echo ACK_OK; else echo ACK_MISSING; fi"
+    )
+    if ($ackState -ne "ACK_OK") {
+        throw "Cleanup precondition failed: $ackState"
     }
 
-    $cleanupCommand = "TARGET='$runDir'; case `"`$TARGET`" in '$remoteRuns/'*) rm -rf `"`$TARGET`" ;; *) exit 43 ;; esac"
-    Invoke-Adb -Arguments @("shell", $cleanupCommand) | Out-Null
+    $runnerPidText = Invoke-Adb -Arguments @(
+        "shell",
+        "cat '$runDir/runner.pid' 2>/dev/null || true"
+    )
+    $runnerPidText = $runnerPidText.Trim()
+
+    if ($runnerPidText) {
+        if ($runnerPidText -notmatch '^[0-9]+$') {
+            throw "Cleanup precondition failed: invalid runner.pid '$runnerPidText'."
+        }
+
+        $runnerPid = [int64]$runnerPidText
+        $cmdline = Invoke-Adb -Arguments @(
+            "shell",
+            "if [ -r '/proc/$runnerPid/cmdline' ]; then tr '\000' ' ' < '/proc/$runnerPid/cmdline'; fi"
+        )
+
+        if ($cmdline -match 'dtu_ota_supervisor_stage1\.sh') {
+            throw "Cleanup precondition failed: runner PID $runnerPid is still an active Stage-1 supervisor."
+        }
+
+        if ($cmdline) {
+            Write-Host "runner.pid $runnerPid currently belongs to another process; it will not be touched."
+        }
+    }
+
+    # Run IDs are restricted to [A-Za-z0-9._-], therefore this exact path can be
+    # removed directly without introducing another remote shell variable.
+    Invoke-Adb -Arguments @("shell", "rm -rf '$runDir'") | Out-Null
     Write-Host "Run directory removed after terminal status and explicit acknowledgement."
 }
 
