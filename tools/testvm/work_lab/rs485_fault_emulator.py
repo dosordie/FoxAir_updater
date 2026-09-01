@@ -12,7 +12,10 @@ from pathlib import Path
 
 DEVICE_INFO_REQUEST = bytes.fromhex("63 03 07 d1 00 5a 9c fe")
 STATUS_HANDSHAKE_REQUEST = bytes.fromhex("63 03 00 06 00 01 6c 49")
+SOFTWARE_INFO_REQUEST = bytes.fromhex("63 03 00 04 00 01 cd 89")
 PRODUCT_KEY_ACK = bytes.fromhex("63 10 00 c8 00 10 48 79")
+C544_STATUS_7 = bytes.fromhex("63 10 C3 7B 00 02 04 00 63 00 07 B5 A8")
+C544_STATUS_7_CONFIRM = bytes.fromhex("63 10 C3 7B 00 02 05 D7")
 DEVICE_ID = b"LABDEVICE001"
 # V3.3 copies exactly eleven ProductKey bytes into a 32-byte FC10 block.  The
 # remaining bytes are synthetic zero-initialised simulator padding; live data
@@ -54,6 +57,16 @@ def crc16_modbus(data: bytes) -> bytes:
 
 def frame_with_crc(data: bytes) -> bytes:
     return data + crc16_modbus(data)
+
+
+def board_software_info_frame(board_version: str) -> bytes:
+    if len(board_version) != 4 or not board_version.isdigit():
+        raise ValueError("board version must be exactly four digits")
+    payload = (
+        b"\x00\x63" + b"82300314" + b"0000"
+        + b"82400644" + board_version.encode("ascii")
+    )
+    return frame_with_crc(b"\x63\x10\xc5\x44\x00\x0d\x1a" + payload)
 
 
 def parse_args():
@@ -231,6 +244,32 @@ def main():
                     transcript.write(
                         f"{time.time():.6f} DTU -> BOARD product-key-ack "
                         f"{PRODUCT_KEY_ACK.hex(' ')}\n"
+                    )
+                    pending.clear()
+                elif SOFTWARE_INFO_REQUEST in pending:
+                    # Real V3.3 boards use the FC03 read only as a trigger and
+                    # answer with a separate C544 FC10 software-info report.
+                    # phnixIot4G needs this report after restart to compare the
+                    # persisted target and schedule its C350/C357 resume path.
+                    software_frame = board_software_info_frame(args.board_version)
+                    os.write(fd, software_frame)
+                    to_app.write(software_frame)
+                    transcript.write(
+                        f"{time.time():.6f} BOARD -> DTU c544-software-info "
+                        f"softwareCode=82400644 version={args.board_version} "
+                        f"{software_frame.hex(' ')}\n"
+                    )
+                    pending.clear()
+                elif C544_STATUS_7 in pending:
+                    transcript.write(
+                        f"{time.time():.6f} DTU -> BOARD c37b-status-7 "
+                        f"{C544_STATUS_7.hex(' ')}\n"
+                    )
+                    os.write(fd, C544_STATUS_7_CONFIRM)
+                    to_app.write(C544_STATUS_7_CONFIRM)
+                    transcript.write(
+                        f"{time.time():.6f} BOARD -> DTU c37b-status-7-confirm "
+                        f"{C544_STATUS_7_CONFIRM.hex(' ')}\n"
                     )
                     pending.clear()
                 elif ((args.v33_ota_handshake or args.v33_full_transfer) and not c350_done

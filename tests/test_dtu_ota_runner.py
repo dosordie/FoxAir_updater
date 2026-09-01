@@ -8,7 +8,11 @@ from pathlib import Path
 from tools.dtu_ota_runner.client import DtuOtaClient, RunnerClientError
 from tools.dtu_ota_runner.package import DtuOtaPackage, PackageError, ota_command_bytes
 from tools.testvm.fake_adb import qemu_work_lab_backend
-from tools.testvm.work_lab.rs485_fault_emulator import resolve_staged_firmware
+from tools.testvm.work_lab.rs485_fault_emulator import (
+    board_software_info_frame,
+    crc16_modbus,
+    resolve_staged_firmware,
+)
 from updater.common.adb_transport import TransportError
 from updater.common.firmware_manifest import FirmwareManifest
 
@@ -183,6 +187,16 @@ class DtuOtaPackageTests(unittest.TestCase):
                 ))
             finally:
                 qemu_work_lab_backend.root_path = original
+
+    def test_resume_software_info_frame_matches_live_c544_layout(self):
+        frame = board_software_info_frame("0033")
+        self.assertEqual(frame[:7], bytes.fromhex("63 10 C5 44 00 0D 1A"))
+        self.assertEqual(frame[7:9], bytes.fromhex("00 63"))
+        self.assertEqual(frame[9:17], b"82300314")
+        self.assertEqual(frame[17:21], b"0000")
+        self.assertEqual(frame[21:29], b"82400644")
+        self.assertEqual(frame[29:33], b"0033")
+        self.assertEqual(frame[-2:], crc16_modbus(frame[:-2]))
 
 
 if __name__ == "__main__":
