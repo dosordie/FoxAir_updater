@@ -3,11 +3,13 @@
 Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 
 > [!CAUTION]
-> ## V3.3 → V3.4 live validiert
+> ## V1.2 → V3.4 und V3.3 → V3.4 live validiert
 >
 > Ein vollständiges Firmwareupdate von Mainboard V3.3 auf V3.4 wurde auf realer Hardware **erfolgreich durchgeführt und anschließend über Status 5 / Board-Step 12 sowie die neue C544-Versionsmeldung `0034` bestätigt**.
 >
-> Zusätzlich wurde **V3.3 → V3.3** bis zur erwarteten Gleichversionsablehnung getestet. Andere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht vollständig live validiert.
+> Zusätzlich wurde inzwischen auch ein direktes Update von **V1.2 (Auslieferungszustand) auf V3.4** auf realer Hardware erfolgreich durchgeführt. Damit ist neben V3.3 auch der größere Versionssprung aus dem Auslieferungszustand real bestätigt.
+>
+> Zusätzlich wurde **V3.3 → V3.3** bis zur erwarteten Gleichversionsablehnung getestet. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht vollständig live validiert.
 >
 > Ein Firmwareupdate bleibt ein Eingriff in das Mainboard. Im ungünstigsten Fall können Mainboard, LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
 >
@@ -49,6 +51,7 @@ ADB wird weiterhin **nicht mitgeliefert**. Die GUI verlinkt den SIMCom-USB-Treib
 ### Neu bzw. maßgeblich in v0.3.9
 
 - **V3.3 → V3.4 wurde real erfolgreich geflasht.** Die neue Firmware wurde nach dem vollständigen Ablauf als V3.4 / `0034` bestätigt.
+- **V1.2 (Auslieferungszustand) → V3.4 wurde ebenfalls real erfolgreich durchgeführt.**
 - MQTT bleibt bei einem normalen Vollupdate **standardmäßig verbunden**. Die frühere Firewall-Isolierung ist nur noch optional.
 - Die Option **MQTT bei Update aus** befindet sich unter **Erweitert**, ist standardmäßig aus und wird persistent gespeichert.
 - Die OTA-Vorprüfung verlangt weiterhin einen sauberen Originalzustand und eine aktive MQTT-/Cloud-Verbindung.
@@ -94,13 +97,16 @@ Real getestet bzw. bestätigt sind unter anderem:
 - Dry-Run;
 - normaler Windows-Firmware-Update-Aufruf mit **V3.3 → V3.3** bis zur sicheren Gleichversionsablehnung;
 - vollständiger realer Versionswechsel **V3.3 → V3.4**, einschließlich kompletter C5A8-Übertragung, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließender C544-Versionsbestätigung `0034`;
+- vollständiger realer Versionswechsel **V1.2 (Auslieferungszustand) → V3.4**;
 - Mainboard-OTA-Vorgangszähler-Wartung einschließlich Sicherung, kontrolliertem Dienstneustart und Verifikation.
 
 Beim V3.3→V3.3-Test erkannte das Mainboard die bereits installierte Firmware und beendete den Ablauf vor C357/C5A8. Es wurden keine Firmwaredaten übertragen.
 
 Beim V3.3→V3.4-Lauf dauerte die C5A8-Datenübertragung rund **28:56 Minuten**. Vom letzten Datenblock bis Status 5 vergingen weitere rund **5:16 Minuten**. Bis zur ersten neuen C544-Versionsmeldung dauerte der vollständige beobachtete Ablauf rund **35 Minuten**.
 
-Details stehen in:
+Die genannten Laufzeiten stammen aus dem dokumentierten V3.3→V3.4-Lauf. Für den ebenfalls erfolgreichen V1.2→V3.4-Lauf werden hier keine separaten Laufzeitwerte abgeleitet.
+
+Details zum dokumentierten V3.3→V3.4-Lauf stehen in:
 [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
 
 ### Windows-Architektur
