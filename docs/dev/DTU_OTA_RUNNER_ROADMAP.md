@@ -6,7 +6,7 @@
 > Die dauerhaften Erkenntnisse werden nach Abschluss des Gesamtprojekts in die normale
 > Dokumentation übernommen; danach wird `docs/dev/` vollständig gelöscht.
 
-Stand: 1. September 2026
+Stand: 2. September 2026
 
 ## Aktueller Implementierungsstand im Branch
 
@@ -25,6 +25,21 @@ prüfbar:
 - vorbereitete Runs werden nicht als verwaist klassifiziert; ein nachweislich toter
   Lock-Owner wird klassifiziert und gibt nur den Run-Lock frei, während seine
   Diagnose erhalten bleibt.
+- Statusflags für C350, C36E, C357 und C5A8 werden monoton geführt; kurzlebige
+  Zwischenphasen können die bestätigten Protokollereignisse nicht mehr verlieren.
+- vollständiger Work-QEMU-Erfolgslauf `backend-v34-success-vm-05` mit echtem
+  V3.4-Payload bestätigt: C350, C36E Status 1, C357, 289806 Byte C5A8,
+  Status 3/5, Promotion, Erfolgsmeldung und finaler Board-Step 12.
+- 100 % C5A8 blieb dabei korrekt nichtterminal; erst die Abschlusssequenz setzte
+  `state=completed`, `phase=success`.
+- Der Supervisor verbrauchte während des mehrminütigen Transfers praktisch keine
+  messbare CPU-Zeit und hielt den Zwei-Sekunden-Polltakt ein.
+
+Der QEMU-Pfad unterdrückt ausschließlich bei vorhandenem
+`/data/phnixIot4G.tls-lab` ein emulationsbedingtes `SIGFPE`. Auf realer DTU bleibt
+die live validierte GDB-Signalsemantik (`pass`) unverändert. Ebenso ist nur im
+Simulator der Yield-Breakpoint so bedingt, dass der QEMU-Kaltstart bis
+`UART=0` und Board-Step 12 weiterlaufen darf.
 
 Noch nicht als abgeschlossen markieren: vollständiger Success-/Failure-/Chaos-Matrixlauf
 und die begrenzte Abnahme auf der realen DTU.

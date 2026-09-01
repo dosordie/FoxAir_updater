@@ -316,11 +316,19 @@ stop_http() {
 
 refresh_progress() {
     if test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220; then
-        OFFSET=$(od -An -tu4 -j212 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
-        LENGTH=$(od -An -tu4 -j216 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
-        case "$OFFSET" in ''|*[!0-9]*) OFFSET=0 ;; esac
-        case "$LENGTH" in ''|*[!0-9]*) LENGTH=0 ;; esac
-        if test "$LENGTH" -gt 0; then PROGRESS=$((OFFSET * 100 / LENGTH)); test "$PROGRESS" -le 100 || PROGRESS=100; fi
+        next_offset=$(od -An -tu4 -j212 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
+        next_length=$(od -An -tu4 -j216 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
+        case "$next_offset" in ''|*[!0-9]*) next_offset=0 ;; esac
+        case "$next_length" in ''|*[!0-9]*) next_length=0 ;; esac
+        # The original service clears offset/length during terminal cleanup.
+        # Preserve the last confirmed transfer counters in the durable result
+        # instead of turning a completed N/N transfer back into 0/0.
+        if test "$next_length" -gt 0 && { test "$LENGTH" = 0 || test "$next_length" = "$LENGTH"; } && test "$next_offset" -ge "$OFFSET"; then
+            OFFSET=$next_offset
+            LENGTH=$next_length
+            PROGRESS=$((OFFSET * 100 / LENGTH))
+            test "$PROGRESS" -le 100 || PROGRESS=100
+        fi
     fi
 }
 
