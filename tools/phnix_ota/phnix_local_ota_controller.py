@@ -98,6 +98,31 @@ class AdbMonitorRecovery:
         self.recovering = False
 
 
+def passive_recovery_is_plausible(
+    *, transfer_started: bool, original_service_authoritative: bool,
+    previous_pid: str, recovered_pid: str, previous_offset: int,
+    recovered_offset: int | None,
+) -> bool:
+    """Accept only read-only proof that the same authoritative OTA progressed."""
+    return bool(
+        (transfer_started or original_service_authoritative)
+        and recovered_pid
+        and (not previous_pid or recovered_pid == previous_pid)
+        and isinstance(recovered_offset, int)
+        and recovered_offset >= previous_offset
+    )
+
+
+def passive_helper_exit_is_safe(
+    *, passive_monitoring: bool, monitoring_was_lost: bool,
+    transfer_started: bool, original_service_authoritative: bool,
+) -> bool:
+    return bool(
+        passive_monitoring and monitoring_was_lost
+        and (transfer_started or original_service_authoritative)
+    )
+
+
 @dataclass
 class OtaInfo:
     crc_ok: bool
@@ -1039,6 +1064,11 @@ def run_update(args, adb: AdbClient) -> None:
     transfer_started = False
     original_service_authoritative = False
     helper_exit_seen_at = None
+    monitoring_was_lost = False
+    passive_monitoring = False
+    last_service_pid = ""
+    offset_before_monitoring_loss = -1
+    monitoring_loss_announced = False
     adb_monitor = AdbMonitorRecovery(generation=object())
     try:
         while True:
@@ -1061,6 +1091,8 @@ def run_update(args, adb: AdbClient) -> None:
                     raise
                 now = time.monotonic()
                 monitoring_lost = adb_monitor.failed(now)
+                monitoring_was_lost = True
+                offset_before_monitoring_loss = last_offset
                 print_event(
                     "monitoring-recovery",
                     message="Update laeuft vermutlich weiter - Ueberwachung wird wiederhergestellt",
@@ -1068,8 +1100,13 @@ def run_update(args, adb: AdbClient) -> None:
                     elapsed=now - adb_monitor.first_failure_time,
                     error=str(error),
                 )
-                if monitoring_lost:
-                    raise
+                if monitoring_lost and not monitoring_loss_announced:
+                    monitoring_loss_announced = True
+                    print_event(
+                        "monitoring-connection-lost",
+                        message=("Monitoring was lost after OTA acceptance; original service "
+                                 "remains authoritative and was not stopped"),
+                    )
                 # Only probe passively: reconnecting could terminate the
                 # persistent ADB shell that owns the already-running hook.
                 try:
@@ -1080,10 +1117,32 @@ def run_update(args, adb: AdbClient) -> None:
                 continue
             if adb_monitor.recovering:
                 adb_monitor.recovered()
-                print_event("monitoring-recovered")
+                recovered_pid = str(status.get("service_pid") or "").strip()
+                recovered_info = status.get("ota_info", {})
+                recovered_offset = (
+                    recovered_info.get("offset")
+                    if isinstance(recovered_info, dict) and recovered_info.get("crc_ok") is True
+                    else None
+                )
+                passive_monitoring = passive_recovery_is_plausible(
+                    transfer_started=transfer_started,
+                    original_service_authoritative=original_service_authoritative,
+                    previous_pid=last_service_pid,
+                    recovered_pid=recovered_pid,
+                    previous_offset=offset_before_monitoring_loss,
+                    recovered_offset=recovered_offset,
+                )
+                print_event(
+                    "monitoring-recovered-passive" if passive_monitoring else "monitoring-recovered",
+                    service_pid=recovered_pid,
+                    previous_offset=offset_before_monitoring_loss,
+                    offset=recovered_offset,
+                )
             hook = status["hook"]
             info = status["ota_info"]
             print_event("status", **status)
+            if status.get("service_pid"):
+                last_service_pid = str(status["service_pid"]).strip()
             observed_offset = info.get("offset") if info.get("crc_ok") is True else None
             if isinstance(observed_offset, int) and observed_offset != last_offset:
                 last_offset = observed_offset
@@ -1125,6 +1184,17 @@ def run_update(args, adb: AdbClient) -> None:
                 if helper_exit_seen_at is None:
                     helper_exit_seen_at = time.monotonic()
                 if time.monotonic() - helper_exit_seen_at < 1.0:
+                    time.sleep(args.poll_interval)
+                    continue
+                if passive_helper_exit_is_safe(
+                    passive_monitoring=passive_monitoring,
+                    monitoring_was_lost=monitoring_was_lost,
+                    transfer_started=transfer_started,
+                    original_service_authoritative=original_service_authoritative,
+                ):
+                    # The original service owns C5A8.  A local helper that ended
+                    # during a proven monitoring interruption is no longer an
+                    # OTA authority; keep observing remote terminal evidence.
                     time.sleep(args.poll_interval)
                     continue
                 raise OtaError(f"runtime helper exited unexpectedly with code {helper.returncode}")

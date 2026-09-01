@@ -399,7 +399,10 @@ class TcpDebugSource:
 
 class PhnixDebugCapture:
     """One physical reader shared by named, independently-lived consumers."""
-    def __init__(self, source_factory: Callable[[], ReadSource], identity: str = ""):
+    def __init__(
+        self, source_factory: Callable[[], ReadSource], identity: str = "",
+        *, reconnect_interval: float | None = None,
+    ):
         self._factory = source_factory
         self.identity = identity
         self._source: ReadSource | None = None
@@ -409,6 +412,7 @@ class PhnixDebugCapture:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._restart_requested = False
+        self._reconnect_interval = reconnect_interval
         self.status = "Getrennt"
         self.last_error: str | None = None
 
@@ -506,6 +510,13 @@ class PhnixDebugCapture:
             self.last_error = str(error)
             self.status = "Verbindung beendet" if isinstance(error, ConnectionError) else "Verbindung fehlgeschlagen"
             self._notify_status()
+            if self._reconnect_interval is not None:
+                with self._lock:
+                    reconnect = bool(self._consumers) and not self._stop.is_set()
+                if reconnect:
+                    time.sleep(self._reconnect_interval)
+                    with self._lock:
+                        self._restart_requested = bool(self._consumers) and not self._stop.is_set()
         finally:
             if source is not None:
                 try:

@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -147,6 +148,22 @@ class MainWindow(base.MainWindow):
         layout = widget.layout()
         insert_at = max(0, layout.count() - 1)
 
+        self.restart_before_update = QCheckBox("phnixIot4G vor Firmwareupdate neu starten")
+        self.restart_before_update.setChecked(
+            str(self.settings.value("restart_before_update", "true")).lower() in {"1", "true", "yes"}
+        )
+        self.restart_before_update.setToolTip(
+            "Startet den PHNIX-LTE-Kommunikationsdienst vor dem Update kontrolliert neu. "
+            "Dadurch steht in der Regel der zusätzliche serielle PHNIX-Debugkanal für "
+            "Fortschritts- und Abschlussüberwachung zur Verfügung. Die LTE-/Cloud-Verbindung "
+            "wird dabei kurz unterbrochen."
+        )
+        self.restart_before_update.toggled.connect(
+            lambda checked: self.settings.setValue("restart_before_update", checked)
+        )
+        layout.insertWidget(insert_at, self.restart_before_update)
+        insert_at += 1
+
         heading = QLabel("<b>Firmware manuell in den LTE-Cache kopieren</b>")
         layout.insertWidget(insert_at, heading)
         insert_at += 1
@@ -230,6 +247,8 @@ class MainWindow(base.MainWindow):
         self.settings.setValue("adb_mode", "remote" if self.adb_remote.isChecked() else "local")
         self.settings.setValue("remote_host", self.remote_host.text().strip())
         self.settings.setValue("remote_port", self.remote_port.value())
+        if hasattr(self, "restart_before_update"):
+            self.settings.setValue("restart_before_update", self.restart_before_update.isChecked())
         self._remember_parent("manifest_dir", self.update_manifest.text())
         self._remember_parent("firmware_dir", self.firmware.text())
         if hasattr(self, "cache_firmware"):
@@ -660,6 +679,14 @@ class MainWindow(base.MainWindow):
                 "monitoring-recovery", "ok",
                 "ADB-Verbindung wiederhergestellt – Überwachung wird fortgesetzt.",
             )
+        elif event == "monitoring-recovered-passive":
+            self._set_step(
+                "monitoring-recovery", "ok",
+                "ADB-Verbindung wiederhergestellt – der weitergelaufene Originaldienst wird passiv überwacht.",
+            )
+            self.progress_text.setText(
+                "Firmwaretransfer läuft im PHNIX-Originaldienst weiter – passive Überwachung aktiv."
+            )
         elif event == "monitoring-connection-lost":
             self.ota_monitoring_lost = True
             self.ota_reattach_btn.setVisible(True)
@@ -1063,9 +1090,12 @@ class MainWindow(base.MainWindow):
                 QMessageBox.warning(
                     self,
                     "ADB-Verbindung verloren",
-                    "ADB-Verbindung verloren – Firmwareupdate kann auf LTE-Modem/Mainboard weiterlaufen.\n\n"
-                    "Wärmepumpe und LTE-Modem nicht stromlos machen. Anschließend „ADB neu verbinden / "
-                    "OTA-Status prüfen“ verwenden.",
+                    "Keine Panik – das Firmwareupdate läuft sehr wahrscheinlich weiter.\n\n"
+                    "Die Firmware wurde bereits auf das LTE-Modem übertragen und der PHNIX-Originaldienst "
+                    "führt das Mainboard-Update selbstständig weiter. Nach Beginn der Übertragung dient ADB "
+                    "nur noch zur Überwachung.\n\nDas Update kann insgesamt bis zu etwa 40 Minuten dauern. "
+                    "Wärmepumpe und LTE-Modem während dieser Zeit nicht ausschalten. Ein Verlust der "
+                    "ADB-Verbindung bedeutet nicht, dass das Firmwareupdate abgebrochen wurde.",
                 )
                 QTimer.singleShot(1500, self._automatic_monitoring_reattach)
             elif guarded:

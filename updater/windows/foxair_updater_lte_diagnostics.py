@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 import foxair_updater_desktop as desktop
 from updater.common.adb_transport import AdbClient
 from updater.common.phnix_modem_info import PhnixModemInfo, format_seconds, read_phnix_modem_info
+from updater.common.phnix_service_restart import restart_phnix_iot_service
 from updater.common.phnix_debug import (
     PhnixDebugCapture,
     SerialCompletionSequence,
@@ -225,12 +226,32 @@ class MainWindow(desktop.MainWindow):
             return "local:MI_04", "Quelle: Lokal\nEndpunkt: MI_04", lambda: (_ for _ in ()).throw(OSError("COM-Port MI_04 nicht verfügbar"))
         return f"local:{port}", f"Quelle: Lokal\nEndpunkt: {port} / MI_04", lambda: QtSerialDebugSource(port)
 
+    def _update_debug_configuration(self):
+        """Resolve MI_04 anew on every open after USB re-enumeration."""
+        if self.adb_remote.isChecked():
+            return (*self._debug_configuration(), None)
+
+        def open_current_mi04():
+            port = resolve_phnix_debug_port()
+            if not port:
+                raise OSError("COM-Port MI_04 nicht verfügbar")
+            return QtSerialDebugSource(port)
+
+        return (
+            "local:MI_04", "Quelle: Lokal\nEndpunkt: MI_04 (automatischer Reconnect)",
+            open_current_mi04, 1.5,
+        )
+
     def _new_debug_capture(self) -> PhnixDebugCapture:
         identity, _description, factory = self._debug_configuration()
         return PhnixDebugCapture(factory, identity)
 
     def _ensure_debug_capture(self, *, for_update=False) -> PhnixDebugCapture:
-        identity, description, factory = self._debug_configuration()
+        reconnect_interval = None
+        if for_update:
+            identity, description, factory, reconnect_interval = self._update_debug_configuration()
+        else:
+            identity, description, factory = self._debug_configuration()
         old = self._debug_capture
         if old is None or (old.identity != identity and not old.has_consumer("update")):
             window_was_connected = bool(old and old.has_consumer("window"))
@@ -238,7 +259,9 @@ class MainWindow(desktop.MainWindow):
                 old.remove_consumer("window")
                 old.remove_status_consumer("ui")
                 old.remove_status_consumer("log")
-            self._debug_capture = PhnixDebugCapture(factory, identity)
+            self._debug_capture = PhnixDebugCapture(
+                factory, identity, reconnect_interval=reconnect_interval
+            )
             self._debug_source_description = description
             self._debug_last_data = None
             self._debug_connected_since = None
@@ -619,6 +642,26 @@ class MainWindow(desktop.MainWindow):
                 manifest = None
             if manifest and manifest.is_file():
                 self._start_automatic_logs(manifest)
+        if op == "update" and getattr(self, "restart_before_update", None) is not None:
+            if self.restart_before_update.isChecked():
+                try:
+                    adb = self._require_adb()
+                    if not adb:
+                        self._finish_automatic_logs()
+                        return
+                    message = restart_phnix_iot_service(
+                        AdbClient(adb, env=self._process_env())
+                    )
+                except Exception as error:
+                    self._log(f"[Fehler] Kontrollierter phnixIot4G-Neustart fehlgeschlagen: {error}")
+                    self._finish_automatic_logs()
+                    QMessageBox.critical(
+                        self, "Firmwareupdate nicht gestartet",
+                        "Der kontrollierte Neustart von phnixIot4G konnte nicht bestätigt werden. "
+                        "Das Firmwareupdate wurde nicht gestartet.\n\n" + str(error),
+                    )
+                    return
+                self._log(message)
         super()._run(op, command, cwd)
 
     def _done(self, op, code, output):
@@ -684,7 +727,11 @@ class MainWindow(desktop.MainWindow):
                 self.ota_reattach_btn.setVisible(True)
             else:
                 self.progress_text.setText(
-                    "Firmwareupdate erfolgreich über PHNIX bestätigt. "
+                    "Firmwareupdate wurde vom PHNIX-Originaldienst erfolgreich bestätigt. "
+                    "Die ADB-Verbindung zum LTE-Modem ist weiterhin unterbrochen; das "
+                    "Mainboardupdate ist abgeschlossen. Das LTE-Modem kann jetzt erneut "
+                    "verbunden werden. Remote-Aufräumarbeiten werden beim nächsten "
+                    "erfolgreichen Verbindungsaufbau nachgeholt. "
                     "ADB-Abschlusskontrolle derzeit nicht möglich."
                 )
                 self.ota_reattach_btn.setVisible(True)
