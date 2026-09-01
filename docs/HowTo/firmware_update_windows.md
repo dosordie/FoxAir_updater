@@ -1,6 +1,6 @@
 # Firmware-Update mit dem FoxAir Updater unter Windows
 
-Stand: 30. August 2026
+Stand: 1. September 2026
 
 Diese Anleitung beschreibt **nur den normalen Firmware-Update-Ablauf für Endanwender unter Windows**.
 
@@ -10,6 +10,8 @@ Die Einrichtung der USB-/ADB-Verbindung zum LTE-Modem ist identisch mit dem Verb
 
 > [!CAUTION]
 > Ein Firmwareupdate verändert die Firmware des Mainboards und erfolgt **auf eigenes Risiko**. Während des laufenden Updates Wärmepumpe und LTE-Modem **nicht stromlos machen** und die USB-/ADB-Verbindung nicht absichtlich trennen.
+>
+> Real erfolgreich bestätigt sind inzwischen sowohl ein vollständiger Versionswechsel **V3.3 → V3.4** als auch ein direktes Update von **V1.2 (Auslieferungszustand) → V3.4**. Diese realen Tests sind keine Garantie für beliebige andere Firmwarestände oder Hardwarevarianten.
 
 ## 1. Updatepaket vorbereiten
 
@@ -100,3 +102,5 @@ Bei Problemen möglichst **das vollständige Log sichern**, bevor das Protokoll 
 8. Wärmepumpe/LTE-Modem während des Vorgangs nicht stromlos machen.
 9. Bis zur ausdrücklichen Meldung **Firmwareupdate erfolgreich** warten.
 10. Anschließend das **Log speichern**, besonders bei Warnungen oder Fehlern.
+
+Real erfolgreich durchgeführt: **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4**.
