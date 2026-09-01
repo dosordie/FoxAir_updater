@@ -113,6 +113,12 @@ function Start-Run {
     $status = Read-Status -Id $id
     Show-Status -Status $status
 
+    if ([bool]$status.terminal) {
+        Write-Host "The runner already reached a terminal state during startup. The result remains stored on the modem."
+        Write-Host "Run ID: $id"
+        return
+    }
+
     if ($NoMonitor) {
         Write-Host "Monitoring detached. The modem runner continues independently."
         Write-Host "Run ID: $id"
