@@ -7,6 +7,7 @@ import json
 import os
 import selectors
 import time
+from pathlib import Path
 
 
 DEVICE_INFO_REQUEST = bytes.fromhex("63 03 07 d1 00 5a 9c fe")
@@ -83,6 +84,45 @@ def parse_args():
     )
     parser.add_argument("--cancel-ack", action="store_true")
     return parser.parse_args()
+
+
+def resolve_staged_firmware(configured: str, offered_size: int, offered_md5: str) -> bytes:
+    """Resolve the one staged image that exactly matches C357 metadata.
+
+    The legacy controller uses /data/phnix_local_ota, while the autonomous
+    runner stages per run.  Selection happens once at C357 and is content
+    pinned; old diagnostic runs therefore cannot substitute another image.
+    """
+    configured_path = Path(configured)
+    candidates = [configured_path]
+    parts = configured_path.parts
+    try:
+        data_index = parts.index("data")
+    except ValueError:
+        data_index = -1
+    if data_index > 0:
+        rootfs = Path(*parts[:data_index])
+        runs = rootfs / "data/foxair_ota_runner/runs"
+        candidates.extend(sorted(
+            runs.glob("*/payload/firmware.bin"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        ))
+    seen = set()
+    for candidate in candidates:
+        try:
+            identity = candidate.resolve()
+            if identity in seen or candidate.stat().st_size != offered_size:
+                continue
+            seen.add(identity)
+            payload = candidate.read_bytes()
+        except OSError:
+            continue
+        if hashlib.md5(payload).hexdigest().lower() == offered_md5.lower():
+            return payload
+    raise RuntimeError(
+        f"no staged firmware matches C357 size={offered_size} md5={offered_md5}"
+    )
 
 
 def main():
@@ -249,8 +289,9 @@ def main():
                         raise RuntimeError("invalid C357 firmware metadata")
                     offered_size = int.from_bytes(request[9:13], "big")
                     offered_md5 = request[13:45].decode("ascii").lower()
-                    with open(args.firmware, "rb") as fixture:
-                        expected_firmware = fixture.read()
+                    expected_firmware = resolve_staged_firmware(
+                        args.firmware, offered_size, offered_md5,
+                    )
                     actual_md5 = hashlib.md5(expected_firmware).hexdigest()
                     if len(expected_firmware) != offered_size or actual_md5 != offered_md5:
                         raise RuntimeError(

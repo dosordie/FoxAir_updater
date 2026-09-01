@@ -2,10 +2,13 @@ import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 
 from tools.dtu_ota_runner.client import DtuOtaClient, RunnerClientError
 from tools.dtu_ota_runner.package import DtuOtaPackage, PackageError, ota_command_bytes
+from tools.testvm.work_lab.rs485_fault_emulator import resolve_staged_firmware
+from updater.common.adb_transport import TransportError
 from updater.common.firmware_manifest import FirmwareManifest
 
 
@@ -99,6 +102,51 @@ class DtuOtaPackageTests(unittest.TestCase):
         adb.shell = wrong
         with self.assertRaises(RunnerClientError):
             client.status("run-1", reconcile=False)
+
+    def test_prepare_reports_persisted_preflight_reason(self):
+        with tempfile.TemporaryDirectory() as temp:
+            firmware, hook, runner, manifest = self.make_inputs(Path(temp))
+            manifest_path = Path(temp) / "FW3.4.json"
+            manifest_path.write_text(json.dumps(asdict(manifest)), encoding="utf-8")
+            adb = FakeAdb()
+            original = adb.shell
+
+            def rejected(command, check=True):
+                if " preflight 'run-rejected'" in command:
+                    raise TransportError("empty adb error")
+                if command.startswith("cat '") and command.endswith("/status.json'"):
+                    return json.dumps({
+                        "schema": "foxair-dtu-ota-run-v1", "run_id": "run-rejected",
+                        "state": "failed", "phase": "package-preflight", "terminal": True,
+                        "updated_at": 1, "transfer_started": False,
+                        "original_service_authoritative": False, "abort_allowed": True,
+                        "recovery": "not-required", "reason": "package_validation_failed",
+                        "detail": "DTU package validation failed with code 72 before any service action.",
+                    })
+                return original(command, check)
+
+            adb.shell = rejected
+            client = DtuOtaClient(adb, source_root=Path(temp))
+            client.hook = hook
+            client.supervisor = runner
+            with self.assertRaisesRegex(RunnerClientError, "code 72"):
+                client.prepare(
+                    manifest_path=manifest_path, firmware_path=firmware,
+                    run_id="run-rejected",
+                )
+
+    def test_board_peer_resolves_content_pinned_runner_firmware(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "rootfs"
+            legacy = root / "data/phnix_local_ota/phnixIot_device_OTA.bin"
+            staged = root / "data/foxair_ota_runner/runs/run-1/payload/firmware.bin"
+            staged.parent.mkdir(parents=True)
+            payload = b"new-autonomous-runner-image"
+            staged.write_bytes(payload)
+            actual = resolve_staged_firmware(
+                str(legacy), len(payload), hashlib.md5(payload).hexdigest(),
+            )
+            self.assertEqual(actual, payload)
 
 
 if __name__ == "__main__":
