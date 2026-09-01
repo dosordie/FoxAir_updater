@@ -196,7 +196,7 @@ Real nachgewiesen:
 - [x] Abbruch der Windows-Überwachung beeinflusst den Runner nicht.
 - [x] Testprozess kontrolliert beendet und Testverzeichnis entfernt.
 
-## 8. Stage 1 – production-shaped Supervisor ohne OTA – FAST ERLEDIGT
+## 8. Stage 1 – production-shaped Supervisor ohne OTA – NUR STALE-PID-TEST OFFEN
 
 Der Stage-1-Runner berührt weder Firmware noch `phnixIot4G`, GDB oder OTA.
 
@@ -222,22 +222,36 @@ Abort-Lauf `stage1-abort-01`:
   abgelehnt; dies ist korrekt, kann später UX-seitig als Hinweis statt Exception
   dargestellt werden.
 
+Lock-/Cleanup-Lauf `stage1-lock-01` / `stage1-lock-02`:
+
+- `stage1-lock-01` startete mit PID `4656` und lief detached weiter.
+- paralleler Start `stage1-lock-02` wurde terminal mit `phase=lock`,
+  `reason=active_run_exists` abgewiesen; als Lock-Owner wurden Run-ID
+  `stage1-lock-01` und PID `4656` korrekt gemeldet.
+- wiederholte Cleanup-Versuche auf den laufenden Run wurden bei 20 %, 25 %, 50 % und
+  83 % jeweils wegen `terminal=false` verweigert.
+- nach `completed / terminal=true` wurde Cleanup ohne Ack mit `ACK_MISSING`
+  verweigert.
+- erst nach explizitem `ack` wurde das richtige Run-Verzeichnis entfernt.
+- UX-Fund: ein beim Start bereits terminal abgewiesener Parallelrun wurde vom
+  PowerShell-Harness danach fälschlich noch als „Monitoring detached“ bezeichnet; der
+  Harness wurde anschließend korrigiert, ohne Runner-/Lock-Semantik zu ändern.
+
 ### Stage-1-Abnahmetests
 
 - [x] Normaler Lauf bis `completed`.
 - [x] Host-Monitoring endet; Runner läuft detached mit PPID 1 weiter.
 - [x] Spätere neue ADB-Abfragen lesen dieselbe Run-ID und fortgeschrittenen Status.
-- [ ] Zweiter paralleler Start wird sicher verweigert.
+- [x] Zweiter paralleler Start wird sicher verweigert.
 - [x] `abort.request` führt kontrolliert zu `aborted`, nicht zu blindem Prozess-Kill.
 - [x] Terminalstatus bleibt nach Prozessende vorhanden.
 - [x] `ack` löscht noch keine Diagnose.
-- [ ] `cleanup` vor terminal wird verweigert.
-- [ ] `cleanup` ohne ack wird verweigert.
+- [x] `cleanup` vor terminal wird verweigert.
+- [x] `cleanup` ohne ack wird verweigert.
 - [x] `cleanup` nach terminal + ack entfernt das richtige Run-Verzeichnis.
 - [ ] Stale-/fremde PID wird nicht beendet.
 
-Vor Stage 2 sollen mindestens Parallelstart, Cleanup-Sperren und Stale-PID-Test noch
-real geprüft werden.
+Vor Stage 2 bleibt nur noch der Stale-/Fremd-PID-Test auf realer Hardware offen.
 
 ## 9. Stage 2 – Supervisor + Runtime-Hook, noch ohne Firmwaretransfer
 
@@ -464,7 +478,7 @@ Danach:
 
 ## 24. Unmittelbare Reihenfolge
 
-1. Restliche Stage-1-Hardwaretests: Parallelstart, Cleanup-Sperren, stale PID.
+1. Letzter Stage-1-Hardwaretest: stale/fremde PID darf nicht beendet werden.
 2. Stage 2: Hook zunächst als harmlosen `verify`-/Attach-Child starten.
 3. ADB-Abbruch/Reattach mit diesem Child testen.
 4. Paketformat + lokale Hashprüfung implementieren.
