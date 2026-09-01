@@ -7,6 +7,7 @@ from pathlib import Path
 
 from tools.dtu_ota_runner.client import DtuOtaClient, RunnerClientError
 from tools.dtu_ota_runner.package import DtuOtaPackage, PackageError, ota_command_bytes
+from tools.testvm.fake_adb import qemu_work_lab_backend
 from tools.testvm.work_lab.rs485_fault_emulator import resolve_staged_firmware
 from updater.common.adb_transport import TransportError
 from updater.common.firmware_manifest import FirmwareManifest
@@ -155,6 +156,33 @@ class DtuOtaPackageTests(unittest.TestCase):
                 str(legacy), len(payload), hashlib.md5(payload).hexdigest(),
             )
             self.assertEqual(actual, payload)
+
+    def test_restart_at_half_preserves_only_proven_resume_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = root / "data"
+            data.mkdir()
+            info = bytearray(220)
+            info[212:216] = (145000).to_bytes(4, "little")
+            info[216:220] = (289806).to_bytes(4, "little")
+            (data / "phnixIot_device_OTA_INFO").write_bytes(info)
+            (data / "foxair_board_ota_resume.json").write_text('{"next_block":864}')
+            original = qemu_work_lab_backend.root_path
+            qemu_work_lab_backend.root_path = lambda remote: root / remote.lstrip("/")
+            try:
+                state = {"scenario": "restart-at-50-resume"}
+                self.assertTrue(qemu_work_lab_backend._resume_restart_ready(
+                    "scenario", "restart-at-50-resume", state,
+                ))
+                self.assertFalse(qemu_work_lab_backend._resume_restart_ready(
+                    "scenario", "success", state,
+                ))
+                (data / "foxair_board_ota_resume.json").unlink()
+                self.assertFalse(qemu_work_lab_backend._resume_restart_ready(
+                    "scenario", "restart-at-50-resume", state,
+                ))
+            finally:
+                qemu_work_lab_backend.root_path = original
 
 
 if __name__ == "__main__":

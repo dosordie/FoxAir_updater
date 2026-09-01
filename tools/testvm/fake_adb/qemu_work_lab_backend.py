@@ -595,6 +595,29 @@ def reset_ota_runtime() -> None:
         path = root_path(remote)
         if path.is_dir():
             shutil.rmtree(path)
+
+
+def _resume_restart_ready(kind: str, value: str, state: dict[str, str]) -> bool:
+    """Recognise the second, state-preserving half of restart-at-50.
+
+    Selecting the scenario initially must still create an idle baseline.  Once
+    the board peer has persisted a confirmed block and OTA_INFO records an
+    active image, selecting the same scenario means "restart the LTE/QEMU
+    process now" and must not erase either side of the resume contract.
+    """
+    if kind != "scenario" or value != "restart-at-50-resume":
+        return False
+    if state.get("scenario") != value:
+        return False
+    resume = root_path("/data/foxair_board_ota_resume.json")
+    info = root_path("/data/phnixIot_device_OTA_INFO")
+    try:
+        raw = info.read_bytes()
+        offset = int.from_bytes(raw[212:216], "little")
+        length = int.from_bytes(raw[216:220], "little")
+    except OSError:
+        return False
+    return resume.is_file() and len(raw) == 220 and 0 < offset < length
     runtime_state = base.state_root() / "runtime-sim" / "runtime.json"
     runtime_state.parent.mkdir(parents=True, exist_ok=True)
     runtime_state.write_text(json.dumps({
@@ -639,13 +662,15 @@ def apply_control(kind: str, value: str) -> tuple[bool, str]:
             return False, f"Unbekanntes {kind}: {value}"
 
     state = scenario_state()
+    preserve_resume = _resume_restart_ready(kind, value, state)
     state[key_for_kind[kind]] = value
     base._write_scenario_state(state)
     if kind in {"scenario", "board-version"}:
         # Stop the old ARM process before clearing OTA_INFO. Otherwise it can
         # emit one stale C5A8 block into the newly reset board peer.
         _stop_runner()
-        reset_ota_runtime()
+        if not preserve_resume:
+            reset_ota_runtime()
     scenario = state.get("scenario", "success")
     return _start_runner("scenario", scenario)
 
