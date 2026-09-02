@@ -29,6 +29,7 @@ jobs:
           updater/windows/foxair_updater_operator_display.py
           updater/windows/foxair_updater_maintenance.py
           updater/windows/foxair_updater_runner_product.py
+          updater/windows/foxair_updater_release_product.py
           updater/windows/release_check.py
           updater/common/adb_transport.py
           updater/common/phnix_modem_info.py
@@ -37,6 +38,7 @@ jobs:
           updater/common/phnix_statistics_counters.py
           updater/dtu_ota/cli.py
           updater/dtu_ota/client.py
+          updater/dtu_ota/diagnostics.py
           updater/dtu_ota/package.py
 
   vm-matrix:
