@@ -16,10 +16,9 @@ for candidate in (Path(__file__).resolve().parents[2], Path.cwd()):
         break
 
 from updater.common.adb_transport import AdbClient, TransportError
-
-from tools.dtu_ota_runner.client import DtuOtaClient, RunnerClientError
-from tools.dtu_ota_runner.package import PackageError
 from updater.common.firmware_manifest import ManifestError
+from updater.dtu_ota.client import DtuOtaClient, RunnerClientError
+from updater.dtu_ota.package import PackageError
 
 
 def build_parser() -> argparse.ArgumentParser:
