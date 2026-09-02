@@ -76,9 +76,9 @@ Eine unterbrochene Windows- oder ADB-Verbindung beendet einen bereits gestartete
 > [!IMPORTANT]
 > **100 % Firmwareübertragung bedeutet noch nicht automatisch, dass das Update vollständig abgeschlossen ist.**
 >
-> Nach der Übertragung verarbeitet, prüft und übernimmt das Mainboard die neue Firmware weiter. Erst wenn der FoxAir Updater ausdrücklich **„Das Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.“** meldet, ist der Mainboard-Updatepfad terminal erfolgreich bestätigt.
+> Nach der Übertragung verarbeitet, prüft und übernimmt das Mainboard die neue Firmware weiter. Erst wenn der FoxAir Updater ausdrücklich **„Das Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.“** meldet, ist der Mainboard-Updatepfad  erfolgreich bestätigt.
 
-Technisch wird der Erfolg erst nach der finalen Mainboard-Rückmeldung **C36E Status 5 / Board-Step 12** als abgeschlossen gewertet. Ein bloßer Verbindungsabbruch oder das Erreichen von 100 % darf nicht als Erfolg interpretiert werden.
+Technisch wird der Erfolg erst nach der finalen Mainboard-Rückmeldung **C36E Status 5 / Board-Step 12** als abgeschlossen gewertet. Ein Verbindungsabbruch oder das Erreichen von 100 % darf nicht als Erfolg interpretiert werden.
 
 ## 6. Status und Wiederaufnahme der Anzeige
 
@@ -126,7 +126,7 @@ Die Wartungsfunktionen für persistente Statistikzähler gehören **nicht** zum 
 7. **Firmwareupdate starten** anklicken und Sicherheitsabfrage bestätigen.
 8. Wärmepumpe/LTE-Modem während des Vorgangs nicht stromlos machen.
 9. 100 % Übertragung noch **nicht** als Abschluss betrachten.
-10. Bis zur ausdrücklichen terminalen Erfolgsmeldung warten.
+10. Bis zur ausdrücklichen Erfolgsmeldung warten.
 11. Bei Verbindungsverlust nach Wiederherstellung **Status prüfen** verwenden; dadurch wird kein zweiter OTA gestartet.
 12. Anschließend bei Bedarf **Protokoll speichern…** und die automatischen Logs sichern.
 
