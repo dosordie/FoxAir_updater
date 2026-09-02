@@ -339,7 +339,7 @@ class MainWindow(user_gui.MainWindow):
             if result_type == "success":
                 self._set_step(
                     "runner-terminal-user", "ok",
-                    "Firmwareupdate und Mainboard-Abschluss wurden terminal bestätigt.",
+                    "Firmwareupdate und Mainboard-Abschluss wurden erfolgreich bestätigt.",
                 )
             elif result_type == "same-version":
                 self._set_step(
@@ -361,6 +361,29 @@ class MainWindow(user_gui.MainWindow):
                     "runner-terminal-user", "error",
                     "Manuelle Prüfung erforderlich; Diagnosedaten bleiben auf dem LTE-Modem erhalten.",
                 )
+
+    def _finalize_success_flow(self) -> None:
+        """Turn transient warning/info steps into completed green success steps."""
+        replacements = {
+            "runner-monitor": "Update-Überwachung auf dem LTE-Modem wurde gestartet.",
+            "runner-yield": "Sicherer Startpunkt im PHNIX-Originaldienst wurde erreicht.",
+            "runner-parser": "Firmwareauftrag wurde an den PHNIX-Originaldienst übergeben.",
+            "runner-service-restart": "PHNIX-Kommunikationsdienst wurde kontrolliert neu gestartet.",
+            "runner-c350": "Firmwareangebot wurde an das Mainboard gesendet.",
+            "runner-c357": "Dateigröße und Prüfsumme wurden an das Mainboard übermittelt.",
+            "runner-c5a8": "Firmware wurde vollständig an das Mainboard übertragen.",
+            "runner-authority": "Der originale LTE-Dienst hat den weiteren Updateablauf übernommen.",
+            "runner-success-report": "Mainboard meldet das Update erfolgreich; Abschlussprüfung beendet.",
+            "runner-terminal": "Firmwareupdate erfolgreich abgeschlossen.",
+            "runner-terminal-user": "Firmwareupdate und Mainboard-Abschluss wurden erfolgreich bestätigt.",
+        }
+        for key, (level, text) in list(self._flow_steps.items()):
+            if level in {"warn", "info"}:
+                self._flow_steps[key] = ("ok", replacements.get(key, text))
+        for key, text in replacements.items():
+            if key in self._flow_steps:
+                self._flow_steps[key] = ("ok", text)
+        self._render_flow()
 
     # ------------------------------------------------------------------
     # Dual transfer progress: serial PHNIX log + autonomous runner
@@ -412,8 +435,8 @@ class MainWindow(user_gui.MainWindow):
         if display_percent is not None:
             value = max(0, min(100, round(display_percent)))
             self.progress.setValue(value)
-            # No text inside the bar.  The existing large percent label remains
-            # next to it; detailed values stay below the bar.
+            # No text inside the bar. The separate percent label remains next to
+            # it; detailed source values stay below the bar.
             self.progress.setFormat("")
             if hasattr(self, "progress_percent_label"):
                 self.progress_percent_label.setText(f"{float(display_percent):.1f} %")
@@ -426,14 +449,57 @@ class MainWindow(user_gui.MainWindow):
         if hasattr(self, "progress_sources"):
             self.progress_sources.setText("\n".join(lines))
 
+    # ------------------------------------------------------------------
+    # Terminal presentation
+    # ------------------------------------------------------------------
+    def _show_terminal_result(self, result_type: str, phase: str, detail: str) -> None:
+        result = result_type or phase
+        if result != "success":
+            super()._show_terminal_result(result_type, phase, detail)
+            return
+
+        # Do not open a modal dialog while the inherited status renderer is still
+        # running. Otherwise the user sees the temporary technical base-layer
+        # state behind the popup until OK is clicked. Prepare the final view now
+        # and show the success dialog on the next event-loop turn.
+        self._flow_title = "Firmwareupdate erfolgreich"
+        self.progress.setValue(100)
+        self.progress.setFormat("")
+        self._render_flow()
+        QTimer.singleShot(0, self._show_success_dialog)
+
+    def _show_success_dialog(self) -> None:
+        box = user_gui.QMessageBox(self)
+        box.setWindowTitle("Firmwareupdate erfolgreich")
+        box.setIcon(user_gui.QMessageBox.NoIcon)
+        box.setText(
+            '<span style="font-size:24px;color:#16803a;"><b>✓</b></span> '
+            '<span style="font-size:16px;color:#16803a;"><b>Firmwareupdate erfolgreich</b></span>'
+        )
+        box.setInformativeText(
+            "Das Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.\n\n"
+            "Der Abschluss wurde durch den LTE-Dienst bestätigt."
+        )
+        box.setStandardButtons(user_gui.QMessageBox.Ok)
+        box.setDefaultButton(user_gui.QMessageBox.Ok)
+        box.setStyleSheet(
+            "QMessageBox{background-color:#f4fbf6;}"
+            "QLabel{min-width:430px;}"
+            "QPushButton{min-width:90px;padding:6px 18px;background:#16803a;"
+            "color:white;border:1px solid #126b31;border-radius:4px;font-weight:bold;}"
+            "QPushButton:hover{background:#126b31;}"
+        )
+        box.exec()
+
     def _render_runner_status(self, status: dict) -> None:
         # Store the terminal classification before the inherited renderer calls
         # _buttons(), so recovery-required runs never briefly enable Cleanup.
         self._runner_result_type = str(status.get("result_type") or "")
         self._runner_recovery_state = str(status.get("recovery") or "?")
 
-        # Let the established runner layer update all lifecycle/safety state,
-        # buttons and terminal dialogs first.
+        # Let the established runner layer update all lifecycle/safety state and
+        # buttons first. The success popup is deferred by our override above, so
+        # the final end-user rendering below completes before a dialog is shown.
         super()._render_runner_status(status)
 
         run_id = str(status.get("run_id") or "")
@@ -453,6 +519,8 @@ class MainWindow(user_gui.MainWindow):
         self._sync_runner_elapsed(status)
         self._log_runner_id_once(run_id)
         self._update_flow_from_runner(status)
+        if terminal and result_type == "success":
+            self._finalize_success_flow()
 
         if isinstance(offset, int):
             self._runner_progress_offset = offset
@@ -475,10 +543,24 @@ class MainWindow(user_gui.MainWindow):
             or (isinstance(length, int) and length > 0)
         )
 
+        transfer_complete_waiting = bool(
+            not terminal
+            and isinstance(offset, int)
+            and isinstance(length, int)
+            and length > 0
+            and offset >= length
+        )
+
         if self._runner_transfer_visible:
             self._render_transfer_progress()
+            if transfer_complete_waiting:
+                self.progress_text.setText("Firmware vollständig übertragen – bitte warten")
+                if hasattr(self, "progress_sources"):
+                    current = self.progress_sources.text().strip()
+                    note = "Mainboard verarbeitet und prüft das Update – bitte warten …"
+                    self.progress_sources.setText((current + "\n" if current else "") + note)
         else:
-            # Before C5A8 there is no meaningful percentage.  Same-version and
+            # Before C5A8 there is no meaningful percentage. Same-version and
             # recovery runs therefore no longer show a misleading "0 % DTU Runner".
             self.progress.setValue(0)
             self.progress.setFormat("")
@@ -490,7 +572,10 @@ class MainWindow(user_gui.MainWindow):
                     phase_line += f" · Mainboard-Schritt {board_step}"
                 self.progress_sources.setText(phase_line)
 
-        # Re-render the status box without the technical run ID.  The run ID is
+        if terminal and result_type == "success":
+            self.progress_text.setText("Firmwareupdate erfolgreich abgeschlossen")
+
+        # Re-render the status box without the technical run ID. The run ID is
         # written once to the protocol/automatic log instead.
         if terminal:
             headline = f"<b>Abgeschlossen:</b> {escape(self._result_text(result_type, phase))}"
@@ -504,7 +589,7 @@ class MainWindow(user_gui.MainWindow):
         abort_text = "möglich" if self._runner_abort_allowed else "nicht möglich"
         transfer_text = "gestartet" if transfer_started else "noch nicht gestartet"
         notices: list[str] = []
-        if authoritative:
+        if authoritative and not (terminal and result_type == "success"):
             notices.append(
                 "<b>Hinweis:</b> Der originale LTE-Dienst führt das Update jetzt selbst weiter; "
                 "ein sicherer Abbruch ist ab dieser Grenze gesperrt."
@@ -516,28 +601,35 @@ class MainWindow(user_gui.MainWindow):
             )
         extra = "".join(f"<br>{item}" for item in notices)
 
-        self.runner_status_text.setText(
-            headline
-            + f"<br><b>Aktueller Schritt:</b> {escape(self._phase_text(phase))}"
-            + f"<br><b>Firmwareübertragung:</b> {transfer_text}"
-            + f"<br><b>Sicherer Abbruch:</b> {abort_text}"
-            + f"<br><b>Recovery:</b> {escape(self._recovery_text(recovery))}"
-            + (
-                f"<br><b>Mainboard-Schritt:</b> {board_step}"
-                if isinstance(board_step, int) and board_step
-                else ""
+        if terminal and result_type == "success":
+            self.runner_status_text.setText(
+                "<b>Firmwareupdate erfolgreich abgeschlossen.</b>"
+                "<br>Firmware und Mainboard-Abschluss wurden bestätigt."
+                "<br>Recovery ist nicht erforderlich."
             )
-            + extra
-            + (f"<br><br>{escape(detail)}" if detail else "")
-        )
+        else:
+            self.runner_status_text.setText(
+                headline
+                + f"<br><b>Aktueller Schritt:</b> {escape(self._phase_text(phase))}"
+                + f"<br><b>Firmwareübertragung:</b> {transfer_text}"
+                + f"<br><b>Sicherer Abbruch:</b> {abort_text}"
+                + f"<br><b>Recovery:</b> {escape(self._recovery_text(recovery))}"
+                + (
+                    f"<br><b>Mainboard-Schritt:</b> {board_step}"
+                    if isinstance(board_step, int) and board_step
+                    else ""
+                )
+                + extra
+                + (f"<br><br>{escape(detail)}" if detail else "")
+            )
 
         # Re-apply the end-user cleanup policy after the status box update.
         self._buttons()
 
         if terminal:
             # Final runner JSON has already passed through _line() and therefore
-            # reached the automatic controller log.  It is now safe to close
-            # both established automatic log streams.
+            # reached the automatic controller log. It is now safe to close both
+            # established automatic log streams.
             QTimer.singleShot(0, self._finish_automatic_logs)
 
     def _done(self, op, code, output):
