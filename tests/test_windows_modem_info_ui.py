@@ -84,38 +84,43 @@ class WindowsModemInfoUiTests(unittest.TestCase):
             "STATISTICS_ADDRESS = 0x91B60",
             "BOARD_SOFTWARE_CODE_ADDRESS = 0x935E1",
             "BOARD_SOFTWARE_VERSION_ADDRESS = 0x935EA",
-            "BOARD_SOFTWARE_CODE_CLOUD_ADDRESS = 0x93615",
-            "BOARD_SOFTWARE_VERSION_CLOUD_ADDRESS = 0x9361E",
-            "DEVICE_SOFTWARE_CODE_ADDRESS = 0x93764",
-            "DEVICE_SOFTWARE_VERSION_ADDRESS = 0x93770",
-            "DEVICE_CODE_ADDRESS = 0x9347C",
-            "DTU_SOFTWARE_CODE_ADDRESS = 0x9348C",
-            "DTU_SOFTWARE_VERSION_ADDRESS = 0x93498",
-            "DTU_HARDWARE_CODE_ADDRESS = 0x934A4",
-            "SOCKET_STATUS_ADDRESS = 0x93038",
-            "GSM_STATUS_ADDRESS = 0x93040",
+            "BOARD_HARDWARE_CODE_ADDRESS = 0x935EF",
+            "BOARD_HARDWARE_VERSION_ADDRESS = 0x935F8",
+            "ICCID_ADDRESS = 0x9365C",
+            "IMSI_ADDRESS = 0x93674",
+            "IMEI_ADDRESS = 0x93688",
+            "MCC_ADDRESS = 0x98022",
+            "MNC_ADDRESS = 0x98024",
+            "LAC_ADDRESS = 0x98168",
+            "CELL_ID_ADDRESS = 0x9816C",
+            "SERVING_SYSTEM_ADDRESS = 0x981B4",
         ]
         for marker in expected:
             self.assertIn(marker, self.modem)
 
-    def test_modem_info_uses_fixed_width_device_code(self):
-        self.assertIn("DEVICE_CODE_SIZE = 15", self.modem)
-        self.assertIn("read_c_string(data, offset, size)", self.modem)
-        self.assertNotIn("DEVICE_CODE_SIZE = 16", self.modem)
+    def test_modem_identity_fields_have_explicit_fixed_sizes(self):
+        self.assertIn("ICCID_SIZE = 22", self.modem)
+        self.assertIn("IMSI_SIZE = 17", self.modem)
+        self.assertIn("IMEI_SIZE = 32", self.modem)
+        self.assertIn("BOARD_INFO_SIZE = 28", self.modem)
 
-    def test_lte_diagnostics_formats_modem_info(self):
-        self.assertIn('"Gerätecode"', self.lte_ui)
-        self.assertIn('"DTU Software"', self.lte_ui)
-        self.assertIn('"DTU Hardware"', self.lte_ui)
-        self.assertIn('"Mainboard aktuell"', self.lte_ui)
-        self.assertIn('"Mainboard Cloud"', self.lte_ui)
-        self.assertIn('"Fehlerstatus"', self.lte_ui)
-        self.assertIn('"Socket Status"', self.lte_ui)
-        self.assertIn('"GSM Status"', self.lte_ui)
+    def test_lte_diagnostics_formats_current_modem_info(self):
+        for marker in (
+            "<h3>Mainboard</h3>",
+            "Firmware:",
+            "<h3>Modem</h3>",
+            "IMEI:",
+            "<h3>SIM</h3>",
+            "ICCID:",
+            "Netzkennung MCC / MNC:",
+            "MQTT / Cloud:",
+            "ErrorStatue Bitmap:",
+        ):
+            self.assertIn(marker, self.lte_ui)
 
     def test_operator_decoder_stays_read_only(self):
-        self.assertIn("MCC_MNC_TO_OPERATOR", self.operators)
-        self.assertIn("operator_name", self.operators)
+        self.assertIn("OPERATORS", self.operators)
+        self.assertIn("lookup_operator", self.operators)
         self.assertNotIn("adb", self.operators.lower())
         self.assertNotIn("shell", self.operators.lower())
 
