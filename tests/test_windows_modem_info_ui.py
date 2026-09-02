@@ -17,6 +17,9 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         cls.maintenance_ui = Path(
             "updater/windows/foxair_updater_maintenance.py"
         ).read_text(encoding="utf-8")
+        cls.product_ui = Path(
+            "updater/windows/foxair_updater_runner_product.py"
+        ).read_text(encoding="utf-8")
         cls.operators = Path("updater/common/network_operators.py").read_text(
             encoding="utf-8"
         )
@@ -40,14 +43,15 @@ class WindowsModemInfoUiTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-    def test_windows_build_uses_maintenance_entrypoint(self):
+    def test_windows_build_uses_product_entrypoint_and_maintenance_backend(self):
         self.assertIn(
-            "updater\\windows\\foxair_updater_maintenance.py", self.build
+            "updater\\windows\\foxair_updater_runner_product.py", self.build
         )
         self.assertIn(
             "backend\\updater\\common\\phnix_statistics_maintenance.py",
             self.build,
         )
+        self.assertIn("phnix_statistics_counters.py", self.product_ui)
 
     def test_modem_info_is_read_only_process_memory_diagnostics(self):
         self.assertIn('"Modem Info / LTE Diagnose"', self.desktop)
@@ -185,7 +189,7 @@ class WindowsModemInfoUiTests(unittest.TestCase):
             "layout.addLayout(row)", 1
         )[0]
         self.assertNotIn('QPushButton("LTE-Modem-Log öffnen")', log_row)
-        self.assertIn('save_button = QPushButton("Log speichern…")', log_row)
+        self.assertIn('save_button = QPushButton("Protokoll speichern…")', log_row)
         self.assertIn('QPushButton("PHNIX Debugmonitor öffnen")', self.lte_ui)
         self.assertNotIn('QPushButton("LTE-Modem-Log öffnen")', self.app_ui)
         self.assertIn('setFixedHeight(20)', self.base_ui)
