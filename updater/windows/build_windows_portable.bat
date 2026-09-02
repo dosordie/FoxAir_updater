@@ -38,6 +38,23 @@ if /I not "!ICON_HASH!"=="%ICON_GIT_SHA%" (
 echo [OK] FoxAir_Control-Programmlogo verifiziert.
 
 echo [3/9] PySide6-GUI als One-Folder-App bauen ...
+rem PyInstaller muss den alten One-Folder-Build komplett entfernen koennen.
+rem Unter Windows bleiben geladene DLLs gesperrt, solange der Updater direkt
+rem aus dist\FoxAir_Updater noch laeuft. Das hier faengt den Fall vor PyInstaller
+rem mit einer verstaendlichen Meldung ab.
+if exist "%OUT%" (
+  rmdir /s /q "%OUT%" 2>nul
+  if exist "%OUT%" (
+    echo.
+    echo FEHLER: Der vorherige Portable-Ordner kann nicht geloescht werden:
+    echo   %CD%\%OUT%
+    echo.
+    echo Wahrscheinlich laeuft FoxAir_Updater.exe noch direkt aus diesem Ordner
+    echo und Windows haelt dadurch DLLs wie qico.dll gesperrt.
+    echo Bitte den FoxAir Updater vollstaendig schliessen und den Build erneut starten.
+    goto :err
+  )
+)
 %PY_CMD% -m PyInstaller ^
   --noconfirm ^
   --clean ^
