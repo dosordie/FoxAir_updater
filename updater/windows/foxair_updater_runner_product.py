@@ -112,8 +112,9 @@ class MainWindow(enduser.MainWindow):
             label = QLabel(label_text)
             if key == "power_reset":
                 label.setToolTip(
-                    "Power-Reset-t wird vom verifizierten Build bei jedem Start von phnixIot4G "
-                    "erhöht. Der Maintenance-Core kompensiert seinen eigenen notwendigen Neustart."
+                    "Power-Reset-t wird beim Start von phnixIot4G zunächst nur im RAM erhöht. "
+                    "Der Maintenance-Core berücksichtigt diesen Start und stellt danach auch den "
+                    "persistenten Dateiwert exakt auf den gewünschten Endwert."
                 )
             elif key == "active_reset":
                 label.setToolTip(
@@ -138,10 +139,12 @@ class MainWindow(enduser.MainWindow):
         insert_at += 1
 
         note = QLabel(
-            "<b>Power-Reset-t:</b> Der notwendige Dienstneustart würde diesen Zähler selbst um "
-            "1 erhöhen. Der Maintenance-Core schreibt deshalb intern den passenden Vorwert und "
-            "verifiziert nach dem Neustart den gewünschten Endwert. Ein Endwert 0 ist bei einem "
-            "laufenden phnixIot4G nicht möglich. Leer gelassene Felder bleiben unverändert."
+            "<b>Power-Reset-t:</b> Beim notwendigen Dienstneustart erhöht phnixIot4G den "
+            "Zähler zunächst im RAM. Der Maintenance-Core verwendet deshalb für den Start intern "
+            "den passenden Vorwert und setzt anschließend die persistente Datei auf denselben "
+            "gewünschten Endwert. Datei und RAM werden danach gemeinsam verifiziert. Ein Endwert "
+            "0 ist bei einem laufenden phnixIot4G nicht möglich. Leer gelassene Felder bleiben "
+            "unverändert."
         )
         note.setWordWrap(True)
         layout.insertWidget(insert_at, note)
