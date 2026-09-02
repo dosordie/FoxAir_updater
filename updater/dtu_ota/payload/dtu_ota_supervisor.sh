@@ -333,9 +333,12 @@ restart_service() {
         sleep 1
         current=$(service_pids)
         current_count=$(printf '%s\n' "$current" | awk '{print NF}')
-        if test "$current_count" -gt 1; then return 2; fi
         old_alive=false
         for old in $old_pids; do test -d "/proc/$old" && old_alive=true; done
+
+        # On real DTUs the watchdog can start the replacement process before
+        # the old PID has fully disappeared.  Multiple PIDs are therefore a
+        # tolerated transient state, never a successful terminal state.
         if test "$current_count" = 1; then
             new=$current
             is_old=false
@@ -351,6 +354,9 @@ restart_service() {
                     SERVICE_PID=$new
                     return 0
                 fi
+            else
+                stable_pid=
+                stable_count=0
             fi
         else
             stable_pid=
