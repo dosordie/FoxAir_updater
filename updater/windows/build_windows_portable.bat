@@ -10,8 +10,8 @@ set "ICON_FILE=updater\windows\app_icon.ico"
 set "ICON_URL=https://raw.githubusercontent.com/dosordie/FoxAir_Control/main/app_icon.ico"
 set "ICON_GIT_SHA=0ae281034216f69c4f18dbdb55cc70d8b78e47e1"
 
-rem Use the Python selected by PATH/setup-python.  The Windows py launcher may
-rem point at a different globally installed version (for example 3.14 on CI).
+rem Use the Python selected by PATH/setup-python. The Windows py launcher may
+rem point at a different globally installed version on CI.
 set "PY_CMD=python"
 
 rem Backend runtime intentionally pinned close to the tested Raspberry-Pi Python 3.11 line.
@@ -38,7 +38,6 @@ if /I not "!ICON_HASH!"=="%ICON_GIT_SHA%" (
 echo [OK] FoxAir_Control-Programmlogo verifiziert.
 
 echo [3/9] PySide6-GUI als One-Folder-App bauen ...
-rem Produktlogik bleibt in updater\windows\foxair_updater_runner_product.py; der Release-Entrypoint erweitert sie nur um Diagnoseexport.
 %PY_CMD% -m PyInstaller ^
   --noconfirm ^
   --clean ^
@@ -53,54 +52,12 @@ if not exist "%OUT%\%APP_NAME%.exe" (
 )
 copy /y "%ICON_FILE%" "%OUT%\app_icon.ico" >nul || goto :err
 
-echo [4/9] Gemeinsames Backend und produktiven DTU-Runner kopieren ...
-if exist "%OUT%\backend" rmdir /s /q "%OUT%\backend"
-mkdir "%OUT%\backend\tools\phnix_ota" || goto :err
-mkdir "%OUT%\backend\tools\phnix_traffic" || goto :err
-mkdir "%OUT%\backend\updater\common" || goto :err
-mkdir "%OUT%\backend\updater\dtu_ota\payload" || goto :err
+echo [4/9] Gemeinsames Backend und produktiven DTU-Runner vorbereiten ...
+rem Copy/Shebang-Transformation/Hash-Verifikation liegen absichtlich in Python.
+rem Damit gibt es hier keine verschachtelte cmd/PowerShell-Quoting-Logik mehr.
+%PY_CMD% updater\windows\prepare_windows_backend.py --root . --out "%OUT%" || goto :err
 
-copy /y updater\__init__.py "%OUT%\backend\updater\__init__.py" >nul || goto :err
-xcopy /y /i updater\common\*.py "%OUT%\backend\updater\common\" >nul || goto :err
-
-rem Der verifizierte Controller-Core bleibt fuer Diagnose-/Bestandsfunktionen erhalten.
-copy /y tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" >nul || goto :err
-copy /y tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :err
-copy /y updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :err
-copy /y tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\" >nul || goto :err
-rem Legacy Controller validiert historisch explizit #!/bin/sh. Die kanonische Runner-Version nutzt
-rem #!/system/bin/sh. Fuer den Legacy-Restore wird deshalb nur die Shebang der separaten Paketkopie
-rem angepasst; der gepruefte Hook-Inhalt darunter bleibt identisch.
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p='updater\dtu_ota\payload\phnix_ota_runtime_hook'; $o='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $t=[IO.File]::ReadAllText($p); if(-not $t.StartsWith('#!/system/bin/sh')){throw 'Unerwartete Hook-Shebang'}; $i=$t.IndexOf([char]10); if($i -lt 0){throw 'Hook hat keine erste Zeile'}; $rest=$t.Substring($i+1); [IO.File]::WriteAllText($o,('#!/bin/sh'+[char]10+$rest),(New-Object Text.UTF8Encoding($false)))" || goto :err
-copy /y tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\" >nul || goto :err
-
-rem Produktiver OTA-Pfad: Host paketiert/liest Status; Supervisor und Hook werden auf die DTU uebertragen.
-xcopy /y /i updater\dtu_ota\*.py "%OUT%\backend\updater\dtu_ota\" >nul || goto :err
-copy /y updater\dtu_ota\payload\dtu_ota_supervisor.sh "%OUT%\backend\updater\dtu_ota\payload\dtu_ota_supervisor.sh" >nul || goto :err
-copy /y updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\updater\dtu_ota\payload\phnix_ota_runtime_hook" >nul || goto :err
-
-echo [5/9] SHA-256 des kopierten Backends pruefen ...
-rem FC /B liefert auf einigen Windows-Versionen fuer einzelne leere/sonderbehandelte
-rem Dateien unzuverlaessige Exitcodes.  Wir vergleichen deshalb die Inhalte per SHA-256
-rem und geben im Fehlerfall den exakten Dateinamen aus.
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop';" ^
-  "$pairs=@(" ^
-  "@('tools\phnix_ota\phnix_local_ota_controller.py','%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py')," ^
-  "@('tools\phnix_ota\phnix_local_ota_controller_hardened.py','%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py')," ^
-  "@('updater\windows\phnix_windows_controller_wrapper.py','%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py')," ^
-  "@('tools\phnix_ota\create_firmware_manifest.py','%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py')," ^
-  "@('tools\phnix_traffic\foxair_traffic_trace','%OUT%\backend\tools\phnix_traffic\foxair_traffic_trace')," ^
-  "@('updater\dtu_ota\payload\dtu_ota_supervisor.sh','%OUT%\backend\updater\dtu_ota\payload\dtu_ota_supervisor.sh')," ^
-  "@('updater\dtu_ota\payload\phnix_ota_runtime_hook','%OUT%\backend\updater\dtu_ota\payload\phnix_ota_runtime_hook')" ^
-  ");" ^
-  "$pairs += Get-ChildItem 'updater\dtu_ota\*.py' | ForEach-Object { ,@($_.FullName,(Join-Path '%OUT%\backend\updater\dtu_ota' $_.Name)) };" ^
-  "$pairs += Get-ChildItem 'updater\common\*.py' | ForEach-Object { ,@($_.FullName,(Join-Path '%OUT%\backend\updater\common' $_.Name)) };" ^
-  "foreach($p in $pairs){if(-not(Test-Path $p[1])){Write-Error ('Backend-Datei fehlt: '+$p[1]); exit 1}; $a=(Get-FileHash -Algorithm SHA256 $p[0]).Hash; $b=(Get-FileHash -Algorithm SHA256 $p[1]).Hash; if($a -ne $b){Write-Error ('Backend-Datei weicht ab: '+$p[0]+' -> '+$p[1]); exit 1}};" ^
-  "$legacy='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $bytes=[IO.File]::ReadAllBytes($legacy); $prefix=[Text.Encoding]::ASCII.GetString($bytes,0,[Math]::Min(10,$bytes.Length)); if(-not $prefix.StartsWith(('#!/bin/sh'+[char]10))){Write-Error 'Legacy-Restore-Hook hat keinen exakten LF-Header #!/bin/sh'; exit 1}" || goto :backenderr
-
-echo [OK] Gemeinsamer Controller/Common-Code und produktiver DTU-Runner wurden inhaltlich verifiziert.
+echo [5/9] Backend-Verifikation abgeschlossen.
 
 echo [6/9] Private Python-%PY_EMBED_VERSION%-Runtime vorbereiten ...
 if not exist "%CACHE%" mkdir "%CACHE%"
@@ -161,11 +118,6 @@ echo   Portable ZIP:    dist\%APP_NAME%_Portable_v%APP_VERSION%.zip
 echo.
 echo ADB ist NICHT enthalten. Der Anwender waehlt eine separat von Google bezogene adb.exe aus.
 goto :eof
-
-:backenderr
-echo.
-echo FEHLER: Kopiertes Backend konnte nicht inhaltlich verifiziert werden.
-goto :err
 
 :err
 echo.
