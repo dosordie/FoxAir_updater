@@ -6,14 +6,35 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QCheckBox, QFileDialog, QMessageBox, QPushButton
 
 import foxair_updater_gui as base
 import foxair_updater_runner_product as product
 
 
+CLEAN_DTU_CONFIRM_TOKEN = "FOXAIR-DTU-CLEAN"
+
+
 class MainWindow(product.MainWindow):
-    """Release entrypoint with one-click support diagnostics."""
+    """Release entrypoint with one-click support diagnostics and safe DTU cleanup."""
+
+    def _status(self):
+        widget = super()._status()
+        layout = widget.layout()
+        insert_at = layout.indexOf(self.restore_btn)
+        if insert_at < 0:
+            insert_at = max(0, layout.count() - 1)
+
+        self.clean_dtu_after_restore = QCheckBox(
+            "Danach alle FoxAir-Updater-Dateien vom LTE-Modem entfernen"
+        )
+        self.clean_dtu_after_restore.setToolTip(
+            "Nur verwenden, wenn kein Update läuft. Entfernt ausschließlich Arbeitsdateien, "
+            "Hooks, temporäre Statusdateien und Runner-Verzeichnisse des FoxAir Updaters. "
+            "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik werden nicht gelöscht."
+        )
+        layout.insertWidget(insert_at, self.clean_dtu_after_restore)
+        return widget
 
     def _ui(self):
         super()._ui()
@@ -40,6 +61,84 @@ class MainWindow(product.MainWindow):
     @staticmethod
     def _diagnostics_core_path() -> Path:
         return base.backend_dir() / "updater/dtu_ota/diagnostics.py"
+
+    @staticmethod
+    def _cleanup_core_path() -> Path:
+        return base.backend_dir() / "updater/dtu_ota/cleanup.py"
+
+    def _restore(self):
+        if not getattr(self, "clean_dtu_after_restore", None) or not self.clean_dtu_after_restore.isChecked():
+            super()._restore()
+            return
+        if self.busy:
+            return
+        adb = self._require_adb()
+        if not adb:
+            return
+        core = self._cleanup_core_path()
+        if not core.is_file():
+            QMessageBox.critical(
+                self,
+                "DTU-Bereinigung fehlt",
+                f"Der Cleanup-Core wurde nicht gefunden:\n{core}",
+            )
+            return
+
+        if (
+            QMessageBox.warning(
+                self,
+                "Originalzustand wiederherstellen und DTU bereinigen?",
+                "Der Updater prüft zuerst fail-closed, dass kein FoxAir-Mainboard-Update mehr "
+                "läuft. Anschließend wird der normale Originalbetrieb wiederhergestellt und "
+                "danach werden ausschließlich die vom FoxAir Updater angelegten Arbeitsdateien "
+                "vom LTE-Modem entfernt.\n\n"
+                "Nicht gelöscht werden originale PHNIX-Dateien, Firmware, OTA_INFO oder die "
+                "Statistikdatei. Bereits entstandene Statistikzähler oder Cloud-/Serverhistorie "
+                "können dadurch ebenfalls nicht rückwirkend entfernt werden.\n\n"
+                "DTU jetzt wiederherstellen und bereinigen?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            != QMessageBox.Yes
+        ):
+            return
+
+        python = str(base.backend_python())
+        adb_path = str(adb)
+        cleanup_check = [python, str(core), "--adb", adb_path, "check"]
+        restore = [
+            python,
+            str(self.controller),
+            "--adb",
+            adb_path,
+            "--output",
+            "json",
+            "--no-color",
+            "run",
+            "--restore",
+            "original",
+        ]
+        cleanup = [
+            python,
+            str(core),
+            "--adb",
+            adb_path,
+            "--execute",
+            "--confirm",
+            CLEAN_DTU_CONFIRM_TOKEN,
+            "clean",
+        ]
+        self._run_sequence(
+            "restore-clean",
+            [cleanup_check, restore, cleanup],
+            str(base.backend_dir()),
+        )
+
+    def _buttons(self):
+        super()._buttons()
+        checkbox = getattr(self, "clean_dtu_after_restore", None)
+        if checkbox is not None:
+            checkbox.setEnabled(not self.busy and self._adb_ready())
 
     def _save_diagnostic_bundle(self) -> None:
         if self.busy:
@@ -96,7 +195,43 @@ class MainWindow(product.MainWindow):
             command += ["--run-id", run_id.strip()]
         self._run("runner-diagnostics", command, str(base.backend_dir()))
 
+    @staticmethod
+    def _last_json_record(output: str) -> dict | None:
+        for line in reversed(output.splitlines()):
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                return value
+        return None
+
     def _done(self, op, code, output):
+        if op == "restore-clean":
+            super()._done("handled-result", code, output)
+            parsed = self._last_json_record(output)
+            if code == 0 and parsed and parsed.get("ok") is True:
+                QMessageBox.information(
+                    self,
+                    "DTU bereinigt",
+                    "Der normale Originalbetrieb wurde wiederhergestellt und alle bekannten "
+                    "FoxAir-Updater-Arbeitsdateien wurden vom LTE-Modem entfernt.\n\n"
+                    "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik wurden nicht verändert.",
+                )
+                self.clean_dtu_after_restore.setChecked(False)
+                return
+            detail = parsed.get("error") if isinstance(parsed, dict) else None
+            QMessageBox.critical(
+                self,
+                "DTU-Bereinigung nicht durchgeführt",
+                "Die Wiederherstellung/Bereinigung wurde abgebrochen. "
+                "Wenn ein Update oder ein nicht eindeutig sicherer OTA-Zustand erkannt wird, "
+                "löscht der Cleanup-Core absichtlich nichts."
+                + (f"\n\n{detail}" if detail else "")
+                + "\n\nDetails stehen im Protokoll.",
+            )
+            return
+
         if op != "runner-diagnostics":
             super()._done(op, code, output)
             return
