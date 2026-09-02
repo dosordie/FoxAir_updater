@@ -9,6 +9,7 @@ MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=10
 SPARSE_PATHS=(
     updater/common
+    updater/dtu_ota
     updater/linux
     tools/phnix_ota
     docs/HowTo
@@ -156,7 +157,7 @@ chmod 755 \
     "$INSTALL_DIR/foxair-updater" \
     "$INSTALL_DIR/tools/phnix_ota/phnix_local_ota_controller.py" \
     "$INSTALL_DIR/tools/phnix_ota/create_firmware_manifest.py" \
-    "$INSTALL_DIR/tools/phnix_ota/phnix_ota_runtime_hook" \
+    "$INSTALL_DIR/updater/dtu_ota/payload/phnix_ota_runtime_hook" \
     "$INSTALL_DIR/updater/linux/install.sh"
 ok "Dateirechte gesetzt"
 

@@ -8,7 +8,7 @@ class Issue9ModemMetadataUiTests(unittest.TestCase):
         cls.ui = Path(
             "updater/windows/foxair_updater_operator_display.py"
         ).read_text(encoding="utf-8")
-        cls.hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(
+        cls.hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(
             encoding="utf-8"
         )
 

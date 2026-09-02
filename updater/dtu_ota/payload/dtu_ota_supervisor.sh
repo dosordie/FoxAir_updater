@@ -76,6 +76,11 @@ C357_SENT=false
 C5A8_SENT=false
 STATE_RESTORED=false
 RESULT_TYPE=
+SERVICE_RESTART_REQUESTED=false
+SERVICE_RESTART_VERIFIED=false
+MQTT_ISOLATION_REQUESTED=false
+MQTT_ISOLATED=false
+BOOT_ID=
 
 load_status_state() {
     test -r "$STATUS" || return 0
@@ -90,6 +95,11 @@ load_status_state() {
     v=$(status_bool c357_sent); test -n "$v" && C357_SENT=$v
     v=$(status_bool c5a8_sent); test -n "$v" && C5A8_SENT=$v
     v=$(status_bool state_restored); test -n "$v" && STATE_RESTORED=$v
+    v=$(status_bool service_restart_requested); test -n "$v" && SERVICE_RESTART_REQUESTED=$v
+    v=$(status_bool service_restart_verified); test -n "$v" && SERVICE_RESTART_VERIFIED=$v
+    v=$(status_bool mqtt_isolation_requested); test -n "$v" && MQTT_ISOLATION_REQUESTED=$v
+    v=$(status_bool mqtt_isolated); test -n "$v" && MQTT_ISOLATED=$v
+    v=$(status_string boot_id); test -n "$v" && BOOT_ID=$v
     v=$(sed -n 's/.*"c36e_status":\([0-9][0-9]*\).*/\1/p' "$STATUS" 2>/dev/null | head -n 1)
     test -n "$v" && C36E_STATUS=$v
 }
@@ -100,22 +110,43 @@ write_status() {
     test "$STARTED_AT" != 0 || STARTED_AT=$now
     tmp=$STATUS.tmp.$$
     case "$SERVICE_PID" in ''|*[!0-9]*) SERVICE_PID=0 ;; esac
-    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s}\n' \
+    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s,"service_restart_requested":%s,"service_restart_verified":%s,"mqtt_isolation_requested":%s,"mqtt_isolated":%s,"boot_id":"%s"}\n' \
         "$SCHEMA" "$RUN_ID" "$state" "$phase" "$terminal" "$PROGRESS" "$OFFSET" "$LENGTH" \
         "$TRANSFER_STARTED" "$ORIGINAL_AUTH" "$ABORT_ALLOWED" "$RECOVERY" \
         "$(json_escape "$reason")" "$(json_escape "$detail")" "$RESULT_TYPE" "$$" "$HOOK_PID" "$SERVICE_PID" \
         "$STARTED_AT" "$now" "$now" "$PACKAGE_SHA" "$FIRMWARE_SHA" "$BOARD_STEP" "$C36E_SEEN" "$C36E_STATUS" \
-        "$C350_SENT" "$C357_SENT" "$C5A8_SENT" "$STATE_RESTORED" > "$tmp" || return 1
-    mv "$tmp" "$STATUS"
+        "$C350_SENT" "$C357_SENT" "$C5A8_SENT" "$STATE_RESTORED" \
+        "$SERVICE_RESTART_REQUESTED" "$SERVICE_RESTART_VERIFIED" "$MQTT_ISOLATION_REQUESTED" "$MQTT_ISOLATED" \
+        "$(json_escape "$BOOT_ID")" > "$tmp" || return 1
+    mv "$tmp" "$STATUS" || return 1
+}
+
+persistence_failure() {
+    RECOVERY=required ABORT_ALLOWED=false
+    printf '%s\n' "$(date +%s) status persistence failed; retaining lock and HTTP" >> "$LOG" 2>/dev/null || true
+    touch "$RUN_DIR/status-persistence-failed" 2>/dev/null || true
+    exit 111
+}
+
+must_write_status() {
+    write_status "$@" || persistence_failure
 }
 
 terminal_result() {
     RESULT_TYPE=$1 state=$2 phase=$3 rc=$4 reason=$5 detail=$6
-    write_status "$state" "$phase" true "$reason" "$detail" || true
-    cp "$STATUS" "$RESULT.tmp.$$" 2>/dev/null && mv "$RESULT.tmp.$$" "$RESULT" 2>/dev/null || true
+    must_write_status "$state" "$phase" true "$reason" "$detail"
+    cp "$STATUS" "$RESULT.tmp.$$" 2>/dev/null && mv "$RESULT.tmp.$$" "$RESULT" 2>/dev/null || persistence_failure
     log_event "terminal result=$RESULT_TYPE phase=$phase reason=$reason"
     release_lock
     stop_http
+    exit "$rc"
+}
+
+guarded_result() {
+    RESULT_TYPE=$1 phase=$2 rc=$3 reason=$4 detail=$5
+    RECOVERY=required ABORT_ALLOWED=false
+    must_write_status running "$phase" false "$reason" "$detail"
+    log_event "guarded result=$RESULT_TYPE phase=$phase reason=$reason; lock and HTTP retained"
     exit "$rc"
 }
 
@@ -141,14 +172,34 @@ acquire_lock() {
     if ! mkdir "$LOCK" 2>/dev/null; then
         owner=$(cat "$LOCK/run_id" 2>/dev/null || true)
         owner_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
-        if runner_identity "$owner_pid" "$owner"; then
-            terminal_result failed failed lock 20 active_run_exists "Active run $owner owns PID $owner_pid."
-        fi
-        terminal_result orphaned failed stale-lock 21 stale_lock "Lock owner cannot be proven; refusing to remove it automatically."
+        runner_identity "$owner_pid" "$owner" && return 20
+        return 21
     fi
-    printf '%s\n' "$RUN_ID" > "$LOCK/run_id" || return 1
-    printf '%s\n' "$$" > "$LOCK/pid" || return 1
-    date +%s > "$LOCK/started_at" || return 1
+    printf '%s\n' "$RUN_ID" > "$LOCK/run_id" || return 22
+    printf '%s\n' "$$" > "$LOCK/pid" || return 22
+    date +%s > "$LOCK/started_at" || return 22
+}
+
+boot_fingerprint() {
+    value=$(tr -d '\r\n ' < /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+    test -n "$value" || value=$(awk '/^btime / {print "btime-" $2}' /proc/stat 2>/dev/null | head -n 1)
+    test -n "$value" || value=$(awk '{print "pid1-" $22}' /proc/1/stat 2>/dev/null)
+    printf '%s\n' "$value"
+}
+
+mqtt_guard_active() {
+    iptables -S OUTPUT 2>/dev/null | grep -q -- '-o rmnet_data0 .*--dport 1883 .*DROP' || return 1
+    iptables -S INPUT 2>/dev/null | grep -q -- '-i rmnet_data0 .*--sport 1883 .*DROP'
+}
+
+restore_original_confirmed() {
+    restore_status=$1
+    rm -f "$restore_status"
+    "$SHELL_BIN" "$HOOK" restore-original --status "$restore_status" >> "$HOOK_LOG" 2>&1 || return 1
+    restore_phase=$(sed -n 's/.*"phase":"\([^"]*\)".*/\1/p' "$restore_status" 2>/dev/null | head -n 1)
+    restore_terminal=$(sed -n 's/.*"terminal":\(true\|false\).*/\1/p' "$restore_status" 2>/dev/null | head -n 1)
+    restore_required=$(sed -n 's/.*"recovery_required":\(true\|false\).*/\1/p' "$restore_status" 2>/dev/null | head -n 1)
+    test "$restore_phase" = original-restored && test "$restore_terminal" = true && test "$restore_required" = false
 }
 
 upper_hash() { "$1" "$2" 2>/dev/null | awk '{print toupper($1)}'; }
@@ -240,25 +291,39 @@ load_package() {
 }
 
 preflight_action() {
+    if test -d "$LOCK"; then
+        owner=$(cat "$LOCK/run_id" 2>/dev/null || true)
+        owner_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
+        if runner_identity "$owner_pid" "$owner" || test -f "$RUNS/$owner/status-persistence-failed"; then
+            echo "ERROR: active run $owner blocks prepare" >&2
+            exit 20
+        fi
+        echo "ERROR: stale or ambiguous active lock blocks prepare" >&2
+        exit 21
+    fi
     mkdir -p "$RUN_DIR" "$PAYLOAD" "$RUN_DIR/state" || exit 3
     load_package; rc=$?
     if test "$rc" != 0; then
         RECOVERY=not-required RESULT_TYPE=failed
-        write_status failed package-preflight true package_validation_failed "DTU package validation failed with code $rc before any service or OTA action."
-        cp "$STATUS" "$RESULT" 2>/dev/null || true
+        must_write_status failed package-preflight true package_validation_failed "DTU package validation failed with code $rc before any service or OTA action."
+        cp "$STATUS" "$RESULT" 2>/dev/null || persistence_failure
         exit "$rc"
     fi
     printf '%s\n' "$RUN_ID" > "$BASE/last_run_id.tmp.$$" && mv "$BASE/last_run_id.tmp.$$" "$BASE/last_run_id"
     chmod 700 "$HOOK" "$0" 2>/dev/null || exit 75
-    write_status prepared dry-run-complete false "" "Package, hashes, storage, service build and prerequisites verified locally on the DTU; no GDB attach or OTA action occurred."
+    SERVICE_RESTART_REQUESTED=$RESTART_SERVICE
+    MQTT_ISOLATION_REQUESTED=$ISOLATE_MQTT
+    BOOT_ID=$(boot_fingerprint)
+    must_write_status prepared dry-run-complete false "" "Package, hashes, storage, service build and prerequisites verified locally on the DTU; no GDB attach or OTA action occurred."
 }
 
 restart_service() {
     old_pids=$(service_pids)
     test -n "$old_pids" || return 1
     for old in $old_pids; do
+        exe=$(readlink "/proc/$old/exe" 2>/dev/null || true)
         cmd=$(tr '\000' ' ' < "/proc/$old/cmdline" 2>/dev/null || true)
-        case "$cmd" in *phnixIot4G*) ;; *) return 1 ;; esac
+        case "$exe:$cmd" in *phnixIot4G*) ;; *) return 1 ;; esac
     done
     for old in $old_pids; do kill -TERM "$old" 2>/dev/null || return 1; done
     count=0
@@ -269,14 +334,20 @@ restart_service() {
         current=$(service_pids)
         current_count=$(printf '%s\n' "$current" | awk '{print NF}')
         if test "$current_count" -gt 1; then return 2; fi
+        old_alive=false
+        for old in $old_pids; do test -d "/proc/$old" && old_alive=true; done
         if test "$current_count" = 1; then
             new=$current
             is_old=false
             for old in $old_pids; do test "$new" = "$old" && is_old=true; done
-            if test "$is_old" = false; then
+            if test "$is_old" = false && test "$old_alive" = false; then
                 if test "$stable_pid" = "$new"; then stable_count=$((stable_count + 1)); else stable_pid=$new; stable_count=1; fi
                 if test "$stable_count" -ge 10; then
                     test "$(awk '/^TracerPid:/ {print $2}' /proc/$new/status 2>/dev/null)" = 0 || return 3
+                    for proc in /proc/[0-9]*; do
+                        dbg=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
+                        case "$dbg" in *gdbserver*|*'/gdb '*|*' gdb '*) return 4 ;; esac
+                    done
                     SERVICE_PID=$new
                     return 0
                 fi
@@ -335,22 +406,36 @@ refresh_progress() {
 run_action() {
     mkdir -p "$RUN_DIR/state" || exit 3
     load_status_state
+    test "$(status_string state)" = prepared && test "$(status_bool terminal)" = false || {
+        echo "ERROR: run must be prepared and non-terminal before start" >&2
+        exit 23
+    }
+    acquire_lock; lock_rc=$?
+    case "$lock_rc" in
+        0) ;;
+        20) echo "ERROR: another live run owns the active lock" >&2; exit 20 ;;
+        21) echo "ERROR: stale or ambiguous active lock; refusing start" >&2; exit 21 ;;
+        *) echo "ERROR: active lock could not be persisted" >&2; exit 22 ;;
+    esac
     load_package; rc=$?
     test "$rc" = 0 || terminal_result failed failed package-preflight "$rc" package_validation_failed "Package changed or became invalid before start (code $rc)."
-    acquire_lock || terminal_result failed failed lock 22 lock_write_failed "Could not persist lock ownership."
     printf '%s\n' "$$" > "$PID_FILE"
-    printf '%s\n' "$RUN_ID" > "$BASE/last_run_id.tmp.$$" && mv "$BASE/last_run_id.tmp.$$" "$BASE/last_run_id"
-    write_status running local-preparation false "" "DTU supervisor owns the prepared run."
+    printf '%s\n' "$RUN_ID" > "$BASE/last_run_id.tmp.$$" && mv "$BASE/last_run_id.tmp.$$" "$BASE/last_run_id" || persistence_failure
+    SERVICE_RESTART_REQUESTED=$RESTART_SERVICE
+    MQTT_ISOLATION_REQUESTED=$ISOLATE_MQTT
+    BOOT_ID=$(boot_fingerprint)
+    must_write_status running local-preparation false "" "DTU supervisor owns the prepared run."
     cp -p /data/phnixIot_device_OTA_INFO "$RUN_DIR/state/OTA_INFO" || terminal_result failed failed backup 80 backup_failed "Could not persist OTA_INFO backup."
     cp -p /data/phnixIot_device_statisic "$RUN_DIR/state/statisic" || terminal_result failed failed backup 80 backup_failed "Could not persist statistics backup."
     sha256sum "$RUN_DIR/state/OTA_INFO" "$RUN_DIR/state/statisic" > "$RUN_DIR/state/SHA256SUMS"
     if test "$RESTART_SERVICE" = true; then
-        write_status running service-restart-wait false "" "Controlled service restart requested; waiting for exactly one new stable, untraced process."
+        must_write_status running service-restart-wait false "" "Controlled service restart requested; waiting for exactly one new stable, untraced process."
         restart_service; restart_rc=$?
         test "$restart_rc" = 0 || terminal_result failed failed service-restart 81 service_restart_failed "Original service restart was not uniquely stable (code $restart_rc); no OTA action was started."
         load_package; rc=$?
         test "$rc" = 0 || terminal_result failed failed post-restart-preflight "$rc" post_restart_preflight_failed "Prerequisites failed after local service restart (code $rc)."
-        write_status running service-restart-verified false "" "Exactly one new stable original-service PID was verified after restart."
+        SERVICE_RESTART_VERIFIED=true
+        must_write_status running service-restart-verified false "" "Exactly one new stable original-service PID was verified after restart."
     fi
     start_http || terminal_result failed failed staging 82 local_http_failed "Local firmware HTTP staging verification failed."
     rm -f "$HOOK_STATUS" "$ABORT"
@@ -359,10 +444,11 @@ run_action() {
     "$SHELL_BIN" "$HOOK" $args >> "$HOOK_LOG" 2>&1 &
     HOOK_PID=$!
     printf '%s\n' "$HOOK_PID" > "$RUN_DIR/hook.pid"
-    write_status running hook-started false "" "Runtime hook is a local child of the autonomous DTU supervisor."
+    must_write_status running hook-started false "" "Runtime hook is a local child of the autonomous DTU supervisor."
     post_abort_logged=0
     while :; do
         refresh_progress
+        if mqtt_guard_active; then MQTT_ISOLATED=true; else MQTT_ISOLATED=false; fi
         test -e "$HOOK_RUNTIME/original-service-owns" && ORIGINAL_AUTH=true ABORT_ALLOWED=false
         if test -e "$HOOK_RUNTIME/transfer-started"; then
             TRANSFER_STARTED=true ORIGINAL_AUTH=true ABORT_ALLOWED=false C5A8_SENT=true
@@ -391,9 +477,12 @@ run_action() {
         if test -f "$ABORT"; then
             if test "$ABORT_ALLOWED" = true; then
                 log_event "abort request accepted before point-of-no-return"
-                if kill -0 "$HOOK_PID" 2>/dev/null; then "$SHELL_BIN" "$HOOK" restore-original --status "$RUN_DIR/abort-status.json" >> "$HOOK_LOG" 2>&1 || true; fi
-                RECOVERY=completed STATE_RESTORED=true
-                terminal_result aborted-before-transfer aborted aborted-before-transfer 130 abort_requested "Abort request completed using the validated pre-transfer recovery path."
+                if kill -0 "$HOOK_PID" 2>/dev/null && restore_original_confirmed "$RUN_DIR/abort-status.json"; then
+                    RECOVERY=completed STATE_RESTORED=true
+                    terminal_result aborted-before-transfer aborted aborted-before-transfer 130 abort_requested "Abort request completed using the validated pre-transfer recovery path."
+                fi
+                STATE_RESTORED=false
+                guarded_result recovery-required recovery-required 131 restore_unconfirmed "Abort restore was not unambiguously confirmed; lock and diagnostics retained."
             elif test "$post_abort_logged" = 0; then
                 post_abort_logged=1
                 log_event "abort request refused after authority handoff; observation continues"
@@ -402,6 +491,7 @@ run_action() {
         if test "$terminal" = true; then
             case "$phase" in
                 same-version|c350-same-version)
+                    restore_original_confirmed "$RUN_DIR/recovery-status.json" || guarded_result recovery-required same-version-restore 94 restore_unconfirmed "Same-version ended but original-restored could not be reconfirmed."
                     C350_SENT=true C36E_SEEN=true C36E_STATUS=0 STATE_RESTORED=true RECOVERY=completed PROGRESS=0
                     terminal_result same-version completed same-version 0 "" "Mainboard rejected the equal version safely; no firmware blocks were transferred."
                     ;;
@@ -415,6 +505,7 @@ run_action() {
                     terminal_result failed failed failed 91 board_update_failed "Mainboard failure report reached the validated terminal boundary."
                     ;;
                 precondition-rejected|parser-rejected)
+                    restore_original_confirmed "$RUN_DIR/recovery-status.json" || guarded_result recovery-required "$phase" 94 restore_unconfirmed "Pre-authority rejection restore was not unambiguously confirmed."
                     RECOVERY=completed STATE_RESTORED=true
                     terminal_result recovery-completed failed "$phase" 92 "$phase" "OTA was rejected before authority handoff and persistent state was restored."
                     ;;
@@ -427,16 +518,18 @@ run_action() {
         if ! kill -0 "$HOOK_PID" 2>/dev/null; then
             wait "$HOOK_PID" 2>/dev/null; hook_rc=$?
             if test "$ORIGINAL_AUTH" = true; then
-                RECOVERY=required ABORT_ALLOWED=false
-                terminal_result recovery-required failed original-service-active-unmonitored "$hook_rc" hook_monitor_lost "Hook ended after authority handoff; the original service was not stopped or restored."
+                guarded_result recovery-required original-service-active-unmonitored "$hook_rc" hook_monitor_lost "Hook ended after authority handoff; original service, HTTP and lock remain untouched."
             fi
-            "$SHELL_BIN" "$HOOK" restore-original --status "$RUN_DIR/recovery-status.json" >> "$HOOK_LOG" 2>&1 || true
-            RECOVERY=completed STATE_RESTORED=true
-            terminal_result recovery-completed failed hook-ended-before-authority "$hook_rc" hook_ended "Hook ended before authority handoff; validated pre-transfer recovery was requested."
+            if restore_original_confirmed "$RUN_DIR/recovery-status.json"; then
+                RECOVERY=completed STATE_RESTORED=true
+                terminal_result recovery-completed failed hook-ended-before-authority "$hook_rc" hook_ended "Hook ended before authority handoff and original-restored was confirmed."
+            fi
+            STATE_RESTORED=false
+            guarded_result recovery-required hook-ended-before-authority "$hook_rc" restore_unconfirmed "Hook ended before authority and restore was not unambiguously confirmed."
         fi
         detail="Autonomous DTU OTA is running."
         test -f "$ABORT" && test "$ABORT_ALLOWED" = false && detail="Abort request recorded but refused after point-of-no-return; original service continues."
-        write_status running "$phase" false "" "$detail" || true
+        must_write_status running "$phase" false "" "$detail"
         sleep 2
     done
 }
@@ -444,20 +537,33 @@ run_action() {
 classify_action() {
     test -r "$STATUS" || exit 0
     test "$(status_bool terminal)" = true && exit 0
+    test -f "$RUN_DIR/status-persistence-failed" && exit 0
     # A completed preflight is intentionally non-terminal because start may
     # follow later.  The short-lived preflight PID is not an orphaned OTA.
     test "$(status_string state)" = prepared && exit 0
     pid=$(sed -n 's/.*"runner_pid":\([0-9][0-9]*\).*/\1/p' "$STATUS" | head -n 1)
     runner_identity "$pid" "$RUN_ID" && exit 0
     load_status_state
-    RECOVERY=required ABORT_ALLOWED=false RESULT_TYPE=reboot-detected
+    saved_boot=$BOOT_ID
+    current_boot=$(boot_fingerprint)
+    if test -n "$saved_boot" && test "$saved_boot" != "$current_boot"; then
+        loss_phase=reboot-detected
+        loss_reason=reboot_detected
+        loss_detail="DTU boot fingerprint changed while the runner was active."
+    else
+        loss_phase=runner-lost
+        loss_reason=runner_lost
+        loss_detail="Runner process disappeared during the same DTU boot."
+    fi
+    RECOVERY=required ABORT_ALLOWED=false RESULT_TYPE=$loss_phase
     if test "$TRANSFER_STARTED" = true || test "$ORIGINAL_AUTH" = true; then
-        write_status failed reboot-detected true reboot_detected "Runner disappeared after authority handoff; no automatic resume or generic restore is attempted."
+        must_write_status running "$loss_phase" false "$loss_reason" "$loss_detail After authority handoff lock and HTTP remain retained; no automatic restore is attempted."
+        exit 0
     else
         RESULT_TYPE=orphaned ABORT_ALLOWED=true
-        write_status failed orphaned-run true orphaned_run "Runner disappeared before transfer; state is classified but not automatically resumed."
+        must_write_status failed orphaned-run true orphaned_run "$loss_detail It occurred before authority handoff and is not automatically resumed."
     fi
-    cp "$STATUS" "$RESULT.tmp.$$" 2>/dev/null && mv "$RESULT.tmp.$$" "$RESULT" 2>/dev/null || true
+    cp "$STATUS" "$RESULT.tmp.$$" 2>/dev/null && mv "$RESULT.tmp.$$" "$RESULT" 2>/dev/null || persistence_failure
     # A dead owner must not block every future run.  Retain the complete run
     # directory/result for diagnosis, but clear only the exactly matched,
     # proven-dead lock.  No OTA state is restored and no run is resumed.
