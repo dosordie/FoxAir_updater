@@ -41,7 +41,7 @@ class MainWindow(legacy.MainWindow):
         self._runner_timer = QTimer(self)
         self._runner_timer.setInterval(RUNNER_POLL_MS)
         self._runner_timer.timeout.connect(self._poll_runner_status)
-        self.setWindowTitle(self.windowTitle() + " – DTU Runner")
+        self.setWindowTitle(f"FoxAir Updater {base.APP_VERSION}")
 
     def _runner_cli(self) -> Path:
         return base.backend_dir() / "tools/dtu_ota_runner/cli.py"
@@ -78,18 +78,18 @@ class MainWindow(legacy.MainWindow):
         widget = super()._update()
         layout = widget.layout()
         note = QLabel(
-            "<b>Autonomer DTU-Runner:</b> Windows bereitet das Paket vor und startet den Lauf. "
-            "Danach entscheidet und überwacht das LTE-Modem den Mainboard-OTA selbstständig. "
-            "Ein Verlust der ADB-/Windows-Verbindung beendet das Update nicht."
+            "<b>Selbstständiges Firmwareupdate:</b> Windows prüft die Update-Datei und startet "
+            "den Vorgang. Danach führt das LTE-Modem das Mainboard-Update selbstständig weiter. "
+            "Eine unterbrochene Windows- oder ADB-Verbindung beendet das Update nicht."
         )
         note.setWordWrap(True)
         note.setStyleSheet(
             "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
         )
         layout.insertWidget(0, note)
-        self.dry.setText("Vorprüfung / Paket auf DTU vorbereiten")
-        self.update_btn.setText("AUTONOMES FIRMWAREUPDATE STARTEN")
-        self.ota_reattach_btn.setText("ADB neu verbinden / Runner-Status prüfen")
+        self.dry.setText("Vorprüfung")
+        self.update_btn.setText("Firmwareupdate starten")
+        self.ota_reattach_btn.setText("Update-Status prüfen")
         self.progress.setTextVisible(True)
         return widget
 
@@ -97,15 +97,14 @@ class MainWindow(legacy.MainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         note = QLabel(
-            "<b>Autonomer OTA-Status:</b> Diese Seite liest ausschließlich den persistenten "
-            "Runner-Zustand unter <code>/data/foxair_ota_runner</code>. Windows führt keine "
-            "C350/C36E/C357/C5A8-Entscheidung aus. Ein Abbruch wird nur als Anfrage an den "
-            "DTU-Runner geschrieben und ist nach dem Point-of-no-return gesperrt."
+            "<b>Gespeicherter Update-Status:</b> Das LTE-Modem speichert den aktuellen Stand des "
+            "Firmwareupdates selbst. Windows liest diesen Zustand nur aus. Ein sicherer Abbruch "
+            "ist nur möglich, solange die Firmwareübertragung zum Mainboard noch nicht begonnen hat."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        self.status_text = QLabel("Noch kein Runner-Status gelesen.")
+        self.status_text = QLabel("Noch kein Update-Status gelesen.")
         self.status_text.setWordWrap(True)
         self.status_text.setStyleSheet(
             "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
@@ -113,33 +112,33 @@ class MainWindow(legacy.MainWindow):
         layout.addWidget(self.status_text)
 
         row = QHBoxLayout()
-        self.status_btn = QPushButton("Aktuellen Runner-Status lesen")
+        self.status_btn = QPushButton("Update-Status lesen")
         self.status_btn.clicked.connect(self._status_run)
         row.addWidget(self.status_btn)
-        self.runner_log_btn = QPushButton("Runner-Log lesen")
+        self.runner_log_btn = QPushButton("Technisches Laufprotokoll anzeigen")
         self.runner_log_btn.clicked.connect(self._runner_log)
         row.addWidget(self.runner_log_btn)
         row.addStretch()
         layout.addLayout(row)
 
-        self.restore_btn = QPushButton("Sicheren Abbruch anfordern")
+        self.restore_btn = QPushButton("Firmwareupdate sicher abbrechen")
         self.restore_btn.clicked.connect(self._restore)
         layout.addWidget(self.restore_btn)
 
         row = QHBoxLayout()
-        self.runner_ack_btn = QPushButton("Terminales Ergebnis bestätigen (ACK)")
+        self.runner_ack_btn = QPushButton("Abgeschlossenes Ergebnis bestätigen")
         self.runner_ack_btn.clicked.connect(self._runner_ack)
         row.addWidget(self.runner_ack_btn)
-        self.runner_cleanup_btn = QPushButton("Bestätigten Run aufräumen")
+        self.runner_cleanup_btn = QPushButton("Gespeicherte Updatedaten löschen")
         self.runner_cleanup_btn.clicked.connect(self._runner_cleanup)
         row.addWidget(self.runner_cleanup_btn)
         row.addStretch()
         layout.addLayout(row)
 
         lifecycle = QLabel(
-            "<b>Lebenszyklus:</b> Prepare/Dry-Run → Start → DTU arbeitet autonom → terminales "
-            "Ergebnis → ACK → optional Cleanup. Fehler-/Recovery-Runs bleiben bis zur expliziten "
-            "Bestätigung für Diagnose erhalten."
+            "<b>Normaler Ablauf:</b> Vorprüfung → Firmwareupdate starten → LTE-Modem arbeitet "
+            "selbstständig weiter → Ergebnis wird gespeichert → Ergebnis bestätigen → "
+            "gespeicherte Updatedaten bei Bedarf löschen."
         )
         lifecycle.setWordWrap(True)
         layout.addWidget(lifecycle)
@@ -153,7 +152,7 @@ class MainWindow(legacy.MainWindow):
             if candidate.is_file():
                 manifest = candidate
         if not manifest.is_file():
-            QMessageBox.warning(self, "Manifest fehlt", "Bitte zuerst eine gültige Update-Datei auswählen.")
+            QMessageBox.warning(self, "Update-Datei fehlt", "Bitte zuerst eine gültige Update-Datei auswählen.")
             return
 
         self._runner_autostart_after_prepare = autostart
@@ -170,7 +169,7 @@ class MainWindow(legacy.MainWindow):
     def _dry(self):
         if self._runner_active:
             return
-        self._reset_flow("DTU-Paket wird geprüft und vorbereitet", transfer_expected=False)
+        self._reset_flow("Update-Datei und LTE-Modem werden geprüft", transfer_expected=False)
         self._prepare_runner(mode="full", autostart=False)
 
     def _update_run(self):
@@ -180,12 +179,13 @@ class MainWindow(legacy.MainWindow):
         if (
             QMessageBox.warning(
                 self,
-                "Autonomes Firmwareupdate starten",
-                "Das Mainboard-Firmwareupdate wird nach dem Start vollständig vom LTE-Modem "
-                "überwacht. Windows/ADB darf danach ausfallen, ohne dass der Runner absichtlich "
-                "gestoppt wird.\n\nNach dem Point-of-no-return ist kein sicherer Abbruch mehr "
-                "möglich. Wärmepumpe/LTE-Modem während eines laufenden Updates nicht stromlos "
-                "machen.\n\nFirmwareupdate jetzt starten?",
+                "Firmwareupdate starten",
+                "Nach dem Start führt das LTE-Modem das Mainboard-Firmwareupdate selbstständig "
+                "weiter. Die Windows- oder ADB-Verbindung darf danach unterbrochen werden, ohne "
+                "dass das Update beendet wird.\n\nSobald die Firmwareübertragung zum Mainboard "
+                "begonnen hat, ist kein sicherer Abbruch mehr möglich. Wärmepumpe und LTE-Modem "
+                "während eines laufenden Updates nicht stromlos machen.\n\n"
+                "Firmwareupdate jetzt starten?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -193,7 +193,7 @@ class MainWindow(legacy.MainWindow):
         ):
             return
 
-        self._reset_flow("Autonomes Firmwareupdate wird vorbereitet", transfer_expected=True)
+        self._reset_flow("Firmwareupdate wird vorbereitet", transfer_expected=True)
         prepared = (
             self._runner_run_id
             and self._runner_prepared_manifest is not None
@@ -209,12 +209,12 @@ class MainWindow(legacy.MainWindow):
     def _same(self):
         if self._runner_active:
             return
-        self._reset_flow("Autonomer Gleichversionstest wird vorbereitet", transfer_expected=False)
+        self._reset_flow("Prüfung auf gleiche Firmware wird vorbereitet", transfer_expected=False)
         self._prepare_runner(mode="same-version", autostart=True)
 
     def _start_prepared_runner(self) -> None:
         if not self._runner_run_id:
-            QMessageBox.critical(self, "DTU Runner", "Kein vorbereiteter Run vorhanden.")
+            QMessageBox.critical(self, "Firmwareupdate", "Kein vorbereitetes Firmwareupdate vorhanden.")
             return
         self._run_runner("runner-start", "start", "--run-id", self._runner_run_id)
 
@@ -233,24 +233,24 @@ class MainWindow(legacy.MainWindow):
     def _restore(self):
         if not self._runner_run_id:
             QMessageBox.information(
-                self, "Abbruch", "Zuerst den aktuellen Runner-Status lesen, damit der Run eindeutig feststeht."
+                self, "Abbruch", "Bitte zuerst den aktuellen Update-Status lesen."
             )
             return
         if not self._runner_abort_allowed:
             QMessageBox.warning(
                 self,
-                "Abbruch nicht zulässig",
-                "Der DTU-Runner meldet abort_allowed=false. Nach dem Point-of-no-return wird "
-                "kein erzwungener Restore/Abbruch ausgeführt.",
+                "Sicherer Abbruch nicht mehr möglich",
+                "Die Firmwareübertragung hat bereits begonnen oder die sichere Abbruchgrenze "
+                "wurde überschritten. Das Update wird deshalb nicht erzwungen abgebrochen.",
             )
             return
         if (
             QMessageBox.question(
                 self,
-                "Sicheren Abbruch anfordern",
-                "Die Abbruchanforderung wird persistent an den DTU-Runner geschrieben. "
-                "Der Runner entscheidet lokal, ob der sichere Pre-Transfer-Recoverypfad noch "
-                "zulässig ist.\n\nAbbruch jetzt anfordern?",
+                "Firmwareupdate sicher abbrechen",
+                "Die Abbruchanforderung wird auf dem LTE-Modem gespeichert. Das LTE-Modem prüft "
+                "selbst, ob der Vorgang noch sicher beendet und der Originalzustand "
+                "wiederhergestellt werden kann.\n\nAbbruch jetzt anfordern?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -269,9 +269,10 @@ class MainWindow(legacy.MainWindow):
             if (
                 QMessageBox.question(
                     self,
-                    "Runner-Diagnose aufräumen",
-                    "Der bestätigte Run wird von der DTU entfernt. Das ist nach ACK bewusst "
-                    "eine separate Aktion.\n\nRun jetzt aufräumen?",
+                    "Gespeicherte Updatedaten löschen",
+                    "Das bestätigte Endergebnis und die zugehörigen Diagnosedaten werden vom "
+                    "LTE-Modem gelöscht. Das hat keinen Einfluss auf die installierte Firmware."
+                    "\n\nGespeicherte Updatedaten jetzt löschen?",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No,
                 )
@@ -306,23 +307,23 @@ class MainWindow(legacy.MainWindow):
     @staticmethod
     def _phase_text(phase: str) -> str:
         return {
-            "dry-run-complete": "Paket auf der DTU vollständig geprüft",
-            "local-preparation": "DTU-Runner bereitet den Lauf lokal vor",
-            "service-restart": "phnixIot4G wird kontrolliert neu gestartet",
-            "staging": "Lokale Firmwarebereitstellung wird geprüft",
-            "hook-started": "Runtime-Hook gestartet",
-            "c350": "C350 gesendet – Mainboardantwort wird ausgewertet",
-            "c350-sent": "C350 gesendet – Mainboardantwort wird ausgewertet",
-            "accepted": "Mainboard hat das Update angenommen",
-            "c357": "C357 übertragen – Firmwaretransfer wird vorbereitet",
-            "c5a8": "C5A8-Firmwaretransfer läuft",
-            "success-report": "Mainboard meldet Erfolg – Abschlussgrenze wird geprüft",
-            "success": "Mainboard-Update terminal erfolgreich",
-            "same-version": "Gleiche Firmware erkannt – kein Transfer erforderlich",
-            "failed": "Mainboard meldet terminalen Fehler",
-            "reboot-detected": "DTU-Reboot während eines nichtterminalen Runs erkannt",
-            "orphaned-run": "Nichtterminaler Run ohne nachweisbaren Runner klassifiziert",
-        }.get(phase, phase or "unbekannte Phase")
+            "dry-run-complete": "Update-Datei und LTE-Modem vollständig geprüft",
+            "local-preparation": "Firmwareupdate wird auf dem LTE-Modem vorbereitet",
+            "service-restart": "LTE-Kommunikationsdienst wird für das Update neu gestartet",
+            "staging": "Firmwaredatei wird für das Update geprüft",
+            "hook-started": "Update-Überwachung wurde gestartet",
+            "c350": "Update-Anfrage wurde an das Mainboard gesendet – Antwort wird erwartet",
+            "c350-sent": "Update-Anfrage wurde an das Mainboard gesendet – Antwort wird erwartet",
+            "accepted": "Mainboard hat das Firmwareupdate angenommen",
+            "c357": "Firmwareübertragung wird vorbereitet",
+            "c5a8": "Firmware wird an das Mainboard übertragen",
+            "success-report": "Firmware vollständig übertragen – Abschlussprüfung läuft",
+            "success": "Firmwareupdate erfolgreich abgeschlossen",
+            "same-version": "Gleiche Firmware erkannt – keine Übertragung erforderlich",
+            "failed": "Firmwareupdate wurde mit einem Fehler beendet",
+            "reboot-detected": "LTE-Modem wurde während eines laufenden Updates neu gestartet",
+            "orphaned-run": "Gespeicherter Update-Vorgang ist nicht mehr aktiv",
+        }.get(phase, phase or "unbekannter Update-Schritt")
 
     def _render_runner_status(self, status: dict) -> None:
         run_id = str(status.get("run_id") or "")
@@ -350,44 +351,49 @@ class MainWindow(legacy.MainWindow):
 
         if isinstance(progress, int):
             self.progress.setValue(max(0, min(100, progress)))
-            self.progress.setFormat(f"{max(0, min(100, progress))} % – DTU-Runner")
+            self.progress.setFormat(f"{max(0, min(100, progress))} % – LTE-Modem")
         self.progress_text.setText(self._phase_text(phase))
         if hasattr(self, "progress_sources"):
-            extra = f"Run: {run_id or '?'} | Zustand: {state} | Recovery: {recovery}"
+            extra = self._phase_text(phase)
             if isinstance(board_step, int) and board_step:
-                extra += f" | Board-Step: {board_step}"
+                extra += " | Mainboard verarbeitet das Update"
             self.progress_sources.setText(extra)
 
         if phase == "dry-run-complete":
-            self._set_step("runner-preflight", "ok", "Paket, Hashes, Speicher, Service-Build und DTU-Voraussetzungen geprüft.")
+            self._set_step("runner-preflight", "ok", "Update-Datei, Speicherplatz und LTE-Modem wurden erfolgreich geprüft.")
         if status.get("c350_sent") is True:
-            self._set_step("runner-c350", "ok", "C350 wurde vom DTU-Runner gesendet.")
+            self._set_step("runner-c350", "ok", "Update-Anfrage wurde an das Mainboard gesendet.")
         if status.get("c357_sent") is True:
-            self._set_step("runner-c357", "ok", "C357 wurde vom DTU-Runner gesendet.")
+            self._set_step("runner-c357", "ok", "Firmwareübertragung wurde vorbereitet.")
         if status.get("c5a8_sent") is True or transfer_started:
-            self._set_step("runner-c5a8", "warn", "C5A8 hat begonnen – Point-of-no-return erreicht; kein sicherer Abbruch mehr.")
+            self._set_step("runner-c5a8", "warn", "Firmwareübertragung hat begonnen – ein sicherer Abbruch ist jetzt nicht mehr möglich.")
         if authoritative:
-            self._set_step("runner-authority", "info", "Der originale PHNIX-Dienst ist für den weiteren OTA-Ablauf autoritativ.")
+            self._set_step("runner-authority", "info", "Der LTE-Dienst führt das Firmwareupdate jetzt selbstständig weiter.")
         if terminal:
             level = "ok" if result_type in {"success", "same-version"} else "warn"
             if result_type in {"failed", "recovery-required", "reboot-detected", "orphaned"}:
                 level = "error"
-            self._set_step("runner-terminal", level, f"Terminales Runner-Ergebnis: {result_type or phase}.")
+            terminal_text = {
+                "success": "Firmwareupdate erfolgreich abgeschlossen.",
+                "same-version": "Gleiche Firmware erkannt – kein Update erforderlich.",
+                "aborted-before-transfer": "Firmwareupdate wurde sicher vor der Übertragung abgebrochen.",
+                "recovery-completed": "Originalzustand wurde erfolgreich wiederhergestellt.",
+            }.get(result_type, "Firmwareupdate wurde beendet; bitte Status prüfen.")
+            self._set_step("runner-terminal", level, terminal_text)
 
-        abort_text = "ja" if self._runner_abort_allowed else "nein"
-        transfer_text = "ja" if transfer_started else "nein"
-        authority_text = "ja" if authoritative else "nein"
-        terminal_text = "ja" if terminal else "nein"
+        abort_text = "möglich" if self._runner_abort_allowed else "nicht möglich"
+        transfer_text = "gestartet" if transfer_started else "noch nicht gestartet"
+        recovery_text = {
+            "not-required": "nicht erforderlich",
+            "completed": "abgeschlossen",
+            "required": "manuelle Prüfung erforderlich",
+            "?": "noch nicht bestimmt",
+        }.get(recovery, recovery or "noch nicht bestimmt")
         self.status_text.setText(
-            f"<b>Run:</b> <code>{escape(run_id or '?')}</code><br>"
-            f"<b>Zustand:</b> {escape(state)}<br>"
-            f"<b>Phase:</b> {escape(self._phase_text(phase))}<br>"
-            f"<b>Terminal:</b> {terminal_text}"
-            + (f" – <b>{escape(result_type)}</b>" if result_type else "")
-            + f"<br><b>Transfer begonnen:</b> {transfer_text}<br>"
-            f"<b>Originaldienst autoritativ:</b> {authority_text}<br>"
-            f"<b>Sicherer Abbruch erlaubt:</b> {abort_text}<br>"
-            f"<b>Recovery:</b> {escape(recovery)}"
+            f"<b>Aktueller Schritt:</b> {escape(self._phase_text(phase))}<br>"
+            f"<b>Firmwareübertragung:</b> {transfer_text}<br>"
+            f"<b>Sicherer Abbruch:</b> {abort_text}<br>"
+            f"<b>Wiederherstellung:</b> {escape(recovery_text)}"
             + (f"<br><br>{escape(detail)}" if detail else "")
         )
         self.ota_reattach_btn.setVisible(self._runner_active or bool(self._runner_run_id))
@@ -402,31 +408,32 @@ class MainWindow(legacy.MainWindow):
         if result == "success":
             self._flow_title = "Firmwareupdate erfolgreich"
             self.progress.setValue(100)
-            self.progress.setFormat("100 % – terminal erfolgreich")
+            self.progress.setFormat("100 % – Firmwareupdate abgeschlossen")
             QMessageBox.information(
                 self,
                 "Firmwareupdate erfolgreich",
-                "Der DTU-Runner hat den Mainboard-Erfolg und die terminale Step-12-Grenze bestätigt.",
+                "Das Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.",
             )
         elif result == "same-version":
             self._flow_title = "Kein Firmwareupdate erforderlich"
             QMessageBox.information(
                 self,
                 "Gleiche Firmware erkannt",
-                "Das Mainboard hat die gleiche Firmware erkannt. Es wurde kein C5A8-Firmwaretransfer gestartet.",
+                "Die gleiche Firmware ist bereits installiert. Es wurden keine Firmwaredaten übertragen.",
             )
         elif result == "aborted-before-transfer":
-            self._flow_title = "Update sicher vor Transfer abgebrochen"
-            QMessageBox.warning(self, "Update abgebrochen", "Der sichere Pre-Transfer-Abbruch wurde terminal bestätigt.")
+            self._flow_title = "Firmwareupdate sicher abgebrochen"
+            QMessageBox.warning(self, "Update abgebrochen", "Das Firmwareupdate wurde sicher vor Beginn der Übertragung abgebrochen.")
         elif result == "recovery-completed":
-            self._flow_title = "Recovery abgeschlossen"
-            QMessageBox.warning(self, "Recovery abgeschlossen", detail or "Der DTU-Runner hat den sicheren Recoverypfad abgeschlossen.")
+            self._flow_title = "Originalzustand wiederhergestellt"
+            QMessageBox.warning(self, "Wiederherstellung abgeschlossen", "Der Originalzustand wurde erfolgreich wiederhergestellt.")
         else:
-            self._flow_title = "DTU-Runner meldet Diagnosebedarf"
+            self._flow_title = "Manuelle Prüfung erforderlich"
             QMessageBox.critical(
                 self,
                 "Firmwareupdate nicht erfolgreich abgeschlossen",
-                f"Terminales Ergebnis: {result or '?'}\n\n{detail or 'Diagnose auf der DTU erhalten; keinen blinden Restore ausführen.'}",
+                "Das Firmwareupdate konnte nicht sicher als erfolgreich abgeschlossen bestätigt werden. "
+                "Bitte das technische Protokoll sichern und den Status prüfen.",
             )
         self._render_flow()
 
@@ -439,7 +446,7 @@ class MainWindow(legacy.MainWindow):
 
         if op == "runner-log":
             if code != 0:
-                QMessageBox.warning(self, "Runner-Log", "Runner-Log konnte nicht gelesen werden.")
+                QMessageBox.warning(self, "Technisches Laufprotokoll", "Das technische Laufprotokoll konnte nicht gelesen werden.")
             return
 
         if op == "runner-cleanup":
@@ -452,30 +459,30 @@ class MainWindow(legacy.MainWindow):
                 self._runner_abort_allowed = False
                 self._runner_acknowledged = False
                 self.ota_reattach_btn.setVisible(False)
-                self.status_text.setText("Bestätigter Run wurde aufgeräumt.")
+                self.status_text.setText("Gespeicherte Updatedaten wurden gelöscht.")
                 self._buttons()
             else:
-                QMessageBox.critical(self, "Cleanup", "Runner-Cleanup fehlgeschlagen. Diagnose bleibt erhalten.")
+                QMessageBox.critical(self, "Löschen fehlgeschlagen", "Die gespeicherten Updatedaten konnten nicht gelöscht werden. Diagnosedaten bleiben erhalten.")
             return
 
         status = self._runner_json(output)
         if code != 0 or status is None or status.get("ok") is False:
             if op in {"runner-status", "runner-current"} and self._runner_active:
                 self.progress_text.setText(
-                    "ADB-Verbindung nicht verfügbar – DTU-Runner arbeitet autonom weiter."
+                    "ADB-Verbindung nicht verfügbar – das LTE-Modem arbeitet selbstständig weiter."
                 )
                 self._set_step(
                     "runner-adb-lost",
                     "warn",
-                    "Windows kann den Runner momentan nicht lesen; auf der DTU wird nichts gestoppt oder restored.",
+                    "Windows kann den aktuellen Status momentan nicht lesen. Das Firmwareupdate auf dem LTE-Modem wird dadurch nicht gestoppt.",
                 )
                 self.ota_reattach_btn.setVisible(True)
                 self._render_flow()
                 return
             QMessageBox.critical(
                 self,
-                "DTU Runner",
-                "Runner-Befehl fehlgeschlagen. Details stehen im Protokoll."
+                "Firmwareupdate",
+                "Der angeforderte Update-Vorgang konnte nicht ausgeführt werden. Details stehen im technischen Protokoll."
                 + (f"\n\n{status.get('error')}" if isinstance(status, dict) and status.get("error") else ""),
             )
             return
@@ -490,19 +497,19 @@ class MainWindow(legacy.MainWindow):
             self._runner_prepared_manifest = manifest if manifest.is_file() else None
             self._render_runner_status(status)
             if status.get("phase") != "dry-run-complete":
-                QMessageBox.critical(self, "DTU-Vorprüfung", "Die DTU hat den Prepare/Dry-Run nicht bestätigt.")
+                QMessageBox.critical(self, "Vorprüfung", "Die Vorprüfung konnte nicht vollständig bestätigt werden. Details stehen im technischen Protokoll.")
                 self._runner_autostart_after_prepare = False
                 return
-            self._set_step("runner-prepared", "ok", "Run ist persistent auf der DTU vorbereitet; noch kein GDB-Attach und kein C350.")
+            self._set_step("runner-prepared", "ok", "Firmwareupdate ist vollständig vorbereitet. Es wurde noch nichts an das Mainboard übertragen.")
             if self._runner_autostart_after_prepare:
                 self._runner_autostart_after_prepare = False
                 QTimer.singleShot(150, self._start_prepared_runner)
             else:
                 QMessageBox.information(
                     self,
-                    "DTU-Vorprüfung erfolgreich",
-                    "Paket und lokale Voraussetzungen wurden auf der DTU vollständig geprüft. "
-                    "Es wurde kein GDB-Attach und kein Mainboard-OTA gestartet.",
+                    "Vorprüfung erfolgreich",
+                    "Update-Datei und LTE-Modem wurden vollständig geprüft. Das Firmwareupdate "
+                    "wurde noch nicht gestartet und es wurden keine Firmwaredaten an das Mainboard übertragen.",
                 )
             return
 
@@ -512,9 +519,9 @@ class MainWindow(legacy.MainWindow):
                 self._runner_active = status.get("terminal") is not True
                 if self._runner_active and not self._runner_timer.isActive():
                     self._runner_timer.start()
-                self._set_step("runner-detached", "ok", "DTU-Runner wurde detached gestartet; Windows ist nur noch Status-Client.")
+                self._set_step("runner-detached", "ok", "Firmwareupdate wurde auf dem LTE-Modem gestartet und läuft dort selbstständig weiter.")
             elif op == "runner-abort":
-                self._set_step("runner-abort-request", "warn", "Abbruchanforderung wurde an den DTU-Runner geschrieben; die lokale Phasengrenze entscheidet.")
+                self._set_step("runner-abort-request", "warn", "Sicherer Abbruch wurde angefordert. Das LTE-Modem prüft, ob der Vorgang noch sicher beendet werden kann.")
             elif op == "runner-ack":
                 self._runner_acknowledged = True
                 self._log("[DTU Runner] terminales Ergebnis wurde bestätigt (ACK).")
