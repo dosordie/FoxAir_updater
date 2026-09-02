@@ -9,10 +9,13 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
+    QVBoxLayout,
 )
 
 import foxair_updater_gui as base
@@ -28,15 +31,12 @@ class MainWindow(product.MainWindow):
     def _status(self):
         widget = super()._status()
         layout = widget.layout()
-        insert_at = layout.indexOf(self.restore_btn)
-        if insert_at < 0:
-            insert_at = max(0, layout.count() - 1)
 
-        # Keep the opt-in visually attached to the destructive action instead
-        # of leaving it as a separate full-width row.
-        layout.removeWidget(self.restore_btn)
-        restore_row = QHBoxLayout()
-        restore_row.addWidget(self.restore_btn)
+        # The clean-DTU option belongs to the actual "Originalzustand
+        # wiederherstellen" action.  In the end-user status page ``restore_btn``
+        # is deliberately an alias for the OTA abort button, so using that alias
+        # here would put the checkbox next to the wrong action.
+        restore_row = self._layout_containing(layout, self.original_restore_btn)
         self.clean_dtu_after_restore = QCheckBox(
             "Danach alle FoxAir-Updater-Dateien vom LTE-Modem entfernen"
         )
@@ -45,9 +45,15 @@ class MainWindow(product.MainWindow):
             "Hooks, temporäre Statusdateien und Runner-Verzeichnisse des FoxAir Updaters. "
             "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik werden nicht gelöscht."
         )
-        restore_row.addWidget(self.clean_dtu_after_restore)
-        restore_row.addStretch()
-        layout.insertLayout(insert_at, restore_row)
+        if restore_row is not None:
+            insert_at = restore_row.indexOf(self.original_restore_btn)
+            restore_row.insertWidget(insert_at + 1, self.clean_dtu_after_restore)
+        else:
+            # Defensive fallback if the inherited status layout changes later.
+            fallback_row = QHBoxLayout()
+            fallback_row.addWidget(self.clean_dtu_after_restore)
+            fallback_row.addStretch()
+            layout.insertLayout(1, fallback_row)
         return widget
 
     def _ui(self):
@@ -81,11 +87,20 @@ class MainWindow(product.MainWindow):
     def _cleanup_core_path() -> Path:
         return base.backend_dir() / "updater/dtu_ota/cleanup.py"
 
-    def _restore(self):
+    def _original_restore(self):
+        """Restore original operation, optionally followed by fail-closed cleanup."""
         if not getattr(self, "clean_dtu_after_restore", None) or not self.clean_dtu_after_restore.isChecked():
-            super()._restore()
+            super()._original_restore()
             return
         if self.busy:
+            return
+        if self._runner_active:
+            QMessageBox.warning(
+                self,
+                "Firmwareupdate läuft",
+                "Während eines laufenden Firmwareupdates wird weder der Originalzustand erzwungen "
+                "noch die DTU bereinigt.",
+            )
             return
         adb = self._require_adb()
         if not adb:
@@ -153,7 +168,9 @@ class MainWindow(product.MainWindow):
         super()._buttons()
         checkbox = getattr(self, "clean_dtu_after_restore", None)
         if checkbox is not None:
-            checkbox.setEnabled(not self.busy and self._adb_ready())
+            checkbox.setEnabled(
+                not self.busy and self._adb_ready() and not self._runner_active
+            )
 
     def _diagnostic_log_directory(self) -> Path:
         """Use the same directory in which automatic update logs are stored."""
@@ -227,6 +244,31 @@ class MainWindow(product.MainWindow):
             command += ["--run-id", run_id.strip()]
         self._run("runner-diagnostics", command, str(base.backend_dir()))
 
+    def _show_runner_log_dialog(self, output: str) -> None:
+        """Show the fetched DTU runner.log instead of silently writing it to the GUI log."""
+        dialog = QDialog(self)
+        run_id = str(getattr(self, "_runner_run_id", "") or "").strip()
+        title = "Technisches Laufprotokoll"
+        if run_id:
+            title += f" – {run_id}"
+        dialog.setWindowTitle(title)
+        dialog.resize(920, 620)
+
+        layout = QVBoxLayout(dialog)
+        text = QPlainTextEdit(dialog)
+        text.setReadOnly(True)
+        text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        text.setPlainText(output.rstrip() or "(Für diesen Lauf ist kein runner.log-Inhalt vorhanden.)")
+        layout.addWidget(text, 1)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        close = QPushButton("Schließen", dialog)
+        close.clicked.connect(dialog.accept)
+        row.addWidget(close)
+        layout.addLayout(row)
+        dialog.exec()
+
     @staticmethod
     def _last_json_record(output: str) -> dict | None:
         for line in reversed(output.splitlines()):
@@ -262,6 +304,15 @@ class MainWindow(product.MainWindow):
                 + (f"\n\n{detail}" if detail else "")
                 + "\n\nDetails stehen im Protokoll.",
             )
+            return
+
+        if op == "runner-log":
+            # The inherited implementation fetches runner.log correctly but only
+            # writes the subprocess output to the general application protocol.
+            # The button explicitly says "anzeigen", so present the content.
+            super()._done(op, code, output)
+            if code == 0:
+                self._show_runner_log_dialog(output)
             return
 
         if op != "runner-diagnostics":
