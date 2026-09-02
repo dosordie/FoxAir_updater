@@ -131,13 +131,14 @@ class OtaHardeningTests(unittest.TestCase):
         self.assertIn('elif phase == "success":', full)
         self.assertIn("clear_cache_pending()", full)
 
-    def test_windows_source_mode_routes_through_same_wrapper_and_shared_safety_layer(self):
-        controller = Path("backend/tools/phnix_ota/phnix_local_ota_controller.py").read_text(encoding="utf-8")
-        hardened_shim = Path("updater/windows/phnix_local_ota_controller_hardened.py").read_text(encoding="utf-8")
-        manifest_shim = Path("updater/windows/create_firmware_manifest.py").read_text(encoding="utf-8")
-        self.assertIn("phnix_windows_controller_wrapper.py", controller)
-        self.assertIn("tools\" / \"phnix_ota\" / \"phnix_local_ota_controller_hardened.py", hardened_shim)
-        self.assertIn("tools\" / \"phnix_ota\" / \"create_firmware_manifest.py", manifest_shim)
+    def test_windows_source_mode_uses_repo_root_and_shared_safety_layer(self):
+        base_gui = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        self.assertFalse(Path("backend").exists())
+        self.assertIn('packaged = root_dir() / "backend"', base_gui)
+        self.assertIn("return packaged if packaged.is_dir() else root_dir()", base_gui)
+        self.assertTrue(Path("updater/windows/phnix_windows_controller_wrapper.py").is_file())
+        self.assertTrue(Path("tools/phnix_ota/phnix_local_ota_controller_hardened.py").is_file())
+        self.assertTrue(Path("tools/phnix_ota/create_firmware_manifest.py").is_file())
 
 
 if __name__ == "__main__":
