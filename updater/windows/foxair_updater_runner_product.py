@@ -59,6 +59,78 @@ class MainWindow(enduser.MainWindow):
         return base.backend_dir() / "updater/dtu_ota/cli.py"
 
     # ------------------------------------------------------------------
+    # Final layout polish
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _layout_containing(layout, widget):
+        if layout is None:
+            return None
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            if item.widget() is widget:
+                return layout
+            child = item.layout()
+            if child is not None:
+                found = MainWindow._layout_containing(child, widget)
+                if found is not None:
+                    return found
+        return None
+
+    def _ui(self):
+        super()._ui()
+
+        # The manifest editor is an occasional maintenance tool. Keep it close
+        # to Advanced instead of interrupting the normal Update -> Status flow.
+        manifest_index = next(
+            (
+                index
+                for index in range(self.tabs.count())
+                if self.tabs.tabText(index) == "Update-Datei / Manifest"
+            ),
+            -1,
+        )
+        advanced_index = next(
+            (
+                index
+                for index in range(self.tabs.count())
+                if self.tabs.tabText(index) == "Erweitert"
+            ),
+            -1,
+        )
+        if manifest_index >= 0 and advanced_index >= 0 and manifest_index != advanced_index - 1:
+            manifest_widget = self.tabs.widget(manifest_index)
+            manifest_text = self.tabs.tabText(manifest_index)
+            self.tabs.removeTab(manifest_index)
+            advanced_index = next(
+                (
+                    index
+                    for index in range(self.tabs.count())
+                    if self.tabs.tabText(index) == "Erweitert"
+                ),
+                self.tabs.count(),
+            )
+            self.tabs.insertTab(advanced_index, manifest_widget, manifest_text)
+
+        # Status is a secondary action. Put the small button into the protocol
+        # toolbar directly left of the two protocol buttons instead of giving it
+        # a full-width row inside the firmware page.
+        clear_log_button = next(
+            (
+                button
+                for button in self.findChildren(QPushButton)
+                if button.text() == "Protokoll leeren"
+            ),
+            None,
+        )
+        root_layout = self.centralWidget().layout() if self.centralWidget() else None
+        source_layout = self._layout_containing(root_layout, self.ota_reattach_btn)
+        log_toolbar = self._layout_containing(root_layout, clear_log_button)
+        if source_layout is not None and log_toolbar is not None and clear_log_button is not None:
+            source_layout.removeWidget(self.ota_reattach_btn)
+            insert_at = log_toolbar.indexOf(clear_log_button)
+            log_toolbar.insertWidget(max(0, insert_at), self.ota_reattach_btn)
+
+    # ------------------------------------------------------------------
     # Final maintenance UI: persistent statistics counters
     # ------------------------------------------------------------------
     def _advanced(self):
