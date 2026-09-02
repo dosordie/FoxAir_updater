@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Create a privacy-conscious diagnostic ZIP for one autonomous DTU OTA run.
+"""Create a privacy-conscious diagnostic ZIP for autonomous DTU OTA runs.
 
 Only an explicit text whitelist is collected. Firmware binaries, OTA_INFO,
 statistics blobs and other arbitrary DTU files are intentionally excluded.
+By default all runner attempts from the same calendar day as the selected run
+are included so repeated update attempts can be diagnosed together.
 """
 
 from __future__ import annotations
@@ -79,6 +81,27 @@ def resolve_run_id(adb: AdbClient, requested: str | None) -> str:
     return _valid_run_id(last)
 
 
+def run_day(run_id: str) -> str | None:
+    match = re.match(r"^(\d{8})-", run_id)
+    return match.group(1) if match else None
+
+
+def same_day_run_ids(adb: AdbClient, primary_run_id: str) -> list[str]:
+    """Return all valid DTU runner IDs from the primary run's YYYYMMDD day."""
+    day = run_day(primary_run_id)
+    if not day:
+        return [primary_run_id]
+    raw = adb.shell(f"ls -1 '{REMOTE_BASE}/runs' 2>/dev/null || true", check=False)
+    values: list[str] = []
+    for line in raw.splitlines():
+        value = line.strip()
+        if value.startswith(day + "-") and RUN_ID_RE.fullmatch(value):
+            values.append(value)
+    if primary_run_id not in values:
+        values.append(primary_run_id)
+    return sorted(set(values))
+
+
 def read_optional(adb: AdbClient, remote: str) -> tuple[bytes | None, str | None]:
     marker = adb.shell(f"if [ -f '{remote}' ]; then echo PRESENT; else echo ABSENT; fi", check=False)
     if marker.strip() != "PRESENT":
@@ -108,48 +131,79 @@ done
     return redact_text(adb.shell(command, check=False))
 
 
+def _host_logs_for_day(directory: Path | None, day: str | None) -> list[Path]:
+    if directory is None or day is None or not directory.is_dir():
+        return []
+    return sorted(
+        path for path in directory.glob(f"FoxAir_Update_{day}-*.log")
+        if path.is_file()
+    )
+
+
 def create_bundle(
     adb: AdbClient,
     output: Path,
     *,
     run_id: str | None = None,
     host_log: Path | None = None,
+    host_log_dir: Path | None = None,
     app_version: str = "unknown",
 ) -> dict[str, object]:
     resolved = resolve_run_id(adb, run_id)
-    run_dir = f"{REMOTE_BASE}/runs/{resolved}"
+    run_ids = same_day_run_ids(adb, resolved)
+    day = run_day(resolved)
     output = output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
     included: list[str] = []
     missing: dict[str, str] = {}
+    host_logs: list[str] = []
     with tempfile.NamedTemporaryFile(prefix="foxair-diagnostics-", suffix=".zip", delete=False, dir=output.parent) as tmp:
         temp_path = Path(tmp.name)
     try:
         with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for relative in TEXT_FILES:
-                remote = f"{run_dir}/{relative}"
-                data, error = read_optional(adb, remote)
-                if data is None:
-                    missing[relative] = error or "unavailable"
-                    continue
-                text = redact_text(safe_decode(data))
-                archive.writestr(f"dtu-run/{relative}", text)
-                included.append(relative)
+            for collected_run_id in run_ids:
+                run_dir = f"{REMOTE_BASE}/runs/{collected_run_id}"
+                prefix = f"dtu-runs/{collected_run_id}"
+                for relative in TEXT_FILES:
+                    remote = f"{run_dir}/{relative}"
+                    data, error = read_optional(adb, remote)
+                    missing_key = f"{collected_run_id}/{relative}"
+                    if data is None:
+                        missing[missing_key] = error or "unavailable"
+                        continue
+                    text = redact_text(safe_decode(data))
+                    archive.writestr(f"{prefix}/{relative}", text)
+                    included.append(missing_key)
+                    # Keep the historical single-run path as a convenient alias
+                    # for the primary/current run.
+                    if collected_run_id == resolved:
+                        archive.writestr(f"dtu-run/{relative}", text)
 
-            archive.writestr("dtu-run/system_snapshot.txt", system_snapshot(adb) + "\n")
-            included.append("system_snapshot.txt")
+            snapshot = system_snapshot(adb) + "\n"
+            archive.writestr("dtu-run/system_snapshot.txt", snapshot)
+            archive.writestr(f"dtu-runs/{resolved}/system_snapshot.txt", snapshot)
+            included.append(f"{resolved}/system_snapshot.txt")
 
             if host_log and host_log.is_file():
                 text = redact_text(host_log.read_text(encoding="utf-8", errors="replace"))
                 archive.writestr("host/foxair-updater.log", text)
                 included.append("host/foxair-updater.log")
 
+            for path in _host_logs_for_day(host_log_dir, day):
+                text = redact_text(path.read_text(encoding="utf-8", errors="replace"))
+                archive.writestr(f"host/day/{path.name}", text)
+                host_logs.append(path.name)
+                included.append(f"host/day/{path.name}")
+
             manifest = {
-                "schema": "foxair-diagnostic-bundle-v1",
+                "schema": "foxair-diagnostic-bundle-v2",
                 "created_utc": datetime.now(timezone.utc).isoformat(),
                 "app_version": app_version,
                 "run_id": resolved,
+                "run_day": day,
+                "run_ids": run_ids,
+                "host_logs": host_logs,
                 "included": included,
                 "missing": missing,
                 "privacy": {
@@ -165,7 +219,16 @@ def create_bundle(
         temp_path.unlink(missing_ok=True)
         raise
 
-    return {"ok": True, "output": str(output), "run_id": resolved, "included": included, "missing": missing}
+    return {
+        "ok": True,
+        "output": str(output),
+        "run_id": resolved,
+        "run_ids": run_ids,
+        "run_day": day,
+        "host_logs": host_logs,
+        "included": included,
+        "missing": missing,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -175,6 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run-id")
     parser.add_argument("--host-log", type=Path)
+    parser.add_argument("--host-log-dir", type=Path)
     parser.add_argument("--app-version", default="unknown")
     return parser
 
@@ -188,6 +252,7 @@ def main() -> int:
             args.output,
             run_id=args.run_id,
             host_log=args.host_log,
+            host_log_dir=args.host_log_dir,
             app_version=args.app_version,
         )
     except (RuntimeError, TransportError, OSError, zipfile.BadZipFile) as error:
