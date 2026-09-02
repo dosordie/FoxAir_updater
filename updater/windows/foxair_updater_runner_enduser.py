@@ -28,13 +28,87 @@ class MainWindow(user_gui.MainWindow):
         self._runner_progress_offset: int | None = None
         self._runner_progress_length: int | None = None
         self._runner_transfer_visible = False
+        self._runner_result_type = ""
+        self._runner_recovery_state = ""
+        self._passive_runner_poll = False
         super().__init__()
         self.update_btn.setText("Firmwareupdate starten")
         self._log(f"[FoxAir Updater] Version {base.APP_VERSION} – autonomer DTU-Runner")
 
     # ------------------------------------------------------------------
+    # Firmware page polish
+    # ------------------------------------------------------------------
+    def _update(self):
+        widget = super()._update()
+        layout = widget.layout()
+        self.ota_reattach_btn.setText("Status checken")
+        self.ota_reattach_btn.setToolTip(
+            "Liest den aktuellen persistenten Firmwarelauf-Status. Falls die ADB-Verbindung "
+            "unterbrochen wurde, wird sie dabei neu aufgebaut."
+        )
+        # The status action is secondary to the actual update controls. Keep it
+        # at the bottom of the firmware page instead of between progress and
+        # prepare/start controls.
+        layout.removeWidget(self.ota_reattach_btn)
+        layout.insertWidget(max(0, layout.count() - 1), self.ota_reattach_btn)
+        return widget
+
+    def _poll_runner_status(self):
+        if self.busy or not self._runner_active or not self._runner_run_id:
+            return
+        # Automatic polling must not make the visible manual status button flash
+        # disabled/enabled every few seconds. The command still uses the normal
+        # runner path; only the presentation of this button stays stable.
+        self._passive_runner_poll = True
+        self._run_runner("runner-status", "status", "--run-id", self._runner_run_id)
+
+    def _buttons(self):
+        super()._buttons()
+        if not hasattr(self, "ota_reattach_btn"):
+            return
+
+        if self._passive_runner_poll and self._adb_ready():
+            self.ota_reattach_btn.setEnabled(True)
+
+        if not hasattr(self, "runner_cleanup_btn"):
+            return
+        retain_diagnostics = (
+            self._runner_recovery_state == "required"
+            or self._runner_result_type in {"recovery-required", "reboot-detected"}
+        )
+        if retain_diagnostics:
+            self.runner_cleanup_btn.setText("Diagnosedaten werden beibehalten")
+            self.runner_cleanup_btn.setToolTip(
+                "Dieser Lauf benötigt eine manuelle Prüfung. Die Diagnosedaten werden deshalb "
+                "absichtlich nicht automatisch gelöscht. ACK bestätigt nur, dass das Ergebnis "
+                "gesehen wurde."
+            )
+            self.runner_cleanup_btn.setEnabled(False)
+        else:
+            self.runner_cleanup_btn.setText("Bestätigte Laufdaten löschen")
+            self.runner_cleanup_btn.setToolTip(
+                "Löscht erst nach der Bestätigung die gespeicherten Daten dieses Firmwarelaufs "
+                "vom LTE-Modem."
+            )
+
+    # ------------------------------------------------------------------
     # Automatic update logs
     # ------------------------------------------------------------------
+    def _write_automatic_log_only(self, text: str) -> None:
+        """Write a timestamped line only to the automatic controller log."""
+        automatic_log = getattr(self, "_automatic_log", None)
+        if automatic_log is None:
+            return
+        try:
+            stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            automatic_log.write(f"[{stamp}] {text}\n")
+            automatic_log.flush()
+        except OSError as error:
+            self._automatic_log = None
+            super()._log(
+                f"[Warnung] Automatisches Controller-Log konnte nicht weitergeschrieben werden: {error}"
+            )
+
     def _log(self, text):
         """Keep the on-screen protocol unchanged, but timestamp every automatic log line."""
         automatic_log = getattr(self, "_automatic_log", None)
@@ -85,9 +159,10 @@ class MainWindow(user_gui.MainWindow):
                 self._runner_progress_offset = None
                 self._runner_progress_length = None
                 self._runner_transfer_visible = False
-                # Header goes into the on-screen protocol and, because the
-                # established automatic log is already open, into that file too.
-                self._log(
+                # The version is already shown once in the visible protocol at
+                # application start. Put it into the newly opened automatic log
+                # directly so the GUI does not show the same header twice.
+                self._write_automatic_log_only(
                     f"[FoxAir Updater] Version {base.APP_VERSION} – autonomer DTU-Runner"
                 )
                 self._log(f"[Update-Log] Firmware-Verzeichnis: {manifest.parent}")
@@ -226,6 +301,11 @@ class MainWindow(user_gui.MainWindow):
                     "runner-terminal-user", "warn",
                     "Firmwarelauf wurde sicher vor Beginn des Transfers abgebrochen.",
                 )
+            elif result_type in {"recovery-required", "reboot-detected"}:
+                self._set_step(
+                    "runner-terminal-user", "error",
+                    "Manuelle Prüfung erforderlich; Diagnosedaten bleiben auf dem LTE-Modem erhalten.",
+                )
 
     # ------------------------------------------------------------------
     # Dual transfer progress: serial PHNIX log + autonomous runner
@@ -295,6 +375,11 @@ class MainWindow(user_gui.MainWindow):
             self.progress_sources.setText("\n".join(lines))
 
     def _render_runner_status(self, status: dict) -> None:
+        # Store the terminal classification before the inherited renderer calls
+        # _buttons(), so recovery-required runs never briefly enable Cleanup.
+        self._runner_result_type = str(status.get("result_type") or "")
+        self._runner_recovery_state = str(status.get("recovery") or "?")
+
         # Let the established runner layer update all lifecycle/safety state,
         # buttons and terminal dialogs first.
         super()._render_runner_status(status)
@@ -302,11 +387,11 @@ class MainWindow(user_gui.MainWindow):
         run_id = str(status.get("run_id") or "")
         state = str(status.get("state") or "?")
         phase = str(status.get("phase") or "?")
-        result_type = str(status.get("result_type") or "")
+        result_type = self._runner_result_type
         terminal = status.get("terminal") is True
         transfer_started = status.get("transfer_started") is True
         authoritative = status.get("original_service_authoritative") is True
-        recovery = str(status.get("recovery") or "?")
+        recovery = self._runner_recovery_state
         detail = str(status.get("detail") or "")
         board_step = status.get("board_ota_step")
         progress = status.get("progress")
@@ -356,12 +441,19 @@ class MainWindow(user_gui.MainWindow):
 
         abort_text = "möglich" if self._runner_abort_allowed else "nicht möglich"
         transfer_text = "gestartet" if transfer_started else "noch nicht gestartet"
-        extra = ""
+        notices: list[str] = []
         if authoritative:
-            extra = (
-                "<br><b>Hinweis:</b> Der originale PHNIX-Dienst führt das Update jetzt selbst weiter; "
+            notices.append(
+                "<b>Hinweis:</b> Der originale PHNIX-Dienst führt das Update jetzt selbst weiter; "
                 "ein sicherer Abbruch ist ab dieser Grenze gesperrt."
             )
+        if recovery == "required" or result_type in {"recovery-required", "reboot-detected"}:
+            notices.append(
+                "<b>Diagnose:</b> Dieser Lauf benötigt eine manuelle Prüfung. ACK bestätigt nur "
+                "das gespeicherte Ergebnis; die Diagnosedaten werden absichtlich beibehalten."
+            )
+        extra = "".join(f"<br>{item}" for item in notices)
+
         self.runner_status_text.setText(
             headline
             + f"<br><b>Aktueller Schritt:</b> {escape(self._phase_text(phase))}"
@@ -377,6 +469,9 @@ class MainWindow(user_gui.MainWindow):
             + (f"<br><br>{escape(detail)}" if detail else "")
         )
 
+        # Re-apply the end-user cleanup policy after the status box update.
+        self._buttons()
+
         if terminal:
             # Final runner JSON has already passed through _line() and therefore
             # reached the automatic controller log.  It is now safe to close
@@ -384,7 +479,11 @@ class MainWindow(user_gui.MainWindow):
             QTimer.singleShot(0, self._finish_automatic_logs)
 
     def _done(self, op, code, output):
+        passive_poll = op == "runner-status" and self._passive_runner_poll
         super()._done(op, code, output)
+        if passive_poll:
+            self._passive_runner_poll = False
+            self._buttons()
         if op == "runner-prepare" and code != 0 and not self._runner_run_id:
             self._finish_automatic_logs()
 
