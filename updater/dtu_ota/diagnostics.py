@@ -5,6 +5,11 @@ Only an explicit text whitelist is collected. Firmware binaries, OTA_INFO,
 statistics blobs and other arbitrary DTU files are intentionally excluded.
 By default all runner attempts from the same calendar day as the selected run
 are included so repeated update attempts can be diagnosed together.
+
+After a successful/same-version run the release GUI may already have archived
+and removed the DTU runner data. In that case this exporter reuses the newest
+local FoxAir_DTU_Logs_*.zip from the host log directory, so repeated manual
+diagnostic exports remain possible after the DTU has been cleaned up.
 """
 
 from __future__ import annotations
@@ -140,6 +145,133 @@ def _host_logs_for_day(directory: Path | None, day: str | None) -> list[Path]:
     )
 
 
+def _latest_saved_dtu_archive(directory: Path | None) -> Path | None:
+    if directory is None or not directory.is_dir():
+        return None
+    candidates = [
+        path for path in directory.glob("FoxAir_DTU_Logs_*.zip")
+        if path.is_file()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
+
+
+def _saved_archive_manifest(path: Path) -> dict[str, object]:
+    with zipfile.ZipFile(path) as archive:
+        try:
+            raw = archive.read("diagnostic_manifest.json")
+        except KeyError as error:
+            raise RuntimeError(f"saved DTU archive has no diagnostic manifest: {path}") from error
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"saved DTU archive has an invalid diagnostic manifest: {path}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"saved DTU archive manifest is not an object: {path}")
+    return value
+
+
+def _copy_saved_archive_entries(source: Path, target: zipfile.ZipFile) -> list[str]:
+    copied: list[str] = []
+    with zipfile.ZipFile(source) as saved:
+        for info in saved.infolist():
+            name = info.filename
+            if name == "diagnostic_manifest.json" or name == "host/foxair-updater.log":
+                continue
+            # Host/day logs are refreshed below from the real Logs directory.
+            if name.startswith("host/day/"):
+                continue
+            data = saved.read(info)
+            target.writestr(name, data)
+            copied.append(name)
+    return copied
+
+
+def create_bundle_from_saved_archive(
+    output: Path,
+    saved_archive: Path,
+    *,
+    host_log: Path | None = None,
+    host_log_dir: Path | None = None,
+    app_version: str = "unknown",
+) -> dict[str, object]:
+    """Create a repeatable diagnostic export after the DTU run was cleaned."""
+    source_manifest = _saved_archive_manifest(saved_archive)
+    run_id = str(source_manifest.get("run_id") or "").strip()
+    if run_id and not RUN_ID_RE.fullmatch(run_id):
+        raise RuntimeError(f"saved DTU archive contains invalid run_id: {run_id!r}")
+    run_ids_raw = source_manifest.get("run_ids") or ([run_id] if run_id else [])
+    run_ids = [
+        str(value) for value in run_ids_raw
+        if isinstance(value, str) and RUN_ID_RE.fullmatch(value)
+    ] if isinstance(run_ids_raw, list) else ([run_id] if run_id else [])
+    day = str(source_manifest.get("run_day") or "").strip() or (run_day(run_id) if run_id else None)
+
+    output = output.expanduser().resolve()
+    saved_archive = saved_archive.expanduser().resolve()
+    if output == saved_archive:
+        raise RuntimeError("diagnostic output must not overwrite the saved DTU archive")
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    included: list[str] = []
+    host_logs: list[str] = []
+    with tempfile.NamedTemporaryFile(prefix="foxair-diagnostics-", suffix=".zip", delete=False, dir=output.parent) as tmp:
+        temp_path = Path(tmp.name)
+    try:
+        with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            included.extend(_copy_saved_archive_entries(saved_archive, archive))
+
+            if host_log and host_log.is_file():
+                text = redact_text(host_log.read_text(encoding="utf-8", errors="replace"))
+                archive.writestr("host/foxair-updater.log", text)
+                included.append("host/foxair-updater.log")
+
+            for path in _host_logs_for_day(host_log_dir, day):
+                text = redact_text(path.read_text(encoding="utf-8", errors="replace"))
+                archive.writestr(f"host/day/{path.name}", text)
+                host_logs.append(path.name)
+                included.append(f"host/day/{path.name}")
+
+            manifest = {
+                "schema": "foxair-diagnostic-bundle-v2",
+                "created_utc": datetime.now(timezone.utc).isoformat(),
+                "app_version": app_version,
+                "run_id": run_id or None,
+                "run_day": day,
+                "run_ids": run_ids,
+                "host_logs": host_logs,
+                "included": included,
+                "missing": {},
+                "source": "saved-local-dtu-archive",
+                "saved_dtu_archive": str(saved_archive),
+                "privacy": {
+                    "firmware_included": False,
+                    "ota_info_binary_included": False,
+                    "statistics_binary_included": False,
+                    "text_redaction_applied": True,
+                },
+            }
+            archive.writestr("diagnostic_manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+        os.replace(temp_path, output)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+    return {
+        "ok": True,
+        "output": str(output),
+        "run_id": run_id or None,
+        "run_ids": run_ids,
+        "run_day": day,
+        "host_logs": host_logs,
+        "included": included,
+        "missing": {},
+        "source": "saved-local-dtu-archive",
+        "saved_dtu_archive": str(saved_archive),
+    }
+
+
 def create_bundle(
     adb: AdbClient,
     output: Path,
@@ -149,7 +281,23 @@ def create_bundle(
     host_log_dir: Path | None = None,
     app_version: str = "unknown",
 ) -> dict[str, object]:
-    resolved = resolve_run_id(adb, run_id)
+    try:
+        resolved = resolve_run_id(adb, run_id)
+    except RuntimeError:
+        # An explicit run-id must never silently resolve to another local run.
+        if run_id:
+            raise
+        saved_archive = _latest_saved_dtu_archive(host_log_dir)
+        if saved_archive is None:
+            raise
+        return create_bundle_from_saved_archive(
+            output,
+            saved_archive,
+            host_log=host_log,
+            host_log_dir=host_log_dir,
+            app_version=app_version,
+        )
+
     run_ids = same_day_run_ids(adb, resolved)
     day = run_day(resolved)
     output = output.expanduser().resolve()
@@ -206,6 +354,7 @@ def create_bundle(
                 "host_logs": host_logs,
                 "included": included,
                 "missing": missing,
+                "source": "live-dtu-run",
                 "privacy": {
                     "firmware_included": False,
                     "ota_info_binary_included": False,
@@ -228,6 +377,7 @@ def create_bundle(
         "host_logs": host_logs,
         "included": included,
         "missing": missing,
+        "source": "live-dtu-run",
     }
 
 
