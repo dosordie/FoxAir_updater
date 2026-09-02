@@ -85,6 +85,9 @@ class MainWindow(enduser.MainWindow):
                     "<code>phnixIot4G</code> erneut verifiziert. Es werden keine "
                     "RS485-/Modbus-Telegramme gesendet."
                 )
+            elif text == "Neuer Wert:":
+                # Static label from the hidden legacy single-counter row.
+                label.setVisible(False)
 
         for name in (
             "statistics_current",
