@@ -4,9 +4,7 @@ import argparse
 import hashlib
 from pathlib import Path
 
-
-LEGACY_HEADER = b"#!/bin/sh\n"
-CANONICAL_HEADER = b"#!/system/bin/sh\n"
+from prepare_legacy_restore_hook import LEGACY_HEADER, legacy_hook_bytes
 
 
 def sha256(path: Path) -> str:
@@ -48,14 +46,18 @@ def verify(root: Path, out: Path) -> None:
     legacy = out / "backend/tools/phnix_ota/phnix_ota_runtime_hook"
     if not legacy.is_file():
         raise RuntimeError(f"Legacy-Restore-Hook fehlt: {legacy}")
+
+    canonical = root / "updater/dtu_ota/payload/phnix_ota_runtime_hook"
+    expected_legacy = legacy_hook_bytes(canonical.read_bytes())
     legacy_raw = legacy.read_bytes()
-    canonical_raw = (root / "updater/dtu_ota/payload/phnix_ota_runtime_hook").read_bytes()
+    if legacy_raw != expected_legacy:
+        raise RuntimeError(
+            "Legacy-Restore-Hook entspricht nicht der LF-normalisierten kanonischen Quelle"
+        )
     if not legacy_raw.startswith(LEGACY_HEADER):
         raise RuntimeError("Legacy-Restore-Hook hat keinen exakten LF-Header #!/bin/sh")
-    if not canonical_raw.startswith(CANONICAL_HEADER):
-        raise RuntimeError("Kanonischer Runtime-Hook hat unerwarteten Header")
-    if legacy_raw[len(LEGACY_HEADER):] != canonical_raw[len(CANONICAL_HEADER):]:
-        raise RuntimeError("Legacy-Restore-Hook unterscheidet sich außerhalb der Shebang vom kanonischen Hook")
+    if b"\r" in legacy_raw:
+        raise RuntimeError("Legacy-Restore-Hook enthält weiterhin CR-Zeilenenden")
 
 
 def main() -> int:
