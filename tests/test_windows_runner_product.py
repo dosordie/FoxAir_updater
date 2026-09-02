@@ -39,6 +39,26 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn("def _expire_stale_serial_progress", self.product)
         self.assertIn("self._runner_transfer_visible", self.product)
 
+    def test_product_reuses_runner_flow_rows_instead_of_duplicate_bullets(self):
+        self.assertIn('"runner-preflight-user": "runner-preflight"', self.product)
+        self.assertIn('"runner-terminal-user": "runner-terminal"', self.product)
+        method = self.product.split("def _set_step", 1)[1].split("def _render_runner_status", 1)[0]
+        self.assertIn("self.FLOW_KEY_ALIASES.get(key, key)", method)
+
+    def test_manual_preflight_does_not_repeat_phase_below_flow_box(self):
+        method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
+        self.assertIn('phase == "dry-run-complete"', method)
+        self.assertIn("not self._runner_autostart_after_prepare", method)
+        self.assertIn('self._flow_title = "Vorprüfung erfolgreich"', method)
+        self.assertIn("self.progress_text.clear()", method)
+        self.assertIn("self.progress_sources.clear()", method)
+
+    def test_verified_service_restart_is_presented_as_completed(self):
+        method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
+        self.assertIn('status.get("service_restart_requested") is True', method)
+        self.assertIn('status.get("service_restart_verified") is True', method)
+        self.assertIn("LTE-Kommunikationsdienst wurde kontrolliert neu gestartet.", method)
+
 
 if __name__ == "__main__":
     unittest.main()
