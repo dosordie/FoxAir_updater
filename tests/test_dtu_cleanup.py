@@ -13,6 +13,7 @@ class FakeAdb:
         self.ps = ps
         self.ota_info = ota_info
         self.removed = []
+        self.ps_commands = []
 
     def shell(self, command, check=True):
         if command.startswith("cat '"):
@@ -22,6 +23,7 @@ class FakeAdb:
             path = command.split("'", 2)[1]
             return "1" if path in self.files else ""
         if command.startswith("ps 2>/dev/null"):
+            self.ps_commands.append(command)
             return self.ps
         if command.startswith("rm -rf '"):
             path = command.split("'", 2)[1]
@@ -124,6 +126,21 @@ class DtuCleanupTests(unittest.TestCase):
         with self.assertRaises(CleanupError):
             clean(adb)
         self.assertEqual(adb.removed, [])
+
+    def test_process_probe_does_not_put_match_terms_in_remote_command(self):
+        adb = FakeAdb(ps="14232 root 0:00 /system/bin/sh -c ps 2>/dev/null || true")
+        snapshot = safety_snapshot(adb)
+        self.assertTrue(snapshot["safe"])
+        self.assertEqual(snapshot["ota_helper_processes"], [])
+        self.assertEqual(adb.ps_commands, ["ps 2>/dev/null || true"])
+        self.assertNotIn("grep", adb.ps_commands[0])
+        self.assertNotIn("runtime_hook", adb.ps_commands[0])
+
+    def test_gdb_process_is_still_detected_after_host_side_filtering(self):
+        adb = FakeAdb(ps="777 root 0:00 /data/local/tmp/gdbserver :1234 /data/phnixIot4G")
+        snapshot = safety_snapshot(adb)
+        self.assertFalse(snapshot["safe"])
+        self.assertEqual(len(snapshot["ota_helper_processes"]), 1)
 
     def test_active_ota_info_resume_state_blocks_cleanup(self):
         raw = bytearray(IDLE_OTA_INFO)
