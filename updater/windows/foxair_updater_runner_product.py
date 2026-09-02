@@ -20,6 +20,13 @@ class MainWindow(enduser.MainWindow):
     """
 
     SERIAL_PROGRESS_STALE_SECONDS = 15.0
+    FLOW_KEY_ALIASES = {
+        # The lower runner layer already creates these rows. Re-use those keys
+        # so the end-user wording updates the existing row instead of adding an
+        # identical second bullet.
+        "runner-preflight-user": "runner-preflight",
+        "runner-terminal-user": "runner-terminal",
+    }
 
     def __init__(self):
         self._serial_progress_seen_at: float | None = None
@@ -32,6 +39,35 @@ class MainWindow(enduser.MainWindow):
     def _runner_cli(self) -> Path:
         """Use the production runner package after the repository relocation."""
         return base.backend_dir() / "updater/dtu_ota/cli.py"
+
+    def _set_step(self, key: str, level: str, text: str):
+        """Collapse presentation aliases onto the existing runner flow row."""
+        return super()._set_step(self.FLOW_KEY_ALIASES.get(key, key), level, text)
+
+    def _render_runner_status(self, status: dict) -> None:
+        """Apply final product-only presentation cleanup after runner rendering."""
+        super()._render_runner_status(status)
+
+        phase = str(status.get("phase") or "")
+        if phase == "dry-run-complete" and not self._runner_autostart_after_prepare:
+            # The completed preflight is already fully represented in the flow
+            # box. Do not repeat the same state directly below it as a large
+            # progress caption/source line when no transfer exists yet.
+            self._flow_title = "Vorprüfung erfolgreich"
+            self.progress_text.clear()
+            if hasattr(self, "progress_sources"):
+                self.progress_sources.clear()
+            self._render_flow()
+
+        if (
+            status.get("service_restart_requested") is True
+            and status.get("service_restart_verified") is True
+        ):
+            self._set_step(
+                "runner-service-restart",
+                "ok",
+                "LTE-Kommunikationsdienst wurde kontrolliert neu gestartet.",
+            )
 
     def _update_debug_line(self, line: str, event: object) -> None:
         """Accept live serial transfer progress for autonomous runner updates.
