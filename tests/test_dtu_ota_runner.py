@@ -146,6 +146,19 @@ class DtuOtaPackageTests(unittest.TestCase):
         with self.assertRaises(RunnerClientError):
             client.status("run-1", reconcile=False)
 
+    def test_client_uses_canonical_runner_payload_sources(self):
+        client = DtuOtaClient(FakeAdb())
+        self.assertEqual(
+            client.supervisor,
+            client.source_root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh",
+        )
+        self.assertEqual(
+            client.hook,
+            client.source_root / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
+        )
+        self.assertTrue(client.supervisor.is_file())
+        self.assertTrue(client.hook.is_file())
+
     def test_active_run_is_independent_from_stale_last_run(self):
         adb = FakeAdb()
         client = DtuOtaClient(adb)
@@ -301,6 +314,8 @@ class DtuOtaPackageTests(unittest.TestCase):
         authority = classify.split('if test "$TRANSFER_STARTED" = true', 1)[1].split("else", 1)[0]
         self.assertNotIn("rm -f \"$LOCK", authority)
         self.assertIn("boot_fingerprint", classify)
+        self.assertIn("hook ended: hook_pid=", run)
+        self.assertIn("debugger_reason=", run)
 
     def test_runner_status_distinguishes_requested_and_verified_flags(self):
         runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(

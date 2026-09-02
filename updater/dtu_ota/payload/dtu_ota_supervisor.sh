@@ -517,6 +517,9 @@ run_action() {
         fi
         if ! kill -0 "$HOOK_PID" 2>/dev/null; then
             wait "$HOOK_PID" 2>/dev/null; hook_rc=$?
+            hook_exit_reason=$(grep -E 'Remote connection closed|Error in sourced command file|Program received signal|gdbserver.*(exit|closed)|QEMU.*(exit|closed)' "$HOOK_LOG" 2>/dev/null | tail -n 1 | tr '\r\n' '  ' || true)
+            test -n "$hook_exit_reason" || hook_exit_reason=not-reported
+            log_event "hook ended: hook_pid=$HOOK_PID exit_code=$hook_rc phase=$phase transfer_started=$TRANSFER_STARTED original_service_authoritative=$ORIGINAL_AUTH service_pid=$SERVICE_PID debugger_reason=$hook_exit_reason"
             if test "$ORIGINAL_AUTH" = true; then
                 guarded_result recovery-required original-service-active-unmonitored "$hook_rc" hook_monitor_lost "Hook ended after authority handoff; original service, HTTP and lock remain untouched."
             fi

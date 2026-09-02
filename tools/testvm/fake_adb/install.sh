@@ -141,6 +141,23 @@ fetch tools/testvm/fake_adb/foxair-fake-adbctl "$INSTALL_DIR/foxair-fake-adbctl"
 fetch tools/testvm/fake_adb/foxair-fake-adb.service "$SERVICE_FILE"
 fetch tools/testvm/fake_adb/foxair-debug-stream.service "$DEBUG_SERVICE_FILE"
 
+# These files belonged to older simulator layouts.  They are never valid
+# runtime sources after a reinstall and must not mask the branch contents.
+rm -f "$INSTALL_DIR/dtu_ota_supervisor.sh" \
+    "$INSTALL_DIR/phnix_ota_runtime_hook" \
+    "$INSTALL_DIR/qemu_work_lab_backend.py.tmp" \
+    "$INSTALL_DIR/qemu_permissive_backend.py.tmp"
+rm -rf "$INSTALL_DIR/__pycache__"
+
+python3 -m py_compile \
+    "$INSTALL_DIR/foxair_fake_adb_server.py" \
+    "$INSTALL_DIR/foxair_debug_stream_server.py" \
+    "$INSTALL_DIR/qemu_lab_adapter.py" \
+    "$INSTALL_DIR/qemu_work_lab_backend.py" \
+    "$INSTALL_DIR/qemu_permissive_backend.py" \
+    "$INSTALL_DIR/phnix_ota_simulator.py"
+sh -n "$LAB_ROOT/tools/run_scenario_lab.sh"
+
 chmod 0755 \
     "$INSTALL_DIR/foxair_fake_adb_server.py" \
     "$INSTALL_DIR/foxair_debug_stream_server.py" \
