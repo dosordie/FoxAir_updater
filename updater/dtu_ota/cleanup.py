@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -40,6 +41,18 @@ CLEAN_PATHS = (
 
 LEGACY_HOOK_STATE = "/tmp/phnix_ota_hook"
 
+# Process matching is deliberately done on the host after a plain ``ps``.  Do
+# not put these names into a shell-side grep command: on the real DTU the
+# temporary ``sh -c ... grep ...`` process is visible in ``ps`` and would then
+# match its own command line, permanently blocking an otherwise safe cleanup.
+_OTA_PROCESS_TOKENS = (
+    "dtu_ota_supervisor",
+    "phnix_ota_runtime_hook",
+    "runtime_hook",
+    "phnix_local_ota",
+)
+_GDB_PROCESS_RE = re.compile(r"(?:^|[\s/])gdb(?:server)?(?:$|[\s/])", re.IGNORECASE)
+
 
 class CleanupError(RuntimeError):
     pass
@@ -54,15 +67,22 @@ def _read(adb: AdbClient, path: str) -> str:
 
 
 def _process_lines(adb: AdbClient) -> list[str]:
-    # Bracketed expressions keep grep/the shell itself out of the result. Any
-    # matching process blocks cleanup, even when a lock/marker went stale or
-    # disappeared: process evidence wins over bookkeeping.
-    raw = adb.shell(
-        "ps 2>/dev/null | grep -E "
-        "'([d]tu_ota_supervisor|[p]hnix_ota_runtime_hook|[r]untime_hook|"
-        "[p]hnix_local_ota|[g]db(server)?)' || true"
-    )
-    return [line.strip() for line in raw.splitlines() if line.strip()]
+    """Return only real OTA/debugger helper process lines.
+
+    The DTU process list is fetched without any updater-specific words in the
+    remote shell command.  Filtering is then performed locally so the safety
+    probe cannot mistake its own ``sh -c``/``grep`` process for an OTA helper.
+    """
+    raw = adb.shell("ps 2>/dev/null || true")
+    matches: list[str] = []
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if any(token in lower for token in _OTA_PROCESS_TOKENS) or _GDB_PROCESS_RE.search(line):
+            matches.append(line)
+    return matches
 
 
 def _ota_info_resume(adb: AdbClient) -> dict[str, object]:
