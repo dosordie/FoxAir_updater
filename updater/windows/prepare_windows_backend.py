@@ -39,6 +39,9 @@ def prepare_backend(root: Path, out: Path) -> None:
         root / "tools/phnix_ota/create_firmware_manifest.py",
         backend / "tools/phnix_ota/create_firmware_manifest.py",
     )
+    # The legacy controller validates the local helper before doing even a
+    # restore.  Windows worktrees can still contain CRLF despite .gitattributes,
+    # so both packaged helper locations must contain deterministic Unix LF.
     prepare_legacy_hook(
         root / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
         backend / "tools/phnix_ota/phnix_ota_runtime_hook",
@@ -54,7 +57,7 @@ def prepare_backend(root: Path, out: Path) -> None:
         root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh",
         backend / "updater/dtu_ota/payload/dtu_ota_supervisor.sh",
     )
-    copy_file(
+    prepare_legacy_hook(
         root / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
         backend / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
     )
