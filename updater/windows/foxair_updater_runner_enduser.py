@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -24,14 +25,20 @@ class MainWindow(user_gui.MainWindow):
 
     def __init__(self):
         self._runner_log_run_id: str | None = None
-        self._runner_progress_value: int | None = None
+        self._runner_progress_value: float | None = None
         self._runner_progress_offset: int | None = None
         self._runner_progress_length: int | None = None
         self._runner_transfer_visible = False
         self._runner_result_type = ""
         self._runner_recovery_state = ""
         self._passive_runner_poll = False
+        self._runner_started_epoch: int | None = None
+        self._runner_terminal_epoch: int | None = None
         super().__init__()
+        # The DTU itself refreshes OTA_INFO every two seconds. Poll at the same
+        # cadence so the Windows fallback display does not lag several seconds
+        # behind the autonomous runner state.
+        self._runner_timer.setInterval(2000)
         self.update_btn.setText("Firmwareupdate starten")
         self._log(f"[FoxAir Updater] Version {base.APP_VERSION} – autonomer DTU-Runner")
 
@@ -90,6 +97,49 @@ class MainWindow(user_gui.MainWindow):
                 "Löscht erst nach der Bestätigung die gespeicherten Daten dieses Firmwarelaufs "
                 "vom LTE-Modem."
             )
+
+    # ------------------------------------------------------------------
+    # Runner elapsed time
+    # ------------------------------------------------------------------
+    def _reset_flow(self, title: str, *, transfer_expected: bool = False):
+        self._runner_started_epoch = None
+        self._runner_terminal_epoch = None
+        return super()._reset_flow(title, transfer_expected=transfer_expected)
+
+    def _update_ota_elapsed(self) -> None:
+        if self._runner_started_epoch is None:
+            super()._update_ota_elapsed()
+            return
+        if not hasattr(self, "ota_elapsed_label"):
+            return
+        end_epoch = self._runner_terminal_epoch
+        if end_epoch is None:
+            end_epoch = int(time.time())
+        elapsed = max(0, int(end_epoch - self._runner_started_epoch))
+        minutes, seconds = divmod(elapsed, 60)
+        self.ota_elapsed_label.setText(f"Verstrichen: {minutes:02d}:{seconds:02d}")
+
+    def _sync_runner_elapsed(self, status: dict) -> None:
+        state = str(status.get("state") or "")
+        terminal = status.get("terminal") is True
+        started_at = status.get("started_at")
+        if not isinstance(started_at, int) or started_at <= 0:
+            return
+        if state != "running" and not terminal:
+            return
+
+        self._runner_started_epoch = started_at
+        if terminal:
+            updated_at = status.get("updated_at")
+            self._runner_terminal_epoch = (
+                updated_at if isinstance(updated_at, int) and updated_at >= started_at else int(time.time())
+            )
+            self._ota_elapsed_timer.stop()
+        else:
+            self._runner_terminal_epoch = None
+            if not self._ota_elapsed_timer.isActive():
+                self._ota_elapsed_timer.start()
+        self._update_ota_elapsed()
 
     # ------------------------------------------------------------------
     # Automatic update logs
@@ -159,6 +209,8 @@ class MainWindow(user_gui.MainWindow):
                 self._runner_progress_offset = None
                 self._runner_progress_length = None
                 self._runner_transfer_visible = False
+                self._runner_started_epoch = None
+                self._runner_terminal_epoch = None
                 # The version is already shown once in the visible protocol at
                 # application start. Put it into the newly opened automatic log
                 # directly so the GUI does not show the same header twice.
@@ -199,6 +251,31 @@ class MainWindow(user_gui.MainWindow):
         terminal = status.get("terminal") is True
         result_type = str(status.get("result_type") or "")
         transfer_started = status.get("transfer_started") is True
+        authoritative = status.get("original_service_authoritative") is True
+
+        # Replace the technical protocol labels created by the lower runner
+        # layer with end-user wording. Reusing the same flow keys updates the
+        # existing rows instead of adding duplicate C350/C357/C5A8 entries.
+        if status.get("c350_sent") is True:
+            self._set_step(
+                "runner-c350", "ok",
+                "Firmwareangebot wurde an das Mainboard gesendet.",
+            )
+        if status.get("c357_sent") is True:
+            self._set_step(
+                "runner-c357", "ok",
+                "Dateigröße und Prüfsumme wurden an das Mainboard übermittelt.",
+            )
+        if status.get("c5a8_sent") is True or transfer_started:
+            self._set_step(
+                "runner-c5a8", "warn",
+                "Firmwareübertragung hat begonnen – ein sicherer Abbruch ist jetzt nicht mehr möglich.",
+            )
+        if authoritative:
+            self._set_step(
+                "runner-authority", "info",
+                "Der originale LTE-Dienst übernimmt jetzt den weiteren Updateablauf.",
+            )
 
         phase_steps = {
             "dry-run-complete": (
@@ -237,25 +314,9 @@ class MainWindow(user_gui.MainWindow):
                 "runner-parser", "warn",
                 "Firmwareauftrag wird kontrolliert an den PHNIX-Originaldienst übergeben.",
             ),
-            "c350": (
-                "runner-c350-user", "warn",
-                "Firmwareangebot wurde an das Mainboard gesendet; Antwort wird ausgewertet.",
-            ),
-            "c350-sent": (
-                "runner-c350-user", "warn",
-                "Firmwareangebot wurde an das Mainboard gesendet; Antwort wird ausgewertet.",
-            ),
             "accepted": (
                 "runner-accepted-user", "ok",
                 "Mainboard hat das Firmwareupdate angenommen.",
-            ),
-            "c357": (
-                "runner-c357-user", "ok",
-                "Mainboard hat die Transfermetadaten angenommen.",
-            ),
-            "c5a8": (
-                "phase-c5a8", "warn",
-                "Firmwaredaten werden an das Mainboard übertragen.",
             ),
             "success-report": (
                 "runner-success-report", "ok",
@@ -273,12 +334,6 @@ class MainWindow(user_gui.MainWindow):
         item = phase_steps.get(phase)
         if item:
             self._set_step(*item)
-
-        if transfer_started and "phase-c5a8" not in self._flow_steps:
-            self._set_step(
-                "phase-c5a8", "warn",
-                "Firmwaredaten werden an das Mainboard übertragen.",
-            )
 
         if terminal:
             if result_type == "success":
@@ -347,12 +402,12 @@ class MainWindow(user_gui.MainWindow):
             ):
                 lines.append(
                     (
-                        f"DTU-Runner: {runner_percent} % · "
+                        f"DTU-Runner: {runner_percent:.1f} % · "
                         f"{runner_offset:,} / {runner_length:,} Byte"
                     ).replace(",", ".")
                 )
             else:
-                lines.append(f"DTU-Runner: {runner_percent} %")
+                lines.append(f"DTU-Runner: {runner_percent:.1f} %")
 
         if display_percent is not None:
             value = max(0, min(100, round(display_percent)))
@@ -361,10 +416,7 @@ class MainWindow(user_gui.MainWindow):
             # next to it; detailed values stay below the bar.
             self.progress.setFormat("")
             if hasattr(self, "progress_percent_label"):
-                if event is not None:
-                    self.progress_percent_label.setText(f"{float(display_percent):.1f} %")
-                else:
-                    self.progress_percent_label.setText(f"{value} %")
+                self.progress_percent_label.setText(f"{float(display_percent):.1f} %")
         else:
             self.progress.setValue(0)
             self.progress.setFormat("")
@@ -398,15 +450,25 @@ class MainWindow(user_gui.MainWindow):
         offset = status.get("offset")
         length = status.get("length")
 
+        self._sync_runner_elapsed(status)
         self._log_runner_id_once(run_id)
         self._update_flow_from_runner(status)
 
-        if isinstance(progress, int):
-            self._runner_progress_value = max(0, min(100, progress))
         if isinstance(offset, int):
             self._runner_progress_offset = offset
         if isinstance(length, int):
             self._runner_progress_length = length
+
+        if (
+            isinstance(self._runner_progress_offset, int)
+            and isinstance(self._runner_progress_length, int)
+            and self._runner_progress_length > 0
+        ):
+            precise = self._runner_progress_offset * 100.0 / self._runner_progress_length
+            self._runner_progress_value = max(0.0, min(100.0, precise))
+        elif isinstance(progress, (int, float)):
+            self._runner_progress_value = max(0.0, min(100.0, float(progress)))
+
         self._runner_transfer_visible = bool(
             transfer_started
             or phase == "c5a8"
@@ -444,7 +506,7 @@ class MainWindow(user_gui.MainWindow):
         notices: list[str] = []
         if authoritative:
             notices.append(
-                "<b>Hinweis:</b> Der originale PHNIX-Dienst führt das Update jetzt selbst weiter; "
+                "<b>Hinweis:</b> Der originale LTE-Dienst führt das Update jetzt selbst weiter; "
                 "ein sicherer Abbruch ist ab dieser Grenze gesperrt."
             )
         if recovery == "required" or result_type in {"recovery-required", "reboot-detected"}:
