@@ -638,3 +638,17 @@ Nach der separaten GUI-Integration zusätzlich:
 5. Backend/API stabilisieren und dokumentieren.
 6. Erst danach separat die Windows-GUI an die fertige API anbinden.
 7. Nach Gesamtabschluss permanente Doku aktualisieren und `docs/dev/` löschen.
+
+## 26. Verifizierter Zwischenstand 2026-09-02
+
+Der vollständige VM-Erfolgspfad ist bis C36E Status 5 und Promotion verifiziert.
+Ein ADB-Ausfall während C5A8 beeinflusste den autonomen Runner nicht.
+
+Ein simulierter Neustart des Originaldienstes während C5A8 wurde ebenfalls geprüft:
+Der alte Runner blieb bewusst terminal `recovery-required`, weil seine lückenlose
+Beobachtungskette verloren war. Der neu gestartete Originaldienst führte anschließend
+den C544-/C37B-Rehandshake aus, bot C350/C357 erneut an, setzte C5A8 am bestätigten
+Block fort und lief vollständig über Status 3 bis Status 5 und Promotion.
+
+Die Details, Sicherheitsabgrenzungen und noch offenen Tests stehen in
+`docs/reverse_engineering/PHNIX_DTU_OTA_RUNNER_STATUS_2026-09-02.md`.
