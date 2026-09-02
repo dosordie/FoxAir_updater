@@ -273,14 +273,14 @@ class OtaInfoTests(unittest.TestCase):
         self.assertTrue(alias.isolate_mqtt)
 
     def test_runtime_hook_only_blocks_mqtt_when_requested(self):
-        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         run = hook.split("run_hook() {", 1)[1].split("hold_hook() {", 1)[0]
         self.assertIn('if test "$ISOLATE_MQTT" = 1; then', run)
         self.assertIn("--dport 1883", run)
         self.assertIn("--sport 1883", run)
 
     def test_full_runtime_hook_uses_proven_yield_loop_and_transfer_marker(self):
-        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         full = hook.split("make_gdb_script() {", 1)[1].split("run_hook() {", 1)[0]
         self.assertIn("break *0x1fe40", full)
         self.assertNotIn("break *0x1fdac", full)
@@ -302,14 +302,14 @@ class OtaInfoTests(unittest.TestCase):
         self.assertIn("\"phase\":\"debugger-unexpected-stop\"", full)
 
     def test_full_runtime_hook_rejects_clean_debugger_exit_before_terminal_state(self):
-        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         run = hook.split("run_hook() {", 1)[1].split("hold_hook() {", 1)[0]
         self.assertIn('GDB_RC=0', run)
         self.assertIn('grep -q \'"terminal":true\' "$STATUS"', run)
         self.assertIn("\"phase\":\"debugger-ended-before-terminal\"", run)
 
     def test_cleanup_does_not_stop_original_service_after_ota_acceptance(self):
-        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         cleanup = hook.split("cleanup() {", 1)[1].split("stop_hook() {", 1)[0]
         authoritative = cleanup.split('if test -f "$ORIGINAL_SERVICE_OWNS"; then', 1)[1].split("else", 1)[0]
         self.assertIn('kill -CONT "$PID"', authoritative)
@@ -320,11 +320,11 @@ class OtaInfoTests(unittest.TestCase):
         adb = Mock()
         adb.shell.return_value = "0"
         with self.assertRaises(OtaError):
-            restore_original_runtime(adb, Path("tools/phnix_ota/phnix_ota_runtime_hook"))
+            restore_original_runtime(adb, Path("updater/dtu_ota/payload/phnix_ota_runtime_hook"))
         self.assertEqual(adb.shell.call_count, 2)
 
     def test_injected_restore_kills_old_service_without_resuming_it(self):
-        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         restore = hook.split("restore_original_hook() {", 1)[1].split("attach_test() {", 1)[0]
         injected = restore.split('if test "$INJECTED" = 1; then', 1)[1].split("\n    fi", 1)[0]
         self.assertIn('kill -KILL "$OLD_PID"', injected)
@@ -332,7 +332,7 @@ class OtaInfoTests(unittest.TestCase):
 
     def test_bundled_runtime_helper_matches_verified_build(self):
         digest = controller.validate_local_runtime_helper(
-            Path("tools/phnix_ota/phnix_ota_runtime_hook")
+            Path("updater/dtu_ota/payload/phnix_ota_runtime_hook")
         )
         self.assertEqual(len(digest), 64)
 

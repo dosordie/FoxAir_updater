@@ -8,6 +8,7 @@ on:
     paths:
       - "updater/windows/**"
       - "updater/common/**"
+      - "updater/dtu_ota/**"
       - "tools/phnix_ota/**"
       - ".github/workflows/windows-build.yml"
       - "LICENSE"
@@ -44,12 +45,18 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Windows version: $version"
 
-      - name: Compile Windows GUI sources
+      - name: Compile Windows GUI and runner sources
         shell: powershell
         run: |
           python -m py_compile updater/windows/foxair_updater_gui.py
           python -m py_compile updater/windows/foxair_updater_app.py
+          python -m py_compile updater/windows/foxair_updater_runner_product.py
+          python -m py_compile updater/windows/foxair_updater_runner_enduser.py
           python -m py_compile updater/windows/release_check.py
+          python -m py_compile updater/dtu_ota/cli.py
+          python -m py_compile updater/dtu_ota/client.py
+          python -m py_compile updater/dtu_ota/package.py
+          python updater/dtu_ota/cli.py --help > $null
 
       - name: Build portable package
         shell: cmd

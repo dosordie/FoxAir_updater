@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0\..\.."
 
-set "APP_VERSION=0.3.97"
+set "APP_VERSION=0.4.0"
 set "APP_NAME=FoxAir_Updater"
 set "OUT=dist\%APP_NAME%"
 set "CACHE=build\windows-cache"
@@ -47,7 +47,7 @@ echo [3/9] PySide6-GUI als One-Folder-App bauen ...
   --windowed ^
   --name "%APP_NAME%" ^
   --icon "%ICON_FILE%" ^
-  updater\windows\foxair_updater_maintenance.py || goto :err
+  updater\windows\foxair_updater_runner_product.py || goto :err
 
 if not exist "%OUT%\%APP_NAME%.exe" (
   echo FEHLER: %OUT%\%APP_NAME%.exe fehlt.
@@ -55,36 +55,46 @@ if not exist "%OUT%\%APP_NAME%.exe" (
 )
 copy /y "%ICON_FILE%" "%OUT%\app_icon.ico" >nul || goto :err
 
-echo [4/9] Gemeinsames Backend plus Windows-Sicherheitshuette kopieren ...
+echo [4/9] Gemeinsames Backend und produktiven DTU-Runner kopieren ...
 if exist "%OUT%\backend" rmdir /s /q "%OUT%\backend"
 mkdir "%OUT%\backend\tools\phnix_ota" || goto :err
 mkdir "%OUT%\backend\tools\phnix_traffic" || goto :err
 mkdir "%OUT%\backend\updater\common" || goto :err
+mkdir "%OUT%\backend\updater\dtu_ota\payload" || goto :err
 
 copy /y updater\__init__.py "%OUT%\backend\updater\__init__.py" >nul || goto :err
 xcopy /y /i updater\common\*.py "%OUT%\backend\updater\common\" >nul || goto :err
 
-rem Der verifizierte Controller-Core bleibt bytegleich unter _core.py erhalten.
+rem Der verifizierte Controller-Core bleibt fuer Diagnose-/Bestandsfunktionen erhalten.
 copy /y tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" >nul || goto :err
-rem Die plattformuebergreifende Safety-Schicht umschliesst den unveraenderten Core.
 copy /y tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :err
-rem Die GUI startet unter dem bisherigen Dateinamen nur die Windows-Sicherheitshuette.
 copy /y updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :err
 copy /y tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\" >nul || goto :err
-copy /y tools\phnix_ota\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\" >nul || goto :err
+rem Legacy Controller erwartet den Runtime-Hook neben dem Controller. Die kanonische Quelle liegt jetzt im Produktpaket.
+copy /y updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook" >nul || goto :err
 copy /y tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\" >nul || goto :err
+
+rem Produktiver OTA-Pfad: Host paketiert/liest Status; Supervisor und Hook werden auf die DTU uebertragen.
+xcopy /y /i updater\dtu_ota\*.py "%OUT%\backend\updater\dtu_ota\" >nul || goto :err
+copy /y updater\dtu_ota\payload\dtu_ota_supervisor.sh "%OUT%\backend\updater\dtu_ota\payload\dtu_ota_supervisor.sh" >nul || goto :err
+copy /y updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\updater\dtu_ota\payload\phnix_ota_runtime_hook" >nul || goto :err
 
 echo [5/9] Bytegleichheit des gemeinsamen Backends pruefen ...
 fc /b tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" >nul || goto :backenderr
 fc /b tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :backenderr
 fc /b updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :backenderr
 fc /b tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" >nul || goto :backenderr
-fc /b tools\phnix_ota\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook" >nul || goto :backenderr
+fc /b updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook" >nul || goto :backenderr
 fc /b tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\foxair_traffic_trace" >nul || goto :backenderr
+for %%F in (updater\dtu_ota\*.py) do (
+  fc /b "%%F" "%OUT%\backend\updater\dtu_ota\%%~nxF" >nul || goto :backenderr
+)
+fc /b updater\dtu_ota\payload\dtu_ota_supervisor.sh "%OUT%\backend\updater\dtu_ota\payload\dtu_ota_supervisor.sh" >nul || goto :backenderr
+fc /b updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\updater\dtu_ota\payload\phnix_ota_runtime_hook" >nul || goto :backenderr
 for %%F in (updater\common\*.py) do (
   fc /b "%%F" "%OUT%\backend\updater\common\%%~nxF" >nul || goto :backenderr
 )
-echo [OK] Gemeinsamer Controller/Common-Code wurde unveraendert kopiert.
+echo [OK] Gemeinsamer Controller/Common-Code und produktiver DTU-Runner wurden unveraendert kopiert.
 
 echo [6/9] Private Python-%PY_EMBED_VERSION%-Runtime vorbereiten ...
 if not exist "%CACHE%" mkdir "%CACHE%"
@@ -117,8 +127,9 @@ echo [7/9] Backend mit privater Runtime pruefen ...
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" --help >nul || goto :err
+"%OUT%\runtime\python.exe" "%OUT%\backend\updater\dtu_ota\cli.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\updater\common\phnix_statistics_maintenance.py" --help >nul || goto :err
-echo [OK] Windows-Sicherheitshuette, Safety-Schicht, Controller-Core, Manifest-Tool und Maintenance-Core starten mit der privaten Runtime.
+echo [OK] Windows-Sicherheitshuette, DTU-Runner-CLI, Controller-Core, Manifest-Tool und Maintenance-Core starten mit der privaten Runtime.
 
 echo [8/9] Dokumentation und Lizenzen beilegen ...
 copy /y LICENSE "%OUT%\LICENSE" >nul || goto :err

@@ -12,7 +12,14 @@ class V030GuiRequirementsTests(unittest.TestCase):
         cls.maintenance = Path("updater/windows/foxair_updater_maintenance.py").read_text(encoding="utf-8")
 
     def test_base_tab_order(self):
-        labels = ["Verbindung", "Backup", "Firmware Update", "Manifest", "Status / Recovery", "Erweitert"]
+        labels = [
+            "Verbindung",
+            "Backup",
+            "Firmwareupdate",
+            "Update-Datei / Manifest",
+            "Status / Wiederherstellung",
+            "Erweitert",
+        ]
         positions = [self.base.index(f'"{label}"') for label in labels]
         self.assertEqual(positions, sorted(positions))
         self.assertIn('insertTab(\n            5, self._modem_info_page()', self.desktop)

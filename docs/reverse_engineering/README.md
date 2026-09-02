@@ -1,6 +1,6 @@
 # Reverse-Engineering-Dokumentation
 
-Stand: 29. August 2026
+Stand: 1. September 2026
 
 Dieser Ordner enthält sowohl **aktuelle technische Referenzen** als auch bewusst erhaltene **historische Arbeits-/Teststände** aus der Entwicklung des FoxAir Updaters.
 
@@ -17,6 +17,8 @@ Für den heutigen Stand zuerst diese Dateien verwenden:
 - [`PHNIX_phnixIot4G_board_ota_completion.md`](PHNIX_phnixIot4G_board_ota_completion.md) – Abschluss nach dem letzten C5A8, Status 3/5 und Step 12.
 - [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdogs_reset_counters.md) – Watchdogs, Reset-Counter und präzise MQTT-Offline-/1800-s-Logik.
 - [`PHNIX_LOCAL_OTA_LAUNCHER_BEDIENUNG.md`](PHNIX_LOCAL_OTA_LAUNCHER_BEDIENUNG.md) – technische Bedienung des aktuellen lokalen Controllers.
+- [`PHNIX_DTU_AUTONOMOUS_RUNNER_LIVE_TEST_2026-09-01.md`](PHNIX_DTU_AUTONOMOUS_RUNNER_LIVE_TEST_2026-09-01.md) – isolierter Live-Nachweis eines von der startenden ADB-Shell unabhängigen Minimal-Runners auf dem DTU.
+- [`PHNIX_DTU_OTA_RUNNER_STAGE1.md`](PHNIX_DTU_OTA_RUNNER_STAGE1.md) – geplante Zielarchitektur und Stage-1-Umsetzung mit Run-ID, Single-Run-Lock, persistentem Status, Abort-Request sowie Ack/Cleanup.
 
 Für Endanwender ist nicht dieser Ordner, sondern [`../HowTo/PHNIX_UPDATER_ENDANWENDER.md`](../HowTo/PHNIX_UPDATER_ENDANWENDER.md) die richtige Anleitung.
 
