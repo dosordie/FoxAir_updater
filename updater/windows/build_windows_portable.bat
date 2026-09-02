@@ -41,6 +41,7 @@ if /I not "!ICON_HASH!"=="%ICON_GIT_SHA%" (
 echo [OK] FoxAir_Control-Programmlogo verifiziert.
 
 echo [3/9] PySide6-GUI als One-Folder-App bauen ...
+rem Produktlogik bleibt in updater\windows\foxair_updater_runner_product.py; der Release-Entrypoint erweitert sie nur um Diagnoseexport.
 %PY_CMD% -m PyInstaller ^
   --noconfirm ^
   --clean ^
