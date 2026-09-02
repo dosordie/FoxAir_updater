@@ -22,6 +22,21 @@ def require_equal(source: Path, copied: Path) -> None:
         raise RuntimeError(f"Backend-Datei weicht ab: {source} -> {copied}")
 
 
+def require_normalized_hook(source: Path, copied: Path) -> None:
+    if not copied.is_file():
+        raise RuntimeError(f"Runtime-Hook fehlt: {copied}")
+    expected = legacy_hook_bytes(source.read_bytes())
+    raw = copied.read_bytes()
+    if raw != expected:
+        raise RuntimeError(
+            f"Runtime-Hook entspricht nicht der LF-normalisierten kanonischen Quelle: {copied}"
+        )
+    if not raw.startswith(LEGACY_HEADER):
+        raise RuntimeError(f"Runtime-Hook hat keinen exakten LF-Header #!/bin/sh: {copied}")
+    if b"\r" in raw:
+        raise RuntimeError(f"Runtime-Hook enthält weiterhin CR-Zeilenenden: {copied}")
+
+
 def verify(root: Path, out: Path) -> None:
     pairs = [
         (root / "tools/phnix_ota/phnix_local_ota_controller.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller_core.py"),
@@ -30,7 +45,6 @@ def verify(root: Path, out: Path) -> None:
         (root / "tools/phnix_ota/create_firmware_manifest.py", out / "backend/tools/phnix_ota/create_firmware_manifest.py"),
         (root / "tools/phnix_traffic/foxair_traffic_trace", out / "backend/tools/phnix_traffic/foxair_traffic_trace"),
         (root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh", out / "backend/updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
-        (root / "updater/dtu_ota/payload/phnix_ota_runtime_hook", out / "backend/updater/dtu_ota/payload/phnix_ota_runtime_hook"),
     ]
     pairs.extend(
         (path, out / "backend/updater/dtu_ota" / path.name)
@@ -43,21 +57,15 @@ def verify(root: Path, out: Path) -> None:
     for source, copied in pairs:
         require_equal(source, copied)
 
-    legacy = out / "backend/tools/phnix_ota/phnix_ota_runtime_hook"
-    if not legacy.is_file():
-        raise RuntimeError(f"Legacy-Restore-Hook fehlt: {legacy}")
-
     canonical = root / "updater/dtu_ota/payload/phnix_ota_runtime_hook"
-    expected_legacy = legacy_hook_bytes(canonical.read_bytes())
-    legacy_raw = legacy.read_bytes()
-    if legacy_raw != expected_legacy:
-        raise RuntimeError(
-            "Legacy-Restore-Hook entspricht nicht der LF-normalisierten kanonischen Quelle"
-        )
-    if not legacy_raw.startswith(LEGACY_HEADER):
-        raise RuntimeError("Legacy-Restore-Hook hat keinen exakten LF-Header #!/bin/sh")
-    if b"\r" in legacy_raw:
-        raise RuntimeError("Legacy-Restore-Hook enthält weiterhin CR-Zeilenenden")
+    require_normalized_hook(
+        canonical,
+        out / "backend/tools/phnix_ota/phnix_ota_runtime_hook",
+    )
+    require_normalized_hook(
+        canonical,
+        out / "backend/updater/dtu_ota/payload/phnix_ota_runtime_hook",
+    )
 
 
 def main() -> int:
