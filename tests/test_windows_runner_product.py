@@ -59,6 +59,18 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn('status.get("service_restart_verified") is True', method)
         self.assertIn("LTE-Kommunikationsdienst wurde kontrolliert neu gestartet.", method)
 
+    def test_product_moves_status_button_to_protocol_toolbar(self):
+        ui = self.product.split("def _ui(self):", 1)[1].split("# ------------------------------------------------------------------\n    # Final maintenance UI", 1)[0]
+        self.assertIn('button.text() == "Protokoll leeren"', ui)
+        self.assertIn("source_layout.removeWidget(self.ota_reattach_btn)", ui)
+        self.assertIn("log_toolbar.insertWidget", ui)
+
+    def test_product_places_manifest_immediately_before_advanced(self):
+        ui = self.product.split("def _ui(self):", 1)[1].split("# ------------------------------------------------------------------\n    # Final maintenance UI", 1)[0]
+        self.assertIn('self.tabs.tabText(index) == "Update-Datei / Manifest"', ui)
+        self.assertIn('self.tabs.tabText(index) == "Erweitert"', ui)
+        self.assertIn("self.tabs.insertTab(advanced_index, manifest_widget, manifest_text)", ui)
+
 
 if __name__ == "__main__":
     unittest.main()
