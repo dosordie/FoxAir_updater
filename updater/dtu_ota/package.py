@@ -31,6 +31,14 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
+def shell_payload_bytes(path: Path) -> bytes:
+    """Return a shell payload with deterministic Unix line endings."""
+    payload = path.read_bytes()
+    if b"\x00" in payload:
+        raise PackageError(f"shell payload contains NUL bytes: {path}")
+    return payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def ota_command_bytes(manifest: FirmwareManifest) -> bytes:
     value = {
         "cmd": "CMD_OTA", "code": "0033", "param": {
@@ -79,11 +87,11 @@ class DtuOtaPackage:
             "target_ssid": manifest.target_ssid,
             "hook_file": "runtime_hook",
             "hook_version": f"phnix-runtime-{expected_service_build_id[:12]}",
-            "hook_sha256": sha256_file(hook),
+            "hook_sha256": hashlib.sha256(shell_payload_bytes(hook)).hexdigest().upper(),
             "command_sha256": hashlib.sha256(ota_command_bytes(manifest)).hexdigest().upper(),
             "runner_file": "dtu_ota_supervisor.sh",
             "runner_version": RUNNER_VERSION,
-            "runner_sha256": sha256_file(supervisor),
+            "runner_sha256": hashlib.sha256(shell_payload_bytes(supervisor)).hexdigest().upper(),
             "expected_service_sha256": expected_service_sha256.upper(),
             "expected_service_build_id": expected_service_build_id.lower(),
             "mode": mode,

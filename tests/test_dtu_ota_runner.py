@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest import mock
 
 from updater.dtu_ota.client import DtuOtaClient, RunnerClientError
-from updater.dtu_ota.package import DtuOtaPackage, PackageError, ota_command_bytes
+from updater.dtu_ota.package import (
+    DtuOtaPackage, PackageError, ota_command_bytes, shell_payload_bytes,
+)
 from tools.testvm.fake_adb import qemu_work_lab_backend
 from tools.testvm.work_lab.rs485_fault_emulator import (
     board_software_info_frame,
@@ -80,6 +82,35 @@ class DtuOtaPackageTests(unittest.TestCase):
             self.assertEqual(value["runner_sha256"], hashlib.sha256(runner.read_bytes()).hexdigest().upper())
             self.assertTrue(value["restart_service_before_update"])
             self.assertEqual(json.loads(package.canonical_bytes()), value)
+
+    def test_shell_payloads_are_normalized_before_hash_and_upload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            firmware, hook, runner, manifest = self.make_inputs(Path(temp))
+            hook.write_bytes(b"#!/bin/sh\r\nset -eu\r\n")
+            runner.write_bytes(b"#!/bin/sh\r\necho runner\r\n")
+            manifest_path = Path(temp) / "FW3.4.json"
+            manifest_path.write_text(json.dumps(asdict(manifest)), encoding="utf-8")
+            adb = FakeAdb()
+            client = DtuOtaClient(adb, source_root=Path(temp))
+            client.hook = hook
+            client.supervisor = runner
+            client.prepare(
+                manifest_path=manifest_path, firmware_path=firmware, run_id="lf-test",
+            )
+            uploaded_hook = adb.files["/data/foxair_ota_runner/runs/lf-test/payload/runtime_hook"]
+            uploaded_runner = adb.files["/data/foxair_ota_runner/runs/lf-test/payload/dtu_ota_supervisor.sh"]
+            self.assertNotIn(b"\r", uploaded_hook)
+            self.assertNotIn(b"\r", uploaded_runner)
+            package = json.loads(
+                adb.files["/data/foxair_ota_runner/runs/lf-test/package.json"]
+            )
+            self.assertEqual(
+                package["hook_sha256"], hashlib.sha256(uploaded_hook).hexdigest().upper()
+            )
+            self.assertEqual(
+                package["runner_sha256"], hashlib.sha256(uploaded_runner).hexdigest().upper()
+            )
+            self.assertEqual(shell_payload_bytes(hook), uploaded_hook)
 
     def test_package_rejects_unsafe_target_and_bad_run_id(self):
         with tempfile.TemporaryDirectory() as temp:

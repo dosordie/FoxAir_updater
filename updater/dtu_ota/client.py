@@ -11,7 +11,7 @@ from typing import Any
 from updater.common.adb_transport import AdbClient, TransportError
 from updater.common.firmware_manifest import FirmwareManifest
 
-from .package import DtuOtaPackage, RUN_ID_RE, ota_command_bytes
+from .package import DtuOtaPackage, RUN_ID_RE, ota_command_bytes, shell_payload_bytes
 
 
 REMOTE_BASE = "/data/foxair_ota_runner"
@@ -91,14 +91,18 @@ class DtuOtaClient:
         run_dir = self._run_dir(run_id)
         payload = f"{run_dir}/payload"
         self.adb.shell(f"mkdir -p '{payload}' '{run_dir}/state'")
-        self.adb.push(self.supervisor, f"{payload}/dtu_ota_supervisor.sh")
-        self.adb.push(self.hook, f"{payload}/runtime_hook")
-        self.adb.push(firmware, f"{payload}/firmware.bin")
         with tempfile.TemporaryDirectory() as temp:
+            supervisor_path = Path(temp) / "dtu_ota_supervisor.sh"
+            supervisor_path.write_bytes(shell_payload_bytes(self.supervisor))
+            hook_path = Path(temp) / "runtime_hook"
+            hook_path.write_bytes(shell_payload_bytes(self.hook))
             package_path = Path(temp) / "package.json"
             package_path.write_bytes(package.canonical_bytes())
             command_path = Path(temp) / "ota-command.json"
             command_path.write_bytes(ota_command_bytes(manifest))
+            self.adb.push(supervisor_path, f"{payload}/dtu_ota_supervisor.sh")
+            self.adb.push(hook_path, f"{payload}/runtime_hook")
+            self.adb.push(firmware, f"{payload}/firmware.bin")
             self.adb.push(package_path, f"{run_dir}/package.json")
             self.adb.push(command_path, f"{payload}/ota-command.json")
         self.adb.shell(
