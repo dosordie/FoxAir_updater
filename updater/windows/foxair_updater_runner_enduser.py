@@ -39,6 +39,8 @@ class MainWindow(user_gui.MainWindow):
         # cadence so the Windows fallback display does not lag several seconds
         # behind the autonomous runner state.
         self._runner_timer.setInterval(2000)
+        self.setWindowTitle(f"FoxAir Updater {base.APP_VERSION}")
+        self.dry.setText("Vorprüfung")
         self.update_btn.setText("Firmwareupdate starten")
         self._log(f"[FoxAir Updater] Version {base.APP_VERSION} – autonomer DTU-Runner")
 
@@ -48,9 +50,9 @@ class MainWindow(user_gui.MainWindow):
     def _update(self):
         widget = super()._update()
         layout = widget.layout()
-        self.ota_reattach_btn.setText("Status checken")
+        self.ota_reattach_btn.setText("Status prüfen")
         self.ota_reattach_btn.setToolTip(
-            "Liest den aktuellen persistenten Firmwarelauf-Status. Falls die ADB-Verbindung "
+            "Liest den gespeicherten Update-Status vom LTE-Modem. Falls die ADB-Verbindung "
             "unterbrochen wurde, wird sie dabei neu aufgebaut."
         )
         # The status action is secondary to the actual update controls. Keep it
@@ -86,16 +88,16 @@ class MainWindow(user_gui.MainWindow):
         if retain_diagnostics:
             self.runner_cleanup_btn.setText("Diagnosedaten werden beibehalten")
             self.runner_cleanup_btn.setToolTip(
-                "Dieser Lauf benötigt eine manuelle Prüfung. Die Diagnosedaten werden deshalb "
-                "absichtlich nicht automatisch gelöscht. ACK bestätigt nur, dass das Ergebnis "
-                "gesehen wurde."
+                "Dieses Ergebnis benötigt eine manuelle Prüfung. Die Diagnosedaten werden deshalb "
+                "absichtlich nicht automatisch gelöscht. Die Ergebnisbestätigung bestätigt nur, "
+                "dass der Hinweis gesehen wurde."
             )
             self.runner_cleanup_btn.setEnabled(False)
         else:
-            self.runner_cleanup_btn.setText("Bestätigte Laufdaten löschen")
+            self.runner_cleanup_btn.setText("Gespeicherte Updatedaten löschen")
             self.runner_cleanup_btn.setToolTip(
-                "Löscht erst nach der Bestätigung die gespeicherten Daten dieses Firmwarelaufs "
-                "vom LTE-Modem."
+                "Löscht erst nach der Ergebnisbestätigung die gespeicherten Daten dieses "
+                "Firmwareupdates vom LTE-Modem."
             )
 
     # ------------------------------------------------------------------
@@ -237,14 +239,59 @@ class MainWindow(user_gui.MainWindow):
                 "Update-Überwachung vor Beginn beendet – Originalzustand wiederhergestellt"
             ),
             "original-service-active-unmonitored": (
-                "Originaldienst führt das Update weiter – lokale Überwachung wurde beendet"
+                "Firmwareupdate läuft auf dem LTE-Modem weiter – lokale Überwachung ist beendet"
             ),
             "post-restart-preflight": "LTE-Dienst wird nach dem Neustart erneut geprüft",
-            "local-http": "Firmwaredatei wird lokal für das LTE-Modem bereitgestellt",
-            "invalid-success-boundary": "Mainboard-Abschluss konnte noch nicht sicher bestätigt werden",
-            "invalid-failure-boundary": "Mainboard-Fehlerabschluss konnte noch nicht sicher bestätigt werden",
+            "local-http": "Firmwaredatei wird für das LTE-Modem bereitgestellt",
+            "invalid-success-boundary": "Abschluss des Firmwareupdates konnte noch nicht sicher bestätigt werden",
+            "invalid-failure-boundary": "Fehlerstatus des Firmwareupdates konnte noch nicht sicher bestätigt werden",
         }
         return friendly.get(phase, user_gui.MainWindow._phase_text(phase))
+
+    @staticmethod
+    def _friendly_detail(status: dict) -> str:
+        phase = str(status.get("phase") or "")
+        reason = str(status.get("reason") or "")
+        detail = str(status.get("detail") or "").strip()
+
+        phase_text = {
+            "dry-run-complete": (
+                "Die Vorprüfung ist abgeschlossen. Das Firmwareupdate ist vorbereitet, aber noch nicht gestartet."
+            ),
+            "local-preparation": "Das LTE-Modem bereitet das Firmwareupdate vor.",
+            "service-restart": "Der LTE-Kommunikationsdienst wird für die Update-Überwachung neu gestartet.",
+            "same-version": "Die gleiche Firmware ist bereits installiert. Es wurden keine Firmwaredaten übertragen.",
+            "original-service-active-unmonitored": (
+                "Das Firmwareupdate läuft auf dem LTE-Modem weiter. Windows kann den aktuellen Stand "
+                "momentan nicht vollständig überwachen."
+            ),
+            "hook-ended-before-authority": (
+                "Das Firmwareupdate wurde vor Beginn der Übertragung beendet und der Originalzustand wiederhergestellt."
+            ),
+            "reboot-detected": (
+                "Das LTE-Modem wurde während des Firmwareupdates neu gestartet. Eine manuelle Prüfung ist erforderlich."
+            ),
+        }.get(phase)
+        if phase_text:
+            return phase_text
+
+        reason_text = {
+            "package_validation_failed": "Die Vorprüfung der Update-Datei oder des LTE-Modems ist fehlgeschlagen.",
+            "hook_monitor_lost": "Die lokale Update-Überwachung wurde unterbrochen. Bitte den gespeicherten Status prüfen.",
+            "active_run_exists": "Auf dem LTE-Modem ist bereits ein Firmwareupdate aktiv.",
+        }.get(reason)
+        if reason_text:
+            return reason_text
+
+        technical_markers = (
+            "gdb", "c350", "c357", "c5a8", "c36e", "hook", "runner", "ota_info",
+            "abort_allowed", "original_service", "point-of-no-return", "/data/", "step 12",
+        )
+        if detail and not any(marker in detail.lower() for marker in technical_markers):
+            return detail
+        if detail:
+            return "Technische Details stehen im Protokoll."
+        return ""
 
     def _update_flow_from_runner(self, status: dict) -> None:
         phase = str(status.get("phase") or "")
@@ -259,12 +306,12 @@ class MainWindow(user_gui.MainWindow):
         if status.get("c350_sent") is True:
             self._set_step(
                 "runner-c350", "ok",
-                "Firmwareangebot wurde an das Mainboard gesendet.",
+                "Update-Anfrage wurde an das Mainboard gesendet.",
             )
         if status.get("c357_sent") is True:
             self._set_step(
                 "runner-c357", "ok",
-                "Dateigröße und Prüfsumme wurden an das Mainboard übermittelt.",
+                "Firmwareübertragung wurde vorbereitet.",
             )
         if status.get("c5a8_sent") is True or transfer_started:
             self._set_step(
@@ -274,25 +321,25 @@ class MainWindow(user_gui.MainWindow):
         if authoritative:
             self._set_step(
                 "runner-authority", "info",
-                "Der originale LTE-Dienst übernimmt jetzt den weiteren Updateablauf.",
+                "Das LTE-Modem führt das Firmwareupdate jetzt selbstständig weiter.",
             )
 
         phase_steps = {
             "dry-run-complete": (
                 "runner-preflight-user", "ok",
-                "Paket, Firmwaredatei, Hashes, Speicher und LTE-Voraussetzungen geprüft.",
+                "Update-Datei, Speicherplatz und LTE-Modem wurden erfolgreich geprüft.",
             ),
             "local-preparation": (
                 "runner-local-preparation", "ok",
-                "Autonomer Firmwarelauf wurde auf dem LTE-Modem übernommen.",
+                "Firmwareupdate wurde auf dem LTE-Modem vorbereitet.",
             ),
             "service-restart": (
                 "runner-service-restart", "warn",
-                "PHNIX-Kommunikationsdienst wird kontrolliert neu gestartet.",
+                "LTE-Kommunikationsdienst wird für die Update-Überwachung neu gestartet.",
             ),
             "staging": (
                 "runner-staging", "ok",
-                "Firmwaredatei wird lokal bereitgestellt und verifiziert.",
+                "Firmwaredatei wird für das Update geprüft.",
             ),
             "hook-started": (
                 "runner-monitor", "ok",
@@ -304,15 +351,15 @@ class MainWindow(user_gui.MainWindow):
             ),
             "attaching": (
                 "runner-monitor", "warn",
-                "Update-Überwachung verbindet sich mit dem laufenden PHNIX-Dienst.",
+                "Update-Überwachung verbindet sich mit dem LTE-Dienst.",
             ),
             "waiting-for-yield-loop": (
                 "runner-yield", "warn",
-                "Sicherer Startpunkt im PHNIX-Originaldienst wird abgewartet.",
+                "Sicherer Start des Firmwareupdates wird abgewartet.",
             ),
             "parser-injection": (
                 "runner-parser", "warn",
-                "Firmwareauftrag wird kontrolliert an den PHNIX-Originaldienst übergeben.",
+                "Firmwareupdate wird an das Mainboard übergeben.",
             ),
             "accepted": (
                 "runner-accepted-user", "ok",
@@ -320,7 +367,7 @@ class MainWindow(user_gui.MainWindow):
             ),
             "success-report": (
                 "runner-success-report", "ok",
-                "Mainboard meldet den Transferabschluss; Abschlussgrenze wird geprüft.",
+                "Firmware vollständig übertragen – das Mainboard prüft und übernimmt das Update.",
             ),
             "same-version": (
                 "runner-same-user", "ok",
@@ -328,7 +375,7 @@ class MainWindow(user_gui.MainWindow):
             ),
             "hook-ended-before-authority": (
                 "runner-recovery-user", "warn",
-                "Überwachung endete vor dem Firmwaretransfer; Originalzustand wurde wiederhergestellt.",
+                "Update wurde vor Beginn der Übertragung beendet; Originalzustand wurde wiederhergestellt.",
             ),
         }
         item = phase_steps.get(phase)
@@ -339,22 +386,22 @@ class MainWindow(user_gui.MainWindow):
             if result_type == "success":
                 self._set_step(
                     "runner-terminal-user", "ok",
-                    "Firmwareupdate und Mainboard-Abschluss wurden erfolgreich bestätigt.",
+                    "Firmwareupdate wurde erfolgreich abgeschlossen.",
                 )
             elif result_type == "same-version":
                 self._set_step(
                     "runner-terminal-user", "ok",
-                    "Gleiche Firmware sicher erkannt; kein Firmwaretransfer erforderlich.",
+                    "Gleiche Firmware sicher erkannt; kein Firmwareupdate erforderlich.",
                 )
             elif result_type == "recovery-completed":
                 self._set_step(
                     "runner-terminal-user", "warn",
-                    "Sicherer Pre-Transfer-Recoverypfad wurde abgeschlossen.",
+                    "Originalzustand wurde erfolgreich wiederhergestellt.",
                 )
             elif result_type == "aborted-before-transfer":
                 self._set_step(
                     "runner-terminal-user", "warn",
-                    "Firmwarelauf wurde sicher vor Beginn des Transfers abgebrochen.",
+                    "Firmwareupdate wurde sicher vor Beginn der Übertragung abgebrochen.",
                 )
             elif result_type in {"recovery-required", "reboot-detected"}:
                 self._set_step(
@@ -366,16 +413,16 @@ class MainWindow(user_gui.MainWindow):
         """Turn transient warning/info steps into completed green success steps."""
         replacements = {
             "runner-monitor": "Update-Überwachung auf dem LTE-Modem wurde gestartet.",
-            "runner-yield": "Sicherer Startpunkt im PHNIX-Originaldienst wurde erreicht.",
-            "runner-parser": "Firmwareauftrag wurde an den PHNIX-Originaldienst übergeben.",
-            "runner-service-restart": "PHNIX-Kommunikationsdienst wurde kontrolliert neu gestartet.",
-            "runner-c350": "Firmwareangebot wurde an das Mainboard gesendet.",
-            "runner-c357": "Dateigröße und Prüfsumme wurden an das Mainboard übermittelt.",
+            "runner-yield": "Sicherer Start des Firmwareupdates wurde erreicht.",
+            "runner-parser": "Firmwareupdate wurde an das Mainboard übergeben.",
+            "runner-service-restart": "LTE-Kommunikationsdienst wurde kontrolliert neu gestartet.",
+            "runner-c350": "Update-Anfrage wurde an das Mainboard gesendet.",
+            "runner-c357": "Firmwareübertragung wurde vorbereitet.",
             "runner-c5a8": "Firmware wurde vollständig an das Mainboard übertragen.",
-            "runner-authority": "Der originale LTE-Dienst hat den weiteren Updateablauf übernommen.",
-            "runner-success-report": "Mainboard meldet das Update erfolgreich; Abschlussprüfung beendet.",
+            "runner-authority": "Das LTE-Modem hat den weiteren Updateablauf übernommen.",
+            "runner-success-report": "Mainboard hat das Update erfolgreich übernommen.",
             "runner-terminal": "Firmwareupdate erfolgreich abgeschlossen.",
-            "runner-terminal-user": "Firmwareupdate und Mainboard-Abschluss wurden erfolgreich bestätigt.",
+            "runner-terminal-user": "Firmwareupdate wurde erfolgreich abgeschlossen.",
         }
         for key, (level, text) in list(self._flow_steps.items()):
             if level in {"warn", "info"}:
@@ -410,7 +457,7 @@ class MainWindow(user_gui.MainWindow):
             display_percent = serial_percent
             lines.append(
                 (
-                    f"PHNIX Originaldienst: {serial_percent:.1f} % · "
+                    f"LTE-Dienst: {serial_percent:.1f} % · "
                     f"{event.current:,} / {event.total:,} Byte"
                 ).replace(",", ".")
             )
@@ -425,12 +472,12 @@ class MainWindow(user_gui.MainWindow):
             ):
                 lines.append(
                     (
-                        f"DTU-Runner: {runner_percent:.1f} % · "
+                        f"LTE-Modem: {runner_percent:.1f} % · "
                         f"{runner_offset:,} / {runner_length:,} Byte"
                     ).replace(",", ".")
                 )
             else:
-                lines.append(f"DTU-Runner: {runner_percent:.1f} %")
+                lines.append(f"LTE-Modem: {runner_percent:.1f} %")
 
         if display_percent is not None:
             value = max(0, min(100, round(display_percent)))
@@ -478,7 +525,7 @@ class MainWindow(user_gui.MainWindow):
         )
         box.setInformativeText(
             "Das Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.\n\n"
-            "Der Abschluss wurde durch den LTE-Dienst bestätigt."
+            "Der Abschluss wurde durch das LTE-Modem bestätigt."
         )
         box.setStandardButtons(user_gui.QMessageBox.Ok)
         box.setDefaultButton(user_gui.QMessageBox.Ok)
@@ -510,8 +557,7 @@ class MainWindow(user_gui.MainWindow):
         transfer_started = status.get("transfer_started") is True
         authoritative = status.get("original_service_authoritative") is True
         recovery = self._runner_recovery_state
-        detail = str(status.get("detail") or "")
-        board_step = status.get("board_ota_step")
+        detail = self._friendly_detail(status)
         progress = status.get("progress")
         offset = status.get("offset")
         length = status.get("length")
@@ -567,20 +613,17 @@ class MainWindow(user_gui.MainWindow):
             if hasattr(self, "progress_percent_label"):
                 self.progress_percent_label.setText("–")
             if hasattr(self, "progress_sources"):
-                phase_line = self._phase_text(phase)
-                if isinstance(board_step, int) and board_step:
-                    phase_line += f" · Mainboard-Schritt {board_step}"
-                self.progress_sources.setText(phase_line)
+                self.progress_sources.setText(self._phase_text(phase))
 
         if terminal and result_type == "success":
             self.progress_text.setText("Firmwareupdate erfolgreich abgeschlossen")
 
-        # Re-render the status box without the technical run ID. The run ID is
-        # written once to the protocol/automatic log instead.
+        # Re-render the status box without technical run/protocol details. The
+        # complete runner JSON is still written to the technical log.
         if terminal:
             headline = f"<b>Abgeschlossen:</b> {escape(self._result_text(result_type, phase))}"
         elif state == "prepared":
-            headline = "<b>Bereit:</b> Paket ist geprüft; Firmwareupdate wurde noch nicht gestartet."
+            headline = "<b>Bereit:</b> Vorprüfung abgeschlossen; Firmwareupdate wurde noch nicht gestartet."
         elif state == "running":
             headline = "<b>Firmwareupdate läuft auf dem LTE-Modem.</b>"
         else:
@@ -591,13 +634,13 @@ class MainWindow(user_gui.MainWindow):
         notices: list[str] = []
         if authoritative and not (terminal and result_type == "success"):
             notices.append(
-                "<b>Hinweis:</b> Der originale LTE-Dienst führt das Update jetzt selbst weiter; "
-                "ein sicherer Abbruch ist ab dieser Grenze gesperrt."
+                "<b>Hinweis:</b> Das LTE-Modem führt das Update jetzt selbstständig weiter; "
+                "ein sicherer Abbruch ist ab dieser Grenze nicht mehr möglich."
             )
         if recovery == "required" or result_type in {"recovery-required", "reboot-detected"}:
             notices.append(
-                "<b>Diagnose:</b> Dieser Lauf benötigt eine manuelle Prüfung. ACK bestätigt nur "
-                "das gespeicherte Ergebnis; die Diagnosedaten werden absichtlich beibehalten."
+                "<b>Diagnose:</b> Dieses Ergebnis benötigt eine manuelle Prüfung. Die "
+                "Diagnosedaten werden deshalb absichtlich beibehalten."
             )
         extra = "".join(f"<br>{item}" for item in notices)
 
@@ -605,7 +648,7 @@ class MainWindow(user_gui.MainWindow):
             self.runner_status_text.setText(
                 "<b>Firmwareupdate erfolgreich abgeschlossen.</b>"
                 "<br>Firmware und Mainboard-Abschluss wurden bestätigt."
-                "<br>Recovery ist nicht erforderlich."
+                "<br>Wiederherstellung ist nicht erforderlich."
             )
         else:
             self.runner_status_text.setText(
@@ -613,12 +656,7 @@ class MainWindow(user_gui.MainWindow):
                 + f"<br><b>Aktueller Schritt:</b> {escape(self._phase_text(phase))}"
                 + f"<br><b>Firmwareübertragung:</b> {transfer_text}"
                 + f"<br><b>Sicherer Abbruch:</b> {abort_text}"
-                + f"<br><b>Recovery:</b> {escape(self._recovery_text(recovery))}"
-                + (
-                    f"<br><b>Mainboard-Schritt:</b> {board_step}"
-                    if isinstance(board_step, int) and board_step
-                    else ""
-                )
+                + f"<br><b>Wiederherstellung:</b> {escape(self._recovery_text(recovery))}"
                 + extra
                 + (f"<br><br>{escape(detail)}" if detail else "")
             )
