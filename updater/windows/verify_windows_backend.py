@@ -41,7 +41,8 @@ def verify(root: Path, out: Path) -> None:
     pairs = [
         (root / "tools/phnix_ota/phnix_local_ota_controller.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller_core.py"),
         (root / "tools/phnix_ota/phnix_local_ota_controller_hardened.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller_hardened.py"),
-        (root / "updater/windows/phnix_windows_controller_wrapper.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller.py"),
+        (root / "updater/windows/phnix_windows_controller_wrapper.py", out / "backend/tools/phnix_ota/phnix_windows_controller_wrapper_core.py"),
+        (root / "updater/windows/phnix_windows_restore_grace_wrapper.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller.py"),
         (root / "tools/phnix_ota/create_firmware_manifest.py", out / "backend/tools/phnix_ota/create_firmware_manifest.py"),
         (root / "tools/phnix_traffic/foxair_traffic_trace", out / "backend/tools/phnix_traffic/foxair_traffic_trace"),
         (root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh", out / "backend/updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
