@@ -56,6 +56,7 @@ lab_root = work.lab_root
 scenario_state = work.scenario_state
 apply_control = work.apply_control
 service_info = work.service_info
+ensure_service_watchdog = work.ensure_service_watchdog
 
 
 def _state_root() -> Path:

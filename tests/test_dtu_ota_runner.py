@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from dataclasses import asdict
 from pathlib import Path
+from unittest import mock
 
 from tools.dtu_ota_runner.client import DtuOtaClient, RunnerClientError
 from tools.dtu_ota_runner.package import DtuOtaPackage, PackageError, ota_command_bytes
@@ -197,6 +198,36 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertEqual(frame[21:29], b"82400644")
         self.assertEqual(frame[29:33], b"0033")
         self.assertEqual(frame[-2:], crc16_modbus(frame[:-2]))
+
+    def test_qemu_watchdog_restarts_only_after_external_service_death(self):
+        with mock.patch.object(
+            qemu_work_lab_backend, "_schedule_idle_service_restart",
+        ) as restart:
+            observed = qemu_work_lab_backend._service_watchdog_transition((), (4100,))
+            self.assertEqual(observed, (4100,))
+            observed = qemu_work_lab_backend._service_watchdog_transition(observed, ())
+            self.assertEqual(observed, ())
+            restart.assert_called_once_with((4100,))
+
+        qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.set()
+        try:
+            with mock.patch.object(
+                qemu_work_lab_backend, "_schedule_idle_service_restart",
+            ) as restart:
+                observed = qemu_work_lab_backend._service_watchdog_transition((4200,), ())
+                self.assertEqual(observed, ())
+                restart.assert_not_called()
+        finally:
+            qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.clear()
+
+    def test_qemu_runtime_hook_injects_inside_yield_breakpoint_commands(self):
+        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        qemu = hook.split("SIGFPE_POLICY=nopass", 1)[1].split("else\n", 1)[0]
+        commands = qemu.split("commands 1", 1)[1].split("end\n", 1)[0]
+        self.assertIn('set {char[512]} 0x94ab4 = "$ESCAPED"', commands)
+        self.assertIn("set \\$pc = 0x19958", commands)
+        self.assertIn("continue", commands)
+        self.assertIn("commands 2", qemu)
 
 
 if __name__ == "__main__":

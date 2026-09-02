@@ -95,6 +95,9 @@ class FakeAdbServer:
         if not (home / "started").exists():
             self.sim.reset_state("success", "success")
             (home / "started").touch()
+        start_watchdog = getattr(self.sim, "ensure_service_watchdog", None)
+        if callable(start_watchdog):
+            start_watchdog()
         LOG.info("Simulator state: %s", home)
 
     def device_state(self) -> str:
