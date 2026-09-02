@@ -24,6 +24,7 @@ from updater.common.adb_transport import AdbClient, TransportError
 CONFIRM_TOKEN = "FOXAIR-DTU-CLEAN"
 REMOTE_BASE = "/data/foxair_ota_runner"
 STATUS_SCHEMA = "foxair-dtu-ota-run-v1"
+REMOTE_INFO = "/data/phnixIot_device_OTA_INFO"
 
 # Only updater-owned artifacts. Never add original PHNIX state/data here.
 CLEAN_PATHS = (
@@ -53,13 +54,32 @@ def _read(adb: AdbClient, path: str) -> str:
 
 
 def _process_lines(adb: AdbClient) -> list[str]:
-    # Bracketed expressions keep grep/the shell itself out of the result.
+    # Bracketed expressions keep grep/the shell itself out of the result. Any
+    # matching process blocks cleanup, even when a lock/marker went stale or
+    # disappeared: process evidence wins over bookkeeping.
     raw = adb.shell(
         "ps 2>/dev/null | grep -E "
         "'([d]tu_ota_supervisor|[p]hnix_ota_runtime_hook|[r]untime_hook|"
-        "[p]hnix_local_ota|[g]db(server)? .*phnixIot4G)' || true"
+        "[p]hnix_local_ota|[g]db(server)?)' || true"
     )
     return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def _ota_info_resume(adb: AdbClient) -> dict[str, object]:
+    """Read only the resume counters from the original 220-byte OTA_INFO.
+
+    The file itself is never modified here.  Unknown/corrupt state is a blocker
+    because cleanup must never guess that an OTA is idle.
+    """
+    raw = adb.read_file(REMOTE_INFO)
+    if len(raw) != 220:
+        return {"valid": False, "length_bytes": len(raw), "offset": None, "length": None}
+    return {
+        "valid": True,
+        "length_bytes": 220,
+        "offset": int.from_bytes(raw[212:216], "little"),
+        "length": int.from_bytes(raw[216:220], "little"),
+    }
 
 
 def safety_snapshot(adb: AdbClient) -> dict[str, object]:
@@ -95,6 +115,10 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
         "original_service_owns": _exists(adb, f"{LEGACY_HOOK_STATE}/original-service-owns"),
     }
     processes = _process_lines(adb)
+    if processes:
+        blockers.append(
+            "OTA-/Debugger-Hilfsprozesse laufen noch: " + " | ".join(processes)
+        )
 
     if legacy_markers["transfer_started"]:
         blockers.append("Legacy-OTA markiert bereits begonnene Firmwareübertragung.")
@@ -107,6 +131,22 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
     elif legacy_markers["run_active"]:
         notes.append("Staler Legacy-run.active-Marker ohne laufenden OTA-Hilfsprozess.")
 
+    try:
+        ota_info = _ota_info_resume(adb)
+    except (TransportError, OSError, ValueError) as error:
+        ota_info = {"valid": False, "error": str(error), "offset": None, "length": None}
+        blockers.append("OTA_INFO konnte nicht sicher gelesen werden.")
+    else:
+        if ota_info.get("valid") is not True:
+            blockers.append(
+                "OTA_INFO hat nicht die erwarteten 220 Byte; OTA-Ruhezustand ist nicht beweisbar."
+            )
+        elif ota_info.get("offset") != 0 or ota_info.get("length") != 0:
+            blockers.append(
+                "OTA_INFO enthält einen aktiven/fortsetzbaren OTA-Zustand "
+                f"(offset={ota_info.get('offset')}, length={ota_info.get('length')})."
+            )
+
     present = [path for path in CLEAN_PATHS if _exists(adb, path)]
     return {
         "safe": not blockers,
@@ -115,6 +155,7 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
         "active_lock": active_lock or None,
         "legacy_markers": legacy_markers,
         "ota_helper_processes": processes,
+        "ota_info": ota_info,
         "present": present,
     }
 
