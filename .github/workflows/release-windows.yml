@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Windows release version, for example 0.3.9"
+        description: "Windows release version, for example 0.4.0"
         required: true
         type: string
       prerelease:
@@ -39,7 +39,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Version must use x.y.z, for example 0.3.9"
+            throw "Version must use x.y.z, for example 0.4.0"
           }
           git fetch origin main --tags
           $tag = "windows-v$env:VERSION"
@@ -95,13 +95,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Compile Windows GUI sources
+      - name: Compile Windows GUI and runner sources
         shell: pwsh
         run: |
           python -m py_compile updater/windows/foxair_updater_gui.py
           python -m py_compile updater/windows/foxair_updater_app.py
+          python -m py_compile updater/windows/foxair_updater_runner_product.py
+          python -m py_compile updater/windows/foxair_updater_runner_enduser.py
           python -m py_compile updater/windows/release_check.py
           python -m py_compile updater/windows/phnix_windows_controller_wrapper.py
+          python -m py_compile updater/dtu_ota/cli.py
+          python -m py_compile updater/dtu_ota/client.py
+          python -m py_compile updater/dtu_ota/package.py
+          python updater/dtu_ota/cli.py --help > $null
 
       - name: Build portable package
         shell: cmd
@@ -137,6 +143,18 @@ jobs:
           }
           if (-not (Test-Path (Join-Path $portableCheck 'backend/updater/common/phnix_statistics_maintenance.py'))) {
             throw 'Portable ZIP does not contain the shared maintenance core'
+          }
+          if (-not (Test-Path (Join-Path $portableCheck 'backend/updater/dtu_ota/cli.py'))) {
+            throw 'Portable ZIP does not contain the production DTU runner CLI'
+          }
+          if (-not (Test-Path (Join-Path $portableCheck 'backend/updater/dtu_ota/payload/dtu_ota_supervisor.sh'))) {
+            throw 'Portable ZIP does not contain the DTU runner supervisor payload'
+          }
+          if (-not (Test-Path (Join-Path $portableCheck 'backend/updater/dtu_ota/payload/phnix_ota_runtime_hook'))) {
+            throw 'Portable ZIP does not contain the DTU runtime hook payload'
+          }
+          if (Test-Path (Join-Path $portableCheck 'backend/tools/dtu_ota_runner')) {
+            throw 'Portable ZIP unexpectedly contains the obsolete tools/dtu_ota_runner package'
           }
           if (Get-ChildItem -Path $portableCheck -Recurse -Filter 'FoxAir_Updater_Setup_*.exe') {
             throw 'Portable ZIP unexpectedly contains a setup executable'
@@ -176,15 +194,15 @@ jobs:
 
             - Ein vollständiger Mainboard-Firmwarewechsel V3.3 → V3.4 wurde auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt und anschließend über Status 5 / Board-Step 12 sowie C544-Version 0034 bestätigt.
             - Andere Firmwarestände und Hardwarevarianten sind weiterhin nicht vollständig live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
-            - MQTT bleibt beim normalen Vollupdate standardmäßig verbunden. Die frühere MQTT-Isolierung ist nur noch optional unter „Erweitert → MQTT bei Update aus“ verfügbar.
-            - 100 % Fortschritt bedeutet vollständige C5A8-Datenübertragung; der Mainboardabschluss erfolgt erst mit C36E Status 5 / Board-Step 12.
-            - Nach dem terminalen Mainboardergebnis erhält der normale LTE-/Cloudzustand bis zu 120 Sekunden zur Normalisierung.
+            - MQTT bleibt beim normalen Vollupdate standardmäßig verbunden. Die MQTT-Isolierung ist optional unter „Erweitert → MQTT bei Update aus“ verfügbar.
+            - 100 % Fortschritt bedeutet vollständige Firmwareübertragung; anschließend prüft und übernimmt das Mainboard das Update. Die GUI zeigt diese Wartephase separat an.
+            - Nach dem terminalen Mainboardergebnis erhält der normale LTE-/Cloudzustand Zeit zur Normalisierung.
             - Portable ZIP und Setup EXE sind derzeit nicht kommerziell code-signiert; Windows SmartScreen kann deshalb beim ersten Start „Weitere Informationen“ → „Trotzdem ausführen“ verlangen.
             - ADB ist nicht enthalten; die GUI verweist auf den SIMCom USB-Treiber und die offiziellen Android Platform Tools.
             - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi werden unterstützt.
             - ADB-Pfad, Remote-ADB-Modus, Raspberry-Pi-IP/Port, Backup-Ziel und relevante GUI-Einstellungen werden persistent gespeichert.
-            - Read-only Backup, Dry-Run, Manifest-Full-Prüfung, Status/Recovery, LTE-/Modemdiagnose und Logexport sind integriert.
-            - Die gemeinsame sicherheitsrelevante OTA-Logik bleibt im gemeinsamen Python-Controller-Core; Windows pflegt keinen separaten OTA-Protokollkern.
+            - Read-only Backup, Vorprüfung, Manifest-Prüfung, Status/Wiederherstellung, LTE-/Modemdiagnose und Logexport sind integriert.
+            - Der autonome DTU-Runner liegt produktiv unter updater/dtu_ota; Test- und Simulatorcode bleibt davon getrennt.
 
             Weitere technische Details stehen in README.md und unter docs/.
           files: |
