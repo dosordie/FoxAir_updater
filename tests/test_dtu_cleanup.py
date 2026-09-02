@@ -4,10 +4,14 @@ import unittest
 from updater.dtu_ota.cleanup import CLEAN_PATHS, clean, safety_snapshot, CleanupError
 
 
+IDLE_OTA_INFO = b"\0" * 220
+
+
 class FakeAdb:
-    def __init__(self, *, files=None, ps=""):
+    def __init__(self, *, files=None, ps="", ota_info=IDLE_OTA_INFO):
         self.files = dict(files or {})
         self.ps = ps
+        self.ota_info = ota_info
         self.removed = []
 
     def shell(self, command, check=True):
@@ -27,6 +31,11 @@ class FakeAdb:
                     del self.files[key]
             return ""
         raise AssertionError(command)
+
+    def read_file(self, path):
+        if path == "/data/phnixIot_device_OTA_INFO":
+            return self.ota_info
+        raise AssertionError(path)
 
 
 class DtuCleanupTests(unittest.TestCase):
@@ -106,6 +115,31 @@ class DtuCleanupTests(unittest.TestCase):
         self.assertTrue(snapshot["safe"])
         result = clean(adb)
         self.assertTrue(result["ok"])
+
+    def test_orphaned_ota_helper_process_blocks_without_any_marker(self):
+        adb = FakeAdb(ps="123 root /system/bin/sh /data/foxair_ota_runner/runs/x/payload/dtu_ota_supervisor.sh run x")
+        snapshot = safety_snapshot(adb)
+        self.assertFalse(snapshot["safe"])
+        self.assertTrue(any("Hilfsprozesse" in item for item in snapshot["blockers"]))
+        with self.assertRaises(CleanupError):
+            clean(adb)
+        self.assertEqual(adb.removed, [])
+
+    def test_active_ota_info_resume_state_blocks_cleanup(self):
+        raw = bytearray(IDLE_OTA_INFO)
+        raw[212:216] = (4096).to_bytes(4, "little")
+        raw[216:220] = (289806).to_bytes(4, "little")
+        adb = FakeAdb(ota_info=bytes(raw))
+        snapshot = safety_snapshot(adb)
+        self.assertFalse(snapshot["safe"])
+        self.assertEqual(snapshot["ota_info"]["offset"], 4096)
+        self.assertEqual(snapshot["ota_info"]["length"], 289806)
+
+    def test_unknown_ota_info_shape_blocks_cleanup(self):
+        adb = FakeAdb(ota_info=b"broken")
+        snapshot = safety_snapshot(adb)
+        self.assertFalse(snapshot["safe"])
+        self.assertTrue(any("220 Byte" in item for item in snapshot["blockers"]))
 
 
 if __name__ == "__main__":
