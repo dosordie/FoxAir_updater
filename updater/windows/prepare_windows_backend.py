@@ -31,8 +31,16 @@ def prepare_backend(root: Path, out: Path) -> None:
         root / "tools/phnix_ota/phnix_local_ota_controller_hardened.py",
         backend / "tools/phnix_ota/phnix_local_ota_controller_hardened.py",
     )
+    # Keep the established Windows cache/manifest safety wrapper as the inner
+    # implementation and expose a tiny release wrapper at the historic public
+    # controller path. The outer wrapper only adds a bounded post-restore MQTT
+    # grace; all existing safety semantics stay in the inner wrapper.
     copy_file(
         root / "updater/windows/phnix_windows_controller_wrapper.py",
+        backend / "tools/phnix_ota/phnix_windows_controller_wrapper_core.py",
+    )
+    copy_file(
+        root / "updater/windows/phnix_windows_restore_grace_wrapper.py",
         backend / "tools/phnix_ota/phnix_local_ota_controller.py",
     )
     copy_file(
@@ -40,7 +48,7 @@ def prepare_backend(root: Path, out: Path) -> None:
         backend / "tools/phnix_ota/create_firmware_manifest.py",
     )
     # The legacy controller validates the local helper before doing even a
-    # restore.  Windows worktrees can still contain CRLF despite .gitattributes,
+    # restore. Windows worktrees can still contain CRLF despite .gitattributes,
     # so both packaged helper locations must contain deterministic Unix LF.
     prepare_legacy_hook(
         root / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
