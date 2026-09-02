@@ -310,6 +310,7 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
 
 def _start_runner(
     kind: str, value: str, *, original_ota: bool = False,
+    resume_boot: bool = False,
 ) -> tuple[bool, str]:
     translated = _scenario_to_lab_env(kind, value)
     if translated is None:
@@ -337,7 +338,7 @@ def _start_runner(
         extra_env["CREDENTIAL_STUB"] = "1"
         extra_env["DYNAMIC_LOCAL_OTA"] = "1"
         label = f"foxair-adb-original-ota-{value}"
-    elif kind == "scenario":
+    elif kind == "scenario" and not resume_boot:
         # DTU_runner owns the first and only GDB connection. qemu-user's
         # remote stub is not reliable after detach/re-attach, unlike gdbserver
         # on the physical DTU.
@@ -427,6 +428,7 @@ def _start_runner(
                     )
                 gdb_log = run_dir / "gdb-local-ota-handler.log"
                 rs485_log = run_dir / "ttyHSL2-transcript.txt"
+                gdb_text = rs485_text = ""
                 try:
                     gdb_text = gdb_log.read_text(errors="replace")
                     rs485_text = rs485_log.read_text(errors="replace")
@@ -440,6 +442,23 @@ def _start_runner(
                     board_ready = "product-key-frame" in rs485_text
                 except OSError:
                     detached = board_ready = False
+                resume_ready = (
+                    resume_boot
+                    and "c544-software-info" in rs485_text
+                    and "DTU -> BOARD 63 10 c5 a8" in rs485_text
+                )
+                if resume_ready:
+                    meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
+                    meta["run_dir"] = str(run_dir)
+                    meta["resume_boot"] = True
+                    _runner_meta().write_text(
+                        json.dumps(meta, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    return True, (
+                        f"Work-QEMU-Szenario {kind}={value} nach persistentem "
+                        "C544/C5A8-Resume wieder aktiv"
+                    )
                 if detached and board_ready:
                     meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
                     meta["run_dir"] = str(run_dir)
@@ -595,6 +614,29 @@ def reset_ota_runtime() -> None:
         path = root_path(remote)
         if path.is_dir():
             shutil.rmtree(path)
+
+
+def _resume_restart_ready(kind: str, value: str, state: dict[str, str]) -> bool:
+    """Recognise the second, state-preserving half of restart-at-50.
+
+    Selecting the scenario initially must still create an idle baseline.  Once
+    the board peer has persisted a confirmed block and OTA_INFO records an
+    active image, selecting the same scenario means "restart the LTE/QEMU
+    process now" and must not erase either side of the resume contract.
+    """
+    if kind != "scenario" or value != "restart-at-50-resume":
+        return False
+    if state.get("scenario") != value:
+        return False
+    resume = root_path("/data/foxair_board_ota_resume.json")
+    info = root_path("/data/phnixIot_device_OTA_INFO")
+    try:
+        raw = info.read_bytes()
+        offset = int.from_bytes(raw[212:216], "little")
+        length = int.from_bytes(raw[216:220], "little")
+    except OSError:
+        return False
+    return resume.is_file() and len(raw) == 220 and 0 < offset < length
     runtime_state = base.state_root() / "runtime-sim" / "runtime.json"
     runtime_state.parent.mkdir(parents=True, exist_ok=True)
     runtime_state.write_text(json.dumps({
@@ -639,15 +681,17 @@ def apply_control(kind: str, value: str) -> tuple[bool, str]:
             return False, f"Unbekanntes {kind}: {value}"
 
     state = scenario_state()
+    preserve_resume = _resume_restart_ready(kind, value, state)
     state[key_for_kind[kind]] = value
     base._write_scenario_state(state)
     if kind in {"scenario", "board-version"}:
         # Stop the old ARM process before clearing OTA_INFO. Otherwise it can
         # emit one stale C5A8 block into the newly reset board peer.
         _stop_runner()
-        reset_ota_runtime()
+        if not preserve_resume:
+            reset_ota_runtime()
     scenario = state.get("scenario", "success")
-    return _start_runner("scenario", scenario)
+    return _start_runner("scenario", scenario, resume_boot=preserve_resume)
 
 
 def _df(remote: str) -> tuple[int, bytes]:

@@ -6,7 +6,7 @@
 > Die dauerhaften Erkenntnisse werden nach Abschluss des Gesamtprojekts in die normale
 > Dokumentation übernommen; danach wird `docs/dev/` vollständig gelöscht.
 
-Stand: 1. September 2026
+Stand: 2. September 2026
 
 ## Aktueller Implementierungsstand im Branch
 
@@ -25,6 +25,32 @@ prüfbar:
 - vorbereitete Runs werden nicht als verwaist klassifiziert; ein nachweislich toter
   Lock-Owner wird klassifiziert und gibt nur den Run-Lock frei, während seine
   Diagnose erhalten bleibt.
+- Statusflags für C350, C36E, C357 und C5A8 werden monoton geführt; kurzlebige
+  Zwischenphasen können die bestätigten Protokollereignisse nicht mehr verlieren.
+- vollständiger Work-QEMU-Erfolgslauf `backend-v34-success-vm-05` mit echtem
+  V3.4-Payload bestätigt: C350, C36E Status 1, C357, 289806 Byte C5A8,
+  Status 3/5, Promotion, Erfolgsmeldung und finaler Board-Step 12.
+- 100 % C5A8 blieb dabei korrekt nichtterminal; erst die Abschlusssequenz setzte
+  `state=completed`, `phase=success`.
+- Der Supervisor verbrauchte während des mehrminütigen Transfers praktisch keine
+  messbare CPU-Zeit und hielt den Zwei-Sekunden-Polltakt ein.
+- ADB wurde während eines aktiven C5A8-Laufs 20 Sekunden vollständig getrennt;
+  derselbe autonome Run lief ohne Offsetverlust weiter und war nach Reconnect
+  wieder lesbar.
+- Ein simulierter LTE-/Dienstneustart nach begonnenem C5A8 wird konservativ als
+  `original-service-active-unmonitored` mit `recovery=required` klassifiziert;
+  der letzte bestätigte Offset bleibt dauerhaft erhalten und es erfolgt kein
+  generischer Restore.
+- Der Simulator bewahrt dabei OTA_INFO und Board-Resumezustand. Die neue
+  Originaldienst-Instanz nimmt nach C544/C37B selbst den nachgewiesenen
+  C350/C36E-1/C357/C36E-2-Rehandshake auf, akzeptiert einen wiederholten letzten
+  Block und setzt C5A8 anschließend am nächsten Block fort.
+
+Der QEMU-Pfad unterdrückt ausschließlich bei vorhandenem
+`/data/phnixIot4G.tls-lab` ein emulationsbedingtes `SIGFPE`. Auf realer DTU bleibt
+die live validierte GDB-Signalsemantik (`pass`) unverändert. Ebenso ist nur im
+Simulator der Yield-Breakpoint so bedingt, dass der QEMU-Kaltstart bis
+`UART=0` und Board-Step 12 weiterlaufen darf.
 
 Noch nicht als abgeschlossen markieren: vollständiger Success-/Failure-/Chaos-Matrixlauf
 und die begrenzte Abnahme auf der realen DTU.
@@ -612,3 +638,17 @@ Nach der separaten GUI-Integration zusätzlich:
 5. Backend/API stabilisieren und dokumentieren.
 6. Erst danach separat die Windows-GUI an die fertige API anbinden.
 7. Nach Gesamtabschluss permanente Doku aktualisieren und `docs/dev/` löschen.
+
+## 26. Verifizierter Zwischenstand 2026-09-02
+
+Der vollständige VM-Erfolgspfad ist bis C36E Status 5 und Promotion verifiziert.
+Ein ADB-Ausfall während C5A8 beeinflusste den autonomen Runner nicht.
+
+Ein simulierter Neustart des Originaldienstes während C5A8 wurde ebenfalls geprüft:
+Der alte Runner blieb bewusst terminal `recovery-required`, weil seine lückenlose
+Beobachtungskette verloren war. Der neu gestartete Originaldienst führte anschließend
+den C544-/C37B-Rehandshake aus, bot C350/C357 erneut an, setzte C5A8 am bestätigten
+Block fort und lief vollständig über Status 3 bis Status 5 und Promotion.
+
+Die Details, Sicherheitsabgrenzungen und noch offenen Tests stehen in
+`docs/reverse_engineering/PHNIX_DTU_OTA_RUNNER_STATUS_2026-09-02.md`.

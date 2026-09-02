@@ -2,10 +2,18 @@ import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 
 from tools.dtu_ota_runner.client import DtuOtaClient, RunnerClientError
 from tools.dtu_ota_runner.package import DtuOtaPackage, PackageError, ota_command_bytes
+from tools.testvm.fake_adb import qemu_work_lab_backend
+from tools.testvm.work_lab.rs485_fault_emulator import (
+    board_software_info_frame,
+    crc16_modbus,
+    resolve_staged_firmware,
+)
+from updater.common.adb_transport import TransportError
 from updater.common.firmware_manifest import FirmwareManifest
 
 
@@ -27,6 +35,8 @@ class FakeAdb:
             })
         if "last_run_id" in command and command.startswith("cat "):
             return "run-1"
+        if "active.lock/run_id" in command and command.startswith("cat "):
+            return ""
         return ""
 
     def push(self, local, remote):
@@ -99,6 +109,94 @@ class DtuOtaPackageTests(unittest.TestCase):
         adb.shell = wrong
         with self.assertRaises(RunnerClientError):
             client.status("run-1", reconcile=False)
+
+    def test_active_run_is_independent_from_stale_last_run(self):
+        adb = FakeAdb()
+        client = DtuOtaClient(adb)
+        self.assertIsNone(client.active_run_id())
+        self.assertEqual(client.current_run_id(), "run-1")
+
+    def test_prepare_reports_persisted_preflight_reason(self):
+        with tempfile.TemporaryDirectory() as temp:
+            firmware, hook, runner, manifest = self.make_inputs(Path(temp))
+            manifest_path = Path(temp) / "FW3.4.json"
+            manifest_path.write_text(json.dumps(asdict(manifest)), encoding="utf-8")
+            adb = FakeAdb()
+            original = adb.shell
+
+            def rejected(command, check=True):
+                if " preflight 'run-rejected'" in command:
+                    raise TransportError("empty adb error")
+                if command.startswith("cat '") and command.endswith("/status.json'"):
+                    return json.dumps({
+                        "schema": "foxair-dtu-ota-run-v1", "run_id": "run-rejected",
+                        "state": "failed", "phase": "package-preflight", "terminal": True,
+                        "updated_at": 1, "transfer_started": False,
+                        "original_service_authoritative": False, "abort_allowed": True,
+                        "recovery": "not-required", "reason": "package_validation_failed",
+                        "detail": "DTU package validation failed with code 72 before any service action.",
+                    })
+                return original(command, check)
+
+            adb.shell = rejected
+            client = DtuOtaClient(adb, source_root=Path(temp))
+            client.hook = hook
+            client.supervisor = runner
+            with self.assertRaisesRegex(RunnerClientError, "code 72"):
+                client.prepare(
+                    manifest_path=manifest_path, firmware_path=firmware,
+                    run_id="run-rejected",
+                )
+
+    def test_board_peer_resolves_content_pinned_runner_firmware(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "rootfs"
+            legacy = root / "data/phnix_local_ota/phnixIot_device_OTA.bin"
+            staged = root / "data/foxair_ota_runner/runs/run-1/payload/firmware.bin"
+            staged.parent.mkdir(parents=True)
+            payload = b"new-autonomous-runner-image"
+            staged.write_bytes(payload)
+            actual = resolve_staged_firmware(
+                str(legacy), len(payload), hashlib.md5(payload).hexdigest(),
+            )
+            self.assertEqual(actual, payload)
+
+    def test_restart_at_half_preserves_only_proven_resume_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = root / "data"
+            data.mkdir()
+            info = bytearray(220)
+            info[212:216] = (145000).to_bytes(4, "little")
+            info[216:220] = (289806).to_bytes(4, "little")
+            (data / "phnixIot_device_OTA_INFO").write_bytes(info)
+            (data / "foxair_board_ota_resume.json").write_text('{"next_block":864}')
+            original = qemu_work_lab_backend.root_path
+            qemu_work_lab_backend.root_path = lambda remote: root / remote.lstrip("/")
+            try:
+                state = {"scenario": "restart-at-50-resume"}
+                self.assertTrue(qemu_work_lab_backend._resume_restart_ready(
+                    "scenario", "restart-at-50-resume", state,
+                ))
+                self.assertFalse(qemu_work_lab_backend._resume_restart_ready(
+                    "scenario", "success", state,
+                ))
+                (data / "foxair_board_ota_resume.json").unlink()
+                self.assertFalse(qemu_work_lab_backend._resume_restart_ready(
+                    "scenario", "restart-at-50-resume", state,
+                ))
+            finally:
+                qemu_work_lab_backend.root_path = original
+
+    def test_resume_software_info_frame_matches_live_c544_layout(self):
+        frame = board_software_info_frame("0033")
+        self.assertEqual(frame[:7], bytes.fromhex("63 10 C5 44 00 0D 1A"))
+        self.assertEqual(frame[7:9], bytes.fromhex("00 63"))
+        self.assertEqual(frame[9:17], b"82300314")
+        self.assertEqual(frame[17:21], b"0000")
+        self.assertEqual(frame[21:29], b"82400644")
+        self.assertEqual(frame[29:33], b"0033")
+        self.assertEqual(frame[-2:], crc16_modbus(frame[:-2]))
 
 
 if __name__ == "__main__":

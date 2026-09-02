@@ -70,6 +70,7 @@ FIRMWARE_SHA=
 RECOVERY=not-required
 BOARD_STEP=0
 C36E_STATUS=0
+C36E_SEEN=false
 C350_SENT=false
 C357_SENT=false
 C5A8_SENT=false
@@ -84,6 +85,13 @@ load_status_state() {
     v=$(status_string recovery); test -n "$v" && RECOVERY=$v
     v=$(status_string package_sha256); test -n "$v" && PACKAGE_SHA=$v
     v=$(status_string firmware_sha256); test -n "$v" && FIRMWARE_SHA=$v
+    v=$(status_bool c36e_seen); test -n "$v" && C36E_SEEN=$v
+    v=$(status_bool c350_sent); test -n "$v" && C350_SENT=$v
+    v=$(status_bool c357_sent); test -n "$v" && C357_SENT=$v
+    v=$(status_bool c5a8_sent); test -n "$v" && C5A8_SENT=$v
+    v=$(status_bool state_restored); test -n "$v" && STATE_RESTORED=$v
+    v=$(sed -n 's/.*"c36e_status":\([0-9][0-9]*\).*/\1/p' "$STATUS" 2>/dev/null | head -n 1)
+    test -n "$v" && C36E_STATUS=$v
 }
 
 write_status() {
@@ -92,11 +100,11 @@ write_status() {
     test "$STARTED_AT" != 0 || STARTED_AT=$now
     tmp=$STATUS.tmp.$$
     case "$SERVICE_PID" in ''|*[!0-9]*) SERVICE_PID=0 ;; esac
-    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s}\n' \
+    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s}\n' \
         "$SCHEMA" "$RUN_ID" "$state" "$phase" "$terminal" "$PROGRESS" "$OFFSET" "$LENGTH" \
         "$TRANSFER_STARTED" "$ORIGINAL_AUTH" "$ABORT_ALLOWED" "$RECOVERY" \
         "$(json_escape "$reason")" "$(json_escape "$detail")" "$RESULT_TYPE" "$$" "$HOOK_PID" "$SERVICE_PID" \
-        "$STARTED_AT" "$now" "$now" "$PACKAGE_SHA" "$FIRMWARE_SHA" "$BOARD_STEP" "$C36E_STATUS" \
+        "$STARTED_AT" "$now" "$now" "$PACKAGE_SHA" "$FIRMWARE_SHA" "$BOARD_STEP" "$C36E_SEEN" "$C36E_STATUS" \
         "$C350_SENT" "$C357_SENT" "$C5A8_SENT" "$STATE_RESTORED" > "$tmp" || return 1
     mv "$tmp" "$STATUS"
 }
@@ -146,6 +154,30 @@ acquire_lock() {
 upper_hash() { "$1" "$2" 2>/dev/null | awk '{print toupper($1)}'; }
 valid_hash() { case "$1" in *[!0-9A-F]*|'') return 1 ;; esac; test "${#1}" = "$2"; }
 
+service_pids() {
+    found=
+    for pid in $(pidof phnixIot4G 2>/dev/null || true); do
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        cmd=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+        case "$cmd" in *phnixIot4G*) found="$found $pid" ;; esac
+    done
+    if test -z "$found" && test -f /data/phnixIot4G.tls-lab; then
+        for proc in /proc/[0-9]*; do
+            exe=$(readlink "$proc/exe" 2>/dev/null || true)
+            cmd=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
+            case "$exe:$cmd" in *qemu-arm-static:*phnixIot4G.tls-lab*) found="$found $(basename "$proc")" ;; esac
+        done
+    fi
+    printf '%s\n' "$found" | awk '{$1=$1; print}'
+}
+
+single_service_pid() {
+    pids=$(service_pids)
+    count=$(printf '%s\n' "$pids" | awk '{print NF}')
+    test "$count" = 1 || return 1
+    printf '%s\n' "$pids"
+}
+
 load_package() {
     test -r "$PACKAGE" || return 30
     test -r "$PACKAGE_SHA_FILE" || return 31
@@ -188,13 +220,7 @@ load_package() {
     grep -q "$EXPECTED_BUILD" "$HOOK" 2>/dev/null || return 62
     test -x "$SERVICE" || return 63
     test "$(sha256sum "$SERVICE" 2>/dev/null | awk '{print toupper($1)}')" = "$EXPECTED_SERVICE" || return 64
-    SERVICE_PID=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
-    if test -z "$SERVICE_PID" && test -f /data/phnixIot4G.tls-lab; then
-        for proc in /proc/[0-9]*; do
-            cmd=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
-            case "$cmd" in *qemu-arm-static*phnixIot4G.tls-lab*) SERVICE_PID=$(basename "$proc"); break ;; esac
-        done
-    fi
+    SERVICE_PID=$(single_service_pid) || return 65
     case "$SERVICE_PID" in ''|*[!0-9]*) return 65 ;; esac
     test "$(awk '/^TracerPid:/ {print $2}' /proc/$SERVICE_PID/status 2>/dev/null)" = 0 || return 66
     wd_count=$(ps | awk '$4 == "{helloworld}" {n++} END {print n+0}')
@@ -228,15 +254,37 @@ preflight_action() {
 }
 
 restart_service() {
-    old=$SERVICE_PID
-    cmd=$(tr '\000' ' ' < "/proc/$old/cmdline" 2>/dev/null || true)
-    case "$cmd" in *phnixIot4G*) ;; *) return 1 ;; esac
-    kill -TERM "$old" 2>/dev/null || return 1
+    old_pids=$(service_pids)
+    test -n "$old_pids" || return 1
+    for old in $old_pids; do
+        cmd=$(tr '\000' ' ' < "/proc/$old/cmdline" 2>/dev/null || true)
+        case "$cmd" in *phnixIot4G*) ;; *) return 1 ;; esac
+    done
+    for old in $old_pids; do kill -TERM "$old" 2>/dev/null || return 1; done
     count=0
-    while test "$count" -lt 30; do
+    stable_pid=
+    stable_count=0
+    while test "$count" -lt 60; do
         sleep 1
-        new=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
-        if test -n "$new" && test "$new" != "$old"; then SERVICE_PID=$new; return 0; fi
+        current=$(service_pids)
+        current_count=$(printf '%s\n' "$current" | awk '{print NF}')
+        if test "$current_count" -gt 1; then return 2; fi
+        if test "$current_count" = 1; then
+            new=$current
+            is_old=false
+            for old in $old_pids; do test "$new" = "$old" && is_old=true; done
+            if test "$is_old" = false; then
+                if test "$stable_pid" = "$new"; then stable_count=$((stable_count + 1)); else stable_pid=$new; stable_count=1; fi
+                if test "$stable_count" -ge 10; then
+                    test "$(awk '/^TracerPid:/ {print $2}' /proc/$new/status 2>/dev/null)" = 0 || return 3
+                    SERVICE_PID=$new
+                    return 0
+                fi
+            fi
+        else
+            stable_pid=
+            stable_count=0
+        fi
         count=$((count + 1))
     done
     return 1
@@ -268,11 +316,19 @@ stop_http() {
 
 refresh_progress() {
     if test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220; then
-        OFFSET=$(od -An -tu4 -j212 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
-        LENGTH=$(od -An -tu4 -j216 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
-        case "$OFFSET" in ''|*[!0-9]*) OFFSET=0 ;; esac
-        case "$LENGTH" in ''|*[!0-9]*) LENGTH=0 ;; esac
-        if test "$LENGTH" -gt 0; then PROGRESS=$((OFFSET * 100 / LENGTH)); test "$PROGRESS" -le 100 || PROGRESS=100; fi
+        next_offset=$(od -An -tu4 -j212 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
+        next_length=$(od -An -tu4 -j216 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
+        case "$next_offset" in ''|*[!0-9]*) next_offset=0 ;; esac
+        case "$next_length" in ''|*[!0-9]*) next_length=0 ;; esac
+        # The original service clears offset/length during terminal cleanup.
+        # Preserve the last confirmed transfer counters in the durable result
+        # instead of turning a completed N/N transfer back into 0/0.
+        if test "$next_length" -gt 0 && { test "$LENGTH" = 0 || test "$next_length" = "$LENGTH"; } && test "$next_offset" -ge "$OFFSET"; then
+            OFFSET=$next_offset
+            LENGTH=$next_length
+            PROGRESS=$((OFFSET * 100 / LENGTH))
+            test "$PROGRESS" -le 100 || PROGRESS=100
+        fi
     fi
 }
 
@@ -289,10 +345,12 @@ run_action() {
     cp -p /data/phnixIot_device_statisic "$RUN_DIR/state/statisic" || terminal_result failed failed backup 80 backup_failed "Could not persist statistics backup."
     sha256sum "$RUN_DIR/state/OTA_INFO" "$RUN_DIR/state/statisic" > "$RUN_DIR/state/SHA256SUMS"
     if test "$RESTART_SERVICE" = true; then
-        write_status running service-restart false "" "Controlled service restart requested and executed locally by the DTU."
-        restart_service || terminal_result failed failed service-restart 81 service_restart_failed "Original service did not restart with a new verified PID."
+        write_status running service-restart-wait false "" "Controlled service restart requested; waiting for exactly one new stable, untraced process."
+        restart_service; restart_rc=$?
+        test "$restart_rc" = 0 || terminal_result failed failed service-restart 81 service_restart_failed "Original service restart was not uniquely stable (code $restart_rc); no OTA action was started."
         load_package; rc=$?
         test "$rc" = 0 || terminal_result failed failed post-restart-preflight "$rc" post_restart_preflight_failed "Prerequisites failed after local service restart (code $rc)."
+        write_status running service-restart-verified false "" "Exactly one new stable original-service PID was verified after restart."
     fi
     start_http || terminal_result failed failed staging 82 local_http_failed "Local firmware HTTP staging verification failed."
     rm -f "$HOOK_STATUS" "$ABORT"
@@ -312,9 +370,18 @@ run_action() {
         phase=$(hook_string phase)
         terminal=$(hook_bool terminal)
         test -n "$phase" || phase=hook-starting
+        sticky=$(hook_bool c350_sent); test "$sticky" = true && C350_SENT=true
+        sticky=$(hook_bool c357_sent); test "$sticky" = true && C357_SENT=true
+        sticky=$(hook_bool c5a8_sent); test "$sticky" = true && C5A8_SENT=true
+        seen=$(hook_bool c36e_seen)
+        if test "$seen" = true; then
+            C36E_SEEN=true
+            value=$(hook_number c36e_status); test -n "$value" && C36E_STATUS=$value
+        fi
         case "$phase" in
             c350|c350-sent) C350_SENT=true ;;
-            accepted) C350_SENT=true; C36E_STATUS=1; ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
+            same-version|c350-same-version) C350_SENT=true; C36E_SEEN=true; C36E_STATUS=0 ;;
+            accepted) C350_SENT=true; C36E_SEEN=true; C36E_STATUS=1; ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
             c357) C357_SENT=true ;;
             c5a8) C5A8_SENT=true; TRANSFER_STARTED=true; ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
             success-report|failure-report) ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
@@ -335,7 +402,7 @@ run_action() {
         if test "$terminal" = true; then
             case "$phase" in
                 same-version|c350-same-version)
-                    C36E_STATUS=0 STATE_RESTORED=true RECOVERY=completed PROGRESS=0
+                    C350_SENT=true C36E_SEEN=true C36E_STATUS=0 STATE_RESTORED=true RECOVERY=completed PROGRESS=0
                     terminal_result same-version completed same-version 0 "" "Mainboard rejected the equal version safely; no firmware blocks were transferred."
                     ;;
                 success)
@@ -419,6 +486,9 @@ cleanup_action() {
         lock_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
         runner_identity "$lock_pid" "$RUN_ID" && { echo "ERROR: live lock owner" >&2; exit 104; }
         rm -f "$LOCK/run_id" "$LOCK/pid" "$LOCK/started_at"; rmdir "$LOCK" 2>/dev/null || true
+    fi
+    if test "$(cat "$BASE/last_run_id" 2>/dev/null || true)" = "$RUN_ID"; then
+        rm -f "$BASE/last_run_id"
     fi
     rm -rf "$RUN_DIR"
 }

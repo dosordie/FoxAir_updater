@@ -684,6 +684,31 @@ cancel_probe_resume_hook() {
 make_gdb_script() {
     JSON=$(tr -d '\r\n' < "$COMMAND")
     ESCAPED=$(printf '%s' "$JSON" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    if test -f /data/phnixIot4G.tls-lab; then
+        # qemu-user raises an emulation-only SIGFPE while executing the
+        # injected parser path.  Passing it through terminates the simulated
+        # service.  Real hardware deliberately keeps the validated `pass`
+        # behaviour below.
+        SIGFPE_POLICY=nopass
+    else
+        SIGFPE_POLICY=pass
+    fi
+    PARSER_FLOW=$(cat <<EOF
+break *0x1c4bc
+continue
+printf "PHNIX post-parser pc=0x%x\n", \$pc
+if \$pc != 0x1c4bc
+  shell echo '{"phase":"parser-rejected","terminal":true,"armed":false,"active":false,"c350_sent":false,"recovery_required":false}' > $STATUS
+  shell $0 _restore-state --status $STATUS
+  detach
+  quit
+end
+shell echo '{"phase":"c350","terminal":false,"c350_sent":true}' > $STATUS
+disable 2
+break *0x1ba04
+continue
+EOF
+)
     cat > "$GDB_SCRIPT" <<EOF
 set architecture arm
 set pagination off
@@ -692,7 +717,7 @@ set print thread-events off
 set auto-load safe-path /
 set libthread-db-search-path /lib
 handle SIGILL nostop noprint pass
-handle SIGFPE nostop noprint pass
+handle SIGFPE nostop noprint $SIGFPE_POLICY
 file /data/phnixIot4G
 target remote 127.0.0.1:12345
 set \$launcher_armed = 1
@@ -719,22 +744,10 @@ shell echo '{"phase":"parser-injection","terminal":false,"armed":true,"active":f
 set \$r0 = 0x94ab4
 set \$lr = \$return_pc
 set \$pc = 0x19958
-break *0x1c4bc
-continue
-printf "PHNIX post-parser pc=0x%x\n", \$pc
-if \$pc != 0x1c4bc
-  shell echo '{"phase":"parser-rejected","terminal":true,"armed":false,"active":false}' > $STATUS
-  shell $0 _restore-state --status $STATUS
-  detach
-  quit
-end
-shell echo '{"phase":"c350","terminal":false}' > $STATUS
-disable 2
-break *0x1ba04
-continue
+$PARSER_FLOW
 printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\n", \$pc, *(unsigned char *)(\$r0+1), *(unsigned char *)(\$r0+3)
 if \$pc != 0x1ba04 || *(unsigned char *)(\$r0+1) != 0x63
-  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false}' > $STATUS
+  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false,"c350_sent":true,"c36e_seen":true}' > $STATUS
   shell $0 _restore-state --status $STATUS
   detach
   quit
@@ -742,19 +755,19 @@ end
 if *(unsigned char *)(\$r0+3) == 0
   set \$launcher_armed = 0
   shell $0 _restore-state --status $STATUS
-  shell echo '{"phase":"same-version","terminal":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
+  shell echo '{"phase":"same-version","terminal":true,"c350_sent":true,"c36e_seen":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
   detach
   quit
 end
 if *(unsigned char *)(\$r0+3) != 1
-  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false}' > $STATUS
+  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false,"c350_sent":true,"c36e_seen":true,"recovery_required":true}' > $STATUS
   shell $0 _restore-state --status $STATUS
   detach
   quit
 end
 set \$local_ota_active = 1
 shell touch $ORIGINAL_SERVICE_OWNS
-shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c36e_status":1}' > $STATUS
+shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c350_sent":true,"c36e_seen":true,"c36e_status":1}' > $STATUS
 break *0x1cea0
 break *0x1c7cc
 break *0x1d2f8
@@ -774,13 +787,13 @@ while \$local_ota_active == 1
   if \$pc == 0x1cea0
     set \$ota_event_handled = 1
     disable 4
-    shell echo '{"phase":"c357","terminal":false}' > $STATUS
+    shell echo '{"phase":"c357","terminal":false,"c350_sent":true,"c36e_seen":true,"c36e_status":1,"c357_sent":true}' > $STATUS
   end
   if \$pc == 0x1c7cc
     set \$ota_event_handled = 1
     disable 5
     shell touch $TRANSFER_STARTED
-    shell echo '{"phase":"c5a8","terminal":false}' > $STATUS
+    shell echo '{"phase":"c5a8","terminal":false,"c350_sent":true,"c36e_seen":true,"c36e_status":1,"c357_sent":true,"c5a8_sent":true}' > $STATUS
   end
   if \$pc == 0x1d2f8
     set \$ota_event_handled = 1

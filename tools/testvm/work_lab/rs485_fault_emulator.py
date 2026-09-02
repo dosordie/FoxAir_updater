@@ -7,11 +7,15 @@ import json
 import os
 import selectors
 import time
+from pathlib import Path
 
 
 DEVICE_INFO_REQUEST = bytes.fromhex("63 03 07 d1 00 5a 9c fe")
 STATUS_HANDSHAKE_REQUEST = bytes.fromhex("63 03 00 06 00 01 6c 49")
+SOFTWARE_INFO_REQUEST = bytes.fromhex("63 03 00 04 00 01 cd 89")
 PRODUCT_KEY_ACK = bytes.fromhex("63 10 00 c8 00 10 48 79")
+C544_STATUS_7 = bytes.fromhex("63 10 C3 7B 00 02 04 00 63 00 07 B5 A8")
+C544_STATUS_7_CONFIRM = bytes.fromhex("63 10 C3 7B 00 02 05 D7")
 DEVICE_ID = b"LABDEVICE001"
 # V3.3 copies exactly eleven ProductKey bytes into a 32-byte FC10 block.  The
 # remaining bytes are synthetic zero-initialised simulator padding; live data
@@ -55,6 +59,16 @@ def frame_with_crc(data: bytes) -> bytes:
     return data + crc16_modbus(data)
 
 
+def board_software_info_frame(board_version: str) -> bytes:
+    if len(board_version) != 4 or not board_version.isdigit():
+        raise ValueError("board version must be exactly four digits")
+    payload = (
+        b"\x00\x63" + b"82300314" + b"0000"
+        + b"82400644" + board_version.encode("ascii")
+    )
+    return frame_with_crc(b"\x63\x10\xc5\x44\x00\x0d\x1a" + payload)
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--peer", required=True)
@@ -83,6 +97,45 @@ def parse_args():
     )
     parser.add_argument("--cancel-ack", action="store_true")
     return parser.parse_args()
+
+
+def resolve_staged_firmware(configured: str, offered_size: int, offered_md5: str) -> bytes:
+    """Resolve the one staged image that exactly matches C357 metadata.
+
+    The legacy controller uses /data/phnix_local_ota, while the autonomous
+    runner stages per run.  Selection happens once at C357 and is content
+    pinned; old diagnostic runs therefore cannot substitute another image.
+    """
+    configured_path = Path(configured)
+    candidates = [configured_path]
+    parts = configured_path.parts
+    try:
+        data_index = parts.index("data")
+    except ValueError:
+        data_index = -1
+    if data_index > 0:
+        rootfs = Path(*parts[:data_index])
+        runs = rootfs / "data/foxair_ota_runner/runs"
+        candidates.extend(sorted(
+            runs.glob("*/payload/firmware.bin"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        ))
+    seen = set()
+    for candidate in candidates:
+        try:
+            identity = candidate.resolve()
+            if identity in seen or candidate.stat().st_size != offered_size:
+                continue
+            seen.add(identity)
+            payload = candidate.read_bytes()
+        except OSError:
+            continue
+        if hashlib.md5(payload).hexdigest().lower() == offered_md5.lower():
+            return payload
+    raise RuntimeError(
+        f"no staged firmware matches C357 size={offered_size} md5={offered_md5}"
+    )
 
 
 def main():
@@ -193,6 +246,32 @@ def main():
                         f"{PRODUCT_KEY_ACK.hex(' ')}\n"
                     )
                     pending.clear()
+                elif SOFTWARE_INFO_REQUEST in pending:
+                    # Real V3.3 boards use the FC03 read only as a trigger and
+                    # answer with a separate C544 FC10 software-info report.
+                    # phnixIot4G needs this report after restart to compare the
+                    # persisted target and schedule its C350/C357 resume path.
+                    software_frame = board_software_info_frame(args.board_version)
+                    os.write(fd, software_frame)
+                    to_app.write(software_frame)
+                    transcript.write(
+                        f"{time.time():.6f} BOARD -> DTU c544-software-info "
+                        f"softwareCode=82400644 version={args.board_version} "
+                        f"{software_frame.hex(' ')}\n"
+                    )
+                    pending.clear()
+                elif C544_STATUS_7 in pending:
+                    transcript.write(
+                        f"{time.time():.6f} DTU -> BOARD c37b-status-7 "
+                        f"{C544_STATUS_7.hex(' ')}\n"
+                    )
+                    os.write(fd, C544_STATUS_7_CONFIRM)
+                    to_app.write(C544_STATUS_7_CONFIRM)
+                    transcript.write(
+                        f"{time.time():.6f} BOARD -> DTU c37b-status-7-confirm "
+                        f"{C544_STATUS_7_CONFIRM.hex(' ')}\n"
+                    )
+                    pending.clear()
                 elif ((args.v33_ota_handshake or args.v33_full_transfer) and not c350_done
                       and b"\x63\x10\xc3\x50" in pending):
                     marker = pending.find(b"\x63\x10\xc3\x50")
@@ -249,8 +328,9 @@ def main():
                         raise RuntimeError("invalid C357 firmware metadata")
                     offered_size = int.from_bytes(request[9:13], "big")
                     offered_md5 = request[13:45].decode("ascii").lower()
-                    with open(args.firmware, "rb") as fixture:
-                        expected_firmware = fixture.read()
+                    expected_firmware = resolve_staged_firmware(
+                        args.firmware, offered_size, offered_md5,
+                    )
                     actual_md5 = hashlib.md5(expected_firmware).hexdigest()
                     if len(expected_firmware) != offered_size or actual_md5 != offered_md5:
                         raise RuntimeError(

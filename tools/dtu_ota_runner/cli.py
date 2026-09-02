@@ -78,9 +78,12 @@ def main() -> int:
             client.cleanup(args.run_id)
             print(json.dumps({"ok": True, "cleaned": True}))
             return 0
-        elif args.command in {"current", "active"}:
+        elif args.command == "current":
             run_id = client.current_run_id()
             value = client.status(run_id)
+        elif args.command == "active":
+            run_id = client.active_run_id()
+            value = {"active": False, "run_id": None} if run_id is None else client.status(run_id)
         else:  # pragma: no cover - argparse guarantees this
             raise RunnerClientError("unsupported command")
         print(json.dumps(value, indent=2, ensure_ascii=False))

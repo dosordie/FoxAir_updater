@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from updater.common.adb_transport import AdbClient
+from updater.common.adb_transport import AdbClient, TransportError
 from updater.common.firmware_manifest import FirmwareManifest
 
 from .package import DtuOtaPackage, RUN_ID_RE, ota_command_bytes
@@ -41,6 +41,12 @@ class DtuOtaClient:
         value = self.adb.shell(f"cat {REMOTE_BASE}/last_run_id 2>/dev/null || true")
         if not value:
             raise RunnerClientError("DTU has no last_run_id")
+        return _run_id(value.strip())
+
+    def active_run_id(self) -> str | None:
+        value = self.adb.shell(f"cat {REMOTE_BASE}/active.lock/run_id 2>/dev/null || true")
+        if not value:
+            return None
         return _run_id(value.strip())
 
     def prepare(
@@ -79,10 +85,19 @@ class DtuOtaClient:
             f"printf '%s\\n' '{package.sha256}' > '{run_dir}/package.sha256'; "
             f"chmod 700 '{payload}/dtu_ota_supervisor.sh' '{payload}/runtime_hook'"
         )
-        self.adb.shell(
-            f"SH=/system/bin/sh; test -x \"$SH\" || SH=/bin/sh; "
-            f"\"$SH\" '{payload}/dtu_ota_supervisor.sh' preflight '{run_id}'"
-        )
+        try:
+            self.adb.shell(
+                f"SH=/system/bin/sh; test -x \"$SH\" || SH=/bin/sh; "
+                f"\"$SH\" '{payload}/dtu_ota_supervisor.sh' preflight '{run_id}'"
+            )
+        except TransportError as error:
+            try:
+                rejected = self.status(run_id, reconcile=False)
+            except (RunnerClientError, TransportError, OSError, ValueError):
+                raise error
+            reason = rejected.get("reason") or rejected.get("phase") or "preflight_failed"
+            detail = rejected.get("detail") or str(error)
+            raise RunnerClientError(f"DTU preflight rejected ({reason}): {detail}") from error
         return self.status(run_id, reconcile=False)
 
     def start(self, run_id: str) -> dict[str, Any]:
