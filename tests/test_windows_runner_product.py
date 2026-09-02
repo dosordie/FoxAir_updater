@@ -6,14 +6,17 @@ class WindowsRunnerProductTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.product = Path("updater/windows/foxair_updater_runner_product.py").read_text(encoding="utf-8")
+        cls.release = Path("updater/windows/foxair_updater_release_product.py").read_text(encoding="utf-8")
+        cls.prepare = Path("updater/windows/prepare_windows_backend.py").read_text(encoding="utf-8")
         cls.build = Path("updater/windows/build_windows_portable.bat").read_text(encoding="utf-8")
         cls.cli = Path("updater/dtu_ota/cli.py").read_text(encoding="utf-8")
         cls.client = Path("updater/dtu_ota/client.py").read_text(encoding="utf-8")
 
     def test_windows_uses_production_runner_path(self):
         self.assertIn('base.backend_dir() / "updater/dtu_ota/cli.py"', self.product)
-        self.assertIn("updater\\windows\\foxair_updater_runner_product.py", self.build)
-        self.assertIn("backend\\updater\\dtu_ota\\cli.py", self.build)
+        self.assertIn("updater\\windows\\foxair_updater_release_product.py", self.build)
+        self.assertIn("import foxair_updater_runner_product as product", self.release)
+        self.assertIn('root / "updater/dtu_ota"', self.prepare)
         self.assertNotIn("backend\\tools\\dtu_ota_runner", self.build)
 
     def test_relocated_cli_imports_production_package(self):
