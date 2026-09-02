@@ -47,7 +47,7 @@ echo [3/9] PySide6-GUI als One-Folder-App bauen ...
   --windowed ^
   --name "%APP_NAME%" ^
   --icon "%ICON_FILE%" ^
-  updater\windows\foxair_updater_runner_product.py || goto :err
+  updater\windows\foxair_updater_release_product.py || goto :err
 
 if not exist "%OUT%\%APP_NAME%.exe" (
   echo FEHLER: %OUT%\%APP_NAME%.exe fehlt.
@@ -128,8 +128,9 @@ echo [7/9] Backend mit privater Runtime pruefen ...
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\updater\dtu_ota\cli.py" --help >nul || goto :err
+"%OUT%\runtime\python.exe" "%OUT%\backend\updater\dtu_ota\diagnostics.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\updater\common\phnix_statistics_maintenance.py" --help >nul || goto :err
-echo [OK] Windows-Sicherheitshuette, DTU-Runner-CLI, Controller-Core, Manifest-Tool und Maintenance-Core starten mit der privaten Runtime.
+echo [OK] Windows-Sicherheitshuette, DTU-Runner-CLI, Diagnose-Core, Controller-Core, Manifest-Tool und Maintenance-Core starten mit der privaten Runtime.
 
 echo [8/9] Dokumentation und Lizenzen beilegen ...
 copy /y LICENSE "%OUT%\LICENSE" >nul || goto :err
