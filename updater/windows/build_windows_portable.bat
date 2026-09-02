@@ -71,8 +71,11 @@ copy /y tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix
 copy /y tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :err
 copy /y updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :err
 copy /y tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\" >nul || goto :err
-rem Legacy Controller erwartet den Runtime-Hook neben dem Controller. Die kanonische Quelle liegt jetzt im Produktpaket.
-copy /y updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook" >nul || goto :err
+rem Legacy Controller validiert historisch explizit #!/bin/sh. Die kanonische Runner-Version nutzt
+rem #!/system/bin/sh. Fuer den Legacy-Restore wird deshalb nur die Shebang der separaten Paketkopie
+rem angepasst; der gepruefte Hook-Inhalt darunter bleibt identisch.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$p='updater\dtu_ota\payload\phnix_ota_runtime_hook'; $o='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $t=[IO.File]::ReadAllText($p); $t=$t -replace '\A#!/system/bin/sh\r?\n','#!/bin/sh`n'; [IO.File]::WriteAllText($o,$t,(New-Object Text.UTF8Encoding($false)))" || goto :err
 copy /y tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\" >nul || goto :err
 
 rem Produktiver OTA-Pfad: Host paketiert/liest Status; Supervisor und Hook werden auf die DTU uebertragen.
@@ -85,7 +88,8 @@ fc /b tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_o
 fc /b tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :backenderr
 fc /b updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :backenderr
 fc /b tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" >nul || goto :backenderr
-fc /b updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook" >nul || goto :backenderr
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$p='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $b=[IO.File]::ReadAllBytes($p); $h=[Text.Encoding]::ASCII.GetString($b,0,[Math]::Min(10,$b.Length)); if(-not $h.StartsWith('#!/bin/sh')){exit 1}" || goto :backenderr
 fc /b tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\foxair_traffic_trace" >nul || goto :backenderr
 for %%F in (updater\dtu_ota\*.py) do (
   fc /b "%%F" "%OUT%\backend\updater\dtu_ota\%%~nxF" >nul || goto :backenderr
@@ -130,8 +134,9 @@ echo [7/9] Backend mit privater Runtime pruefen ...
 "%OUT%\runtime\python.exe" "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\updater\dtu_ota\cli.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\updater\dtu_ota\diagnostics.py" --help >nul || goto :err
+"%OUT%\runtime\python.exe" "%OUT%\backend\updater\dtu_ota\cleanup.py" --help >nul || goto :err
 "%OUT%\runtime\python.exe" "%OUT%\backend\updater\common\phnix_statistics_maintenance.py" --help >nul || goto :err
-echo [OK] Windows-Sicherheitshuette, DTU-Runner-CLI, Diagnose-Core, Controller-Core, Manifest-Tool und Maintenance-Core starten mit der privaten Runtime.
+echo [OK] Windows-Sicherheitshuette, DTU-Runner-CLI, Diagnose-/Cleanup-Core, Controller-Core, Manifest-Tool und Maintenance-Core starten mit der privaten Runtime.
 
 echo [8/9] Dokumentation und Lizenzen beilegen ...
 copy /y LICENSE "%OUT%\LICENSE" >nul || goto :err
