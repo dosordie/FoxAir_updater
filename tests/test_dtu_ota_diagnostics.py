@@ -36,6 +36,17 @@ class FakeAdb:
         return self.files[remote]
 
 
+class NoRunFakeAdb:
+    """Represents a DTU after automatic ACK/cleanup removed the runner state."""
+
+    def shell(self, command, check=True):
+        if command.startswith("cat /data/foxair_ota_runner/active.lock/run_id"):
+            return ""
+        if command.startswith("cat /data/foxair_ota_runner/last_run_id"):
+            return ""
+        return ""
+
+
 class SameDayFakeAdb(FakeAdb):
     RUN1 = "20260902-140000-0001"
     RUN2 = "20260902-145000-0002"
@@ -129,6 +140,60 @@ class DiagnosticBundleTests(unittest.TestCase):
                 self.assertEqual(manifest["schema"], "foxair-diagnostic-bundle-v2")
                 self.assertEqual(manifest["run_day"], "20260902")
                 self.assertEqual(manifest["run_ids"], [SameDayFakeAdb.RUN1, SameDayFakeAdb.RUN2])
+
+    def test_bundle_can_be_recreated_repeatedly_after_remote_run_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            log_dir = root / "Logs"
+            log_dir.mkdir()
+            run_id = "20260902-172931-6400"
+            saved = log_dir / f"FoxAir_DTU_Logs_{run_id}.zip"
+            with zipfile.ZipFile(saved, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("dtu-run/runner.log", "same-version complete\n")
+                archive.writestr(
+                    "diagnostic_manifest.json",
+                    json.dumps({
+                        "schema": "foxair-diagnostic-bundle-v2",
+                        "run_id": run_id,
+                        "run_day": "20260902",
+                        "run_ids": [run_id],
+                        "privacy": {
+                            "firmware_included": False,
+                            "ota_info_binary_included": False,
+                            "statistics_binary_included": False,
+                            "text_redaction_applied": True,
+                        },
+                    }),
+                )
+            (log_dir / "FoxAir_Update_20260902-172931.log").write_text(
+                "automatic cleanup complete\n", encoding="utf-8"
+            )
+            host_log = root / "current-gui.log"
+            host_log.write_text("manual diagnostic click\n", encoding="utf-8")
+
+            first = root / "diag-1.zip"
+            second = root / "diag-2.zip"
+            result1 = create_bundle(
+                NoRunFakeAdb(), first, host_log=host_log,
+                host_log_dir=log_dir, app_version="0.4.0"
+            )
+            result2 = create_bundle(
+                NoRunFakeAdb(), second, host_log=host_log,
+                host_log_dir=log_dir, app_version="0.4.0"
+            )
+
+            for result, output in ((result1, first), (result2, second)):
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["source"], "saved-local-dtu-archive")
+                self.assertEqual(result["run_id"], run_id)
+                with zipfile.ZipFile(output) as archive:
+                    names = set(archive.namelist())
+                    self.assertIn("dtu-run/runner.log", names)
+                    self.assertIn("host/foxair-updater.log", names)
+                    self.assertIn("host/day/FoxAir_Update_20260902-172931.log", names)
+                    manifest = json.loads(archive.read("diagnostic_manifest.json"))
+                    self.assertEqual(manifest["source"], "saved-local-dtu-archive")
+                    self.assertEqual(manifest["run_id"], run_id)
 
 
 if __name__ == "__main__":
