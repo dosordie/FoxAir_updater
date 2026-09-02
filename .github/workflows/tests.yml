@@ -38,6 +38,7 @@ jobs:
           updater/common/phnix_statistics_counters.py
           updater/dtu_ota/cli.py
           updater/dtu_ota/client.py
+          updater/dtu_ota/cleanup.py
           updater/dtu_ota/diagnostics.py
           updater/dtu_ota/package.py
 
