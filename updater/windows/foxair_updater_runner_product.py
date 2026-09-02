@@ -47,6 +47,11 @@ class MainWindow(enduser.MainWindow):
             and self._runner_run_id
             and not self._runner_terminal
         ):
+            # A live transfer-progress event itself is sufficient evidence for
+            # the presentation layer that a percentage is meaningful. This also
+            # prevents a runner poll that is a fraction behind from resetting
+            # the freshly received serial percentage back to an empty bar.
+            self._runner_transfer_visible = True
             self._phnix_transfer_event = event
             self._serial_progress_seen_at = time.monotonic()
             self._render_transfer_progress()
