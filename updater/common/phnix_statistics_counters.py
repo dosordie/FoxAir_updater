@@ -6,12 +6,13 @@ reuses the proven service/watchdog/backup mechanics from that module, but
 allows a small, explicitly whitelisted group of decoded uint32 counters to be
 changed together in one maintenance restart.
 
-The Power-Reset-t counter is special: the verified phnixIot4G build increments
-it once whenever the service starts.  To make the requested *final* value
-stable, this tool writes final-1 while the service is stopped and verifies that
-the mandatory restart increments it to the requested final value.  Even when
-Power-Reset-t is not selected, the same compensation preserves its previous
-value so maintenance of another counter does not itself falsify that metric.
+The Power-Reset-t counter is special: phnixIot4G loads the persistent value at
+startup and increments the counter in RAM before normal operation.  Therefore
+the startup image must contain final-1 so the restarted service reaches the
+requested final RAM value.  The startup increment is not immediately persisted,
+so after the new service is verified this tool atomically normalizes the
+persistent file back to the requested final value and then verifies file and
+RAM together.
 """
 
 from __future__ import annotations
@@ -101,19 +102,18 @@ def validate_updates(updates: dict[str, int]) -> dict[str, int]:
         checked[key] = value
     if POWER_RESET_KEY in checked and checked[POWER_RESET_KEY] < 1:
         raise CounterMaintenanceError(
-            "Power-Reset-t cannot be 0 while phnixIot4G is running; its service start increments the counter once"
+            "Power-Reset-t cannot be 0 while phnixIot4G is running; its startup increments the RAM counter once"
         )
     return checked
 
 
 def prepare_patch(raw: bytes, updates: dict[str, int]) -> tuple[bytes, dict[str, int]]:
-    """Return bytes to install while stopped and desired values after restart.
+    """Return the startup image and desired post-start values.
 
-    The final values start as the authoritative stopped-service statistics.  The
-    requested values replace only the selected counters.  Power-Reset-t is
-    always pre-decremented by one because the mandatory service restart adds
-    exactly one on the verified build.  This also preserves Power-Reset-t when
-    another counter alone is changed.
+    Requested values replace only the selected counters.  Power-Reset-t is
+    always written one lower in the startup image because phnixIot4G increments
+    it in RAM during startup.  The persistent file is normalized to the desired
+    final value after the restarted service has been verified.
     """
     _check_raw(raw)
     checked = validate_updates(updates)
@@ -144,6 +144,71 @@ def prepare_patch(raw: bytes, updates: dict[str, int]) -> tuple[bytes, dict[str,
                 f"internal patch guard failed: byte 0x{index:02X} outside selected counter ranges changed"
             )
     return bytes(patched), desired
+
+
+def finalize_power_reset_file(raw: bytes, desired_power_reset: int) -> bytes:
+    """Normalize the persisted Power-Reset-t after the service startup increment.
+
+    Directly after restart the persistent file may still contain final-1 while
+    RAM already contains final.  Only the Power-Reset-t field may be changed
+    here; all other bytes from the freshly pulled post-start file are preserved.
+    """
+    _check_raw(raw)
+    if not isinstance(desired_power_reset, int) or not 1 <= desired_power_reset <= 0xFFFFFFFF:
+        raise CounterMaintenanceError("desired Power-Reset-t must be uint32 >= 1")
+
+    current = counter_value(raw, POWER_RESET_KEY)
+    prestart = desired_power_reset - 1
+    if current not in {prestart, desired_power_reset}:
+        raise CounterMaintenanceError(
+            "unexpected Power-Reset-t before persistence finalization: "
+            f"file={current}, expected {prestart} or {desired_power_reset}"
+        )
+    if current == desired_power_reset:
+        return raw
+
+    patched = bytearray(raw)
+    offset = COUNTERS[POWER_RESET_KEY][0]
+    patched[offset : offset + 4] = desired_power_reset.to_bytes(4, "little")
+    for index, (before, after) in enumerate(zip(raw, patched)):
+        if before != after and not offset <= index < offset + 4:
+            raise CounterMaintenanceError(
+                f"internal finalization guard failed: byte 0x{index:02X} outside Power-Reset-t changed"
+            )
+    return bytes(patched)
+
+
+def _replace_persistent_file_without_backup(
+    adb: AdbClient, patched_local: Path, expected_sha: str
+) -> None:
+    """Atomically replace statistics while preserving the original rescue backup."""
+    adb.push(patched_local, core.REMOTE_PAYLOAD)
+    size = adb.shell(f"wc -c < {core.REMOTE_PAYLOAD}")
+    payload_sha = adb.shell(
+        f"sha256sum {core.REMOTE_PAYLOAD} | awk '{{print $1}}'"
+    ).upper()
+    if size.strip() != str(STATISTICS_SIZE) or payload_sha != expected_sha:
+        raise CounterMaintenanceError("final persistence payload verification failed")
+
+    adb.shell(
+        f"cp -p {core.REMOTE_STATISTICS} {core.REMOTE_STAGE} && "
+        f"cat {core.REMOTE_PAYLOAD} > {core.REMOTE_STAGE} && sync"
+    )
+    stage_sha = adb.shell(
+        f"sha256sum {core.REMOTE_STAGE} | awk '{{print $1}}'"
+    ).upper()
+    if stage_sha != expected_sha:
+        raise CounterMaintenanceError("final persistence stage verification failed")
+
+    adb.shell(
+        f"mv {core.REMOTE_STAGE} {core.REMOTE_STATISTICS} && "
+        f"rm -f {core.REMOTE_PAYLOAD} && sync"
+    )
+    final_sha = adb.shell(
+        f"sha256sum {core.REMOTE_STATISTICS} | awk '{{print $1}}'"
+    ).upper()
+    if final_sha != expected_sha:
+        raise CounterMaintenanceError("final persistence SHA256 mismatch")
 
 
 def _pull_values(adb: AdbClient, destination: Path) -> tuple[bytes, dict[str, int]]:
@@ -240,7 +305,9 @@ def set_command(
             paused = False
             new_pid = core.wait_service_restored(adb, old_pid)
 
-            verify_file, file_values = _pull_values(adb, temp / "verify-statistics.bin")
+            # First verify the live counters.  The startup path increments
+            # Power-Reset-t in RAM, while the persistent file may still hold
+            # the deliberately pre-decremented startup value.
             try:
                 ram_raw = read_process_memory(
                     adb,
@@ -259,6 +326,40 @@ def set_command(
             except Exception as exc:
                 raise CounterMaintenanceError(f"RAM verification failed after restart: {exc}") from exc
 
+            ram_mismatches = {
+                key: {"expected": expected, "ram": ram_values.get(key)}
+                for key, expected in desired_final.items()
+                if ram_values.get(key) != expected
+            }
+            if ram_mismatches:
+                raise CounterMaintenanceError(
+                    "RAM counter verification mismatch after restart: "
+                    + json.dumps(ram_mismatches, sort_keys=True)
+                )
+
+            poststart_raw, poststart_values = _pull_values(
+                adb, temp / "poststart-statistics.bin"
+            )
+            finalized = finalize_power_reset_file(
+                poststart_raw, desired_final[POWER_RESET_KEY]
+            )
+            if finalized != poststart_raw:
+                finalized_path = temp / "finalized-statistics.bin"
+                finalized_path.write_bytes(finalized)
+                finalized_sha = core.sha256_bytes(finalized)
+                _replace_persistent_file_without_backup(
+                    adb, finalized_path, finalized_sha
+                )
+                emit(
+                    "power-reset-persistence-finalized",
+                    before=poststart_values[POWER_RESET_KEY],
+                    after=desired_final[POWER_RESET_KEY],
+                    sha256=finalized_sha,
+                )
+
+            verify_file, file_values = _pull_values(
+                adb, temp / "verify-statistics.bin"
+            )
             mismatches = {
                 key: {
                     "expected": expected,
@@ -270,7 +371,8 @@ def set_command(
             }
             if mismatches:
                 raise CounterMaintenanceError(
-                    "counter verification mismatch after restart: " + json.dumps(mismatches, sort_keys=True)
+                    "counter verification mismatch after restart: "
+                    + json.dumps(mismatches, sort_keys=True)
                 )
 
             core.cleanup_remote(adb)
@@ -284,6 +386,7 @@ def set_command(
                 backup=str(backup_path),
                 statistics_sha256=core.sha256_bytes(verify_file),
                 power_reset_compensated=True,
+                power_reset_persistence_finalized=True,
             )
             return 0
         except BaseException:
