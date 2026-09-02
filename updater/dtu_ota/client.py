@@ -31,8 +31,9 @@ class DtuOtaClient:
     def __init__(self, adb: AdbClient, *, source_root: Path | None = None):
         self.adb = adb
         self.source_root = source_root or Path(__file__).resolve().parents[2]
-        self.supervisor = self.source_root / "tools/dtu_ota_runner/dtu_ota_supervisor.sh"
-        self.hook = self.source_root / "tools/phnix_ota/phnix_ota_runtime_hook"
+        payload = self.source_root / "updater/dtu_ota/payload"
+        self.supervisor = payload / "dtu_ota_supervisor.sh"
+        self.hook = payload / "phnix_ota_runtime_hook"
 
     def _run_dir(self, run_id: str) -> str:
         return f"{REMOTE_BASE}/runs/{_run_id(run_id)}"
