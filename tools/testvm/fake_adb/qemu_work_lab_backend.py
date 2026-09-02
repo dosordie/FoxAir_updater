@@ -37,6 +37,9 @@ HERE = Path(__file__).resolve().parent
 BASE_PATH = HERE / "qemu_lab_adapter.py"
 MAX_RUN_SECONDS = 3600
 _IDLE_RESTART_LOCK = threading.Lock()
+_INTENTIONAL_RUNNER_STOP = threading.Event()
+_SERVICE_WATCHDOG_LOCK = threading.Lock()
+_SERVICE_WATCHDOG_THREAD: threading.Thread | None = None
 DEFAULT_RUN_SECONDS = int(os.environ.get("FOXAIR_QEMU_RUN_SECONDS", str(MAX_RUN_SECONDS)))
 
 
@@ -166,7 +169,7 @@ def _read_runner_pid() -> int | None:
     return pid
 
 
-def _stop_runner() -> None:
+def _stop_runner_impl() -> None:
     pid = _read_runner_pid()
     if pid is not None:
         try:
@@ -221,6 +224,17 @@ def _stop_runner() -> None:
             pass
     _restore_late_gdb()
     _remove_rootfs_busybox_overlay()
+
+
+def _stop_runner() -> None:
+    """Stop the complete lab deliberately without triggering its modem watchdog."""
+    already_suppressed = _INTENTIONAL_RUNNER_STOP.is_set()
+    _INTENTIONAL_RUNNER_STOP.set()
+    try:
+        _stop_runner_impl()
+    finally:
+        if not already_suppressed:
+            _INTENTIONAL_RUNNER_STOP.clear()
 
 
 def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | None:
@@ -308,7 +322,7 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
     return None
 
 
-def _start_runner(
+def _start_runner_impl(
     kind: str, value: str, *, original_ota: bool = False,
     resume_boot: bool = False,
 ) -> tuple[bool, str]:
@@ -411,7 +425,8 @@ def _start_runner(
             except OSError:
                 pass
             return False, f"run_scenario_lab.sh endete früh mit Exit {proc.returncode}:\n{tail}"
-        if service_pids():
+        current_service_pids = service_pids()
+        if len(current_service_pids) == 1:
             candidates = list((lab_root() / "logs").glob(f"{label}-*"))
             if candidates:
                 run_dir = max(candidates, key=lambda path: path.stat().st_mtime_ns)
@@ -479,6 +494,22 @@ def _start_runner(
     )
 
 
+def _start_runner(
+    kind: str, value: str, *, original_ota: bool = False,
+    resume_boot: bool = False,
+) -> tuple[bool, str]:
+    """Start one scenario while suppressing death detection for its replacement gap."""
+    already_suppressed = _INTENTIONAL_RUNNER_STOP.is_set()
+    _INTENTIONAL_RUNNER_STOP.set()
+    try:
+        return _start_runner_impl(
+            kind, value, original_ota=original_ota, resume_boot=resume_boot,
+        )
+    finally:
+        if not already_suppressed:
+            _INTENTIONAL_RUNNER_STOP.clear()
+
+
 def start_original_ota(value: str) -> tuple[bool, str, Path | None]:
     """Start a complete original-service run, retrying one pre-C350 race.
 
@@ -522,19 +553,62 @@ def _ota_restart_blocked() -> bool:
     )
 
 
-def _schedule_idle_service_restart() -> bool:
-    """Emulate the modem supervisor after an idle phnixIot4G SIGTERM."""
+def _restart_context() -> tuple[str, str]:
+    """Return the currently selected lab path without changing persistent state."""
+    try:
+        meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        meta = {}
+    kind = str(meta.get("kind", "scenario"))
+    value = str(meta.get("value", scenario_state().get("scenario", "success")))
+    if _scenario_to_lab_env(kind, value) is None:
+        return "scenario", str(scenario_state().get("scenario", "success"))
+    return kind, value
+
+
+def _schedule_idle_service_restart(dead_pids: tuple[int, ...] = ()) -> bool:
+    """Emulate the host-side modem supervisor after an external QEMU death.
+
+    This is simulator infrastructure.  It deliberately restarts the same lab
+    scenario without calling reset_ota_runtime(), so RS485 selection, MQTT
+    selection, OTA_INFO and a persisted board-resume record survive.
+    """
     if not _IDLE_RESTART_LOCK.acquire(blocking=False):
         return True
 
-    scenario = scenario_state().get("scenario", "success")
+    kind, value = _restart_context()
 
     def restart() -> None:
         try:
-            ok, message = _start_runner("scenario", scenario)
+            ok, message = _start_runner(kind, value)
+            new_pids: tuple[int, ...] = ()
+            if ok:
+                stable = 0
+                deadline = time.monotonic() + 10.0
+                while time.monotonic() < deadline:
+                    current = tuple(service_pids())
+                    if len(current) == 1 and current != dead_pids:
+                        stable += 1
+                        new_pids = current
+                        if stable >= 3:
+                            break
+                    else:
+                        stable = 0
+                        new_pids = ()
+                    time.sleep(0.2)
+                if not new_pids or stable < 3:
+                    ok = False
+                    message = (
+                        "QEMU service restart did not produce exactly one stable "
+                        "new phnixIot4G PID"
+                    )
             status = {
                 "ok": ok,
                 "message": message,
+                "kind": kind,
+                "value": value,
+                "dead_pids": list(dead_pids),
+                "new_pids": list(new_pids),
                 "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             }
             path = base.state_root() / "qemu-adb" / "service-restart-status.json"
@@ -549,6 +623,53 @@ def _schedule_idle_service_restart() -> bool:
         daemon=True,
     ).start()
     return True
+
+
+def _service_watchdog_loop() -> None:
+    """Watch the real host QEMU PID, including TERM issued inside bwrap.
+
+    The autonomous DTU supervisor executes ``kill -TERM`` itself, so that kill
+    never passes through fake-ADB's shell dispatcher.  Watching the actual
+    qemu-arm process models the physical modem supervisor at the correct layer.
+    """
+    observed: tuple[int, ...] = ()
+    while True:
+        try:
+            observed = _service_watchdog_transition(observed, tuple(service_pids()))
+        except Exception as exc:  # keep simulator supervision alive for diagnostics
+            path = _runtime_dir() / "service-watchdog-error.log"
+            try:
+                path.write_text(f"{time.time():.6f} {exc!r}\n", encoding="utf-8")
+            except OSError:
+                pass
+        time.sleep(0.5)
+
+
+def _service_watchdog_transition(
+    observed: tuple[int, ...], current: tuple[int, ...],
+) -> tuple[int, ...]:
+    """Apply one deterministic watchdog sample; split out for unit tests."""
+    if len(current) == 1:
+        return current
+    if not current and observed:
+        if not _INTENTIONAL_RUNNER_STOP.is_set():
+            _schedule_idle_service_restart(observed)
+        return ()
+    return observed
+
+
+def ensure_service_watchdog() -> None:
+    """Start exactly one watchdog in the long-lived fake-ADB server process."""
+    global _SERVICE_WATCHDOG_THREAD
+    with _SERVICE_WATCHDOG_LOCK:
+        if _SERVICE_WATCHDOG_THREAD is not None and _SERVICE_WATCHDOG_THREAD.is_alive():
+            return
+        _SERVICE_WATCHDOG_THREAD = threading.Thread(
+            target=_service_watchdog_loop,
+            name="foxair-qemu-service-watchdog",
+            daemon=True,
+        )
+        _SERVICE_WATCHDOG_THREAD.start()
 
 
 def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
@@ -761,7 +882,7 @@ def shell(command: str) -> tuple[int, bytes]:
         pid = int(restart_match.group(1))
         if pid not in service_pids():
             return 1, b"refusing to restart non-phnix QEMU pid\n"
-        _schedule_idle_service_restart()
+        _schedule_idle_service_restart((pid,))
         return 0, b""
     if command.startswith("kill ") or (command.startswith("killall") and "phnixIot4G" in command):
         return base.shell(command)
