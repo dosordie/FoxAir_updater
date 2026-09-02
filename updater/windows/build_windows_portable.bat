@@ -10,12 +10,9 @@ set "ICON_FILE=updater\windows\app_icon.ico"
 set "ICON_URL=https://raw.githubusercontent.com/dosordie/FoxAir_Control/main/app_icon.ico"
 set "ICON_GIT_SHA=0ae281034216f69c4f18dbdb55cc70d8b78e47e1"
 
-where py >nul 2>nul
-if errorlevel 1 (
-  set "PY_CMD=python"
-) else (
-  set "PY_CMD=py"
-)
+rem Use the Python selected by PATH/setup-python.  The Windows py launcher may
+rem point at a different globally installed version (for example 3.14 on CI).
+set "PY_CMD=python"
 
 rem Backend runtime intentionally pinned close to the tested Raspberry-Pi Python 3.11 line.
 set "PY_EMBED_VERSION=3.11.9"
@@ -75,7 +72,7 @@ rem Legacy Controller validiert historisch explizit #!/bin/sh. Die kanonische Ru
 rem #!/system/bin/sh. Fuer den Legacy-Restore wird deshalb nur die Shebang der separaten Paketkopie
 rem angepasst; der gepruefte Hook-Inhalt darunter bleibt identisch.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p='updater\dtu_ota\payload\phnix_ota_runtime_hook'; $o='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $t=[IO.File]::ReadAllText($p); $t=$t -replace '\A#!/system/bin/sh\r?\n','#!/bin/sh`n'; [IO.File]::WriteAllText($o,$t,(New-Object Text.UTF8Encoding($false)))" || goto :err
+  "$p='updater\dtu_ota\payload\phnix_ota_runtime_hook'; $o='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $t=[IO.File]::ReadAllText($p); $t=[regex]::Replace($t,'\A#!/system/bin/sh\r?\n',('#!/bin/sh'+[char]10),1); [IO.File]::WriteAllText($o,$t,(New-Object Text.UTF8Encoding($false)))" || goto :err
 copy /y tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\" >nul || goto :err
 
 rem Produktiver OTA-Pfad: Host paketiert/liest Status; Supervisor und Hook werden auf die DTU uebertragen.
@@ -83,23 +80,27 @@ xcopy /y /i updater\dtu_ota\*.py "%OUT%\backend\updater\dtu_ota\" >nul || goto :
 copy /y updater\dtu_ota\payload\dtu_ota_supervisor.sh "%OUT%\backend\updater\dtu_ota\payload\dtu_ota_supervisor.sh" >nul || goto :err
 copy /y updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\updater\dtu_ota\payload\phnix_ota_runtime_hook" >nul || goto :err
 
-echo [5/9] Bytegleichheit des gemeinsamen Backends pruefen ...
-fc /b tools\phnix_ota\phnix_local_ota_controller.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py" >nul || goto :backenderr
-fc /b tools\phnix_ota\phnix_local_ota_controller_hardened.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py" >nul || goto :backenderr
-fc /b updater\windows\phnix_windows_controller_wrapper.py "%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py" >nul || goto :backenderr
-fc /b tools\phnix_ota\create_firmware_manifest.py "%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py" >nul || goto :backenderr
+echo [5/9] SHA-256 des kopierten Backends pruefen ...
+rem FC /B liefert auf einigen Windows-Versionen fuer einzelne leere/sonderbehandelte
+rem Dateien unzuverlaessige Exitcodes.  Wir vergleichen deshalb die Inhalte per SHA-256
+rem und geben im Fehlerfall den exakten Dateinamen aus.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $b=[IO.File]::ReadAllBytes($p); $h=[Text.Encoding]::ASCII.GetString($b,0,[Math]::Min(10,$b.Length)); if(-not $h.StartsWith('#!/bin/sh')){exit 1}" || goto :backenderr
-fc /b tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\foxair_traffic_trace" >nul || goto :backenderr
-for %%F in (updater\dtu_ota\*.py) do (
-  fc /b "%%F" "%OUT%\backend\updater\dtu_ota\%%~nxF" >nul || goto :backenderr
-)
-fc /b updater\dtu_ota\payload\dtu_ota_supervisor.sh "%OUT%\backend\updater\dtu_ota\payload\dtu_ota_supervisor.sh" >nul || goto :backenderr
-fc /b updater\dtu_ota\payload\phnix_ota_runtime_hook "%OUT%\backend\updater\dtu_ota\payload\phnix_ota_runtime_hook" >nul || goto :backenderr
-for %%F in (updater\common\*.py) do (
-  fc /b "%%F" "%OUT%\backend\updater\common\%%~nxF" >nul || goto :backenderr
-)
-echo [OK] Gemeinsamer Controller/Common-Code und produktiver DTU-Runner wurden unveraendert kopiert.
+  "$ErrorActionPreference='Stop';" ^
+  "$pairs=@(" ^
+  "@('tools\phnix_ota\phnix_local_ota_controller.py','%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_core.py')," ^
+  "@('tools\phnix_ota\phnix_local_ota_controller_hardened.py','%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller_hardened.py')," ^
+  "@('updater\windows\phnix_windows_controller_wrapper.py','%OUT%\backend\tools\phnix_ota\phnix_local_ota_controller.py')," ^
+  "@('tools\phnix_ota\create_firmware_manifest.py','%OUT%\backend\tools\phnix_ota\create_firmware_manifest.py')," ^
+  "@('tools\phnix_traffic\foxair_traffic_trace','%OUT%\backend\tools\phnix_traffic\foxair_traffic_trace')," ^
+  "@('updater\dtu_ota\payload\dtu_ota_supervisor.sh','%OUT%\backend\updater\dtu_ota\payload\dtu_ota_supervisor.sh')," ^
+  "@('updater\dtu_ota\payload\phnix_ota_runtime_hook','%OUT%\backend\updater\dtu_ota\payload\phnix_ota_runtime_hook')" ^
+  ");" ^
+  "$pairs += Get-ChildItem 'updater\dtu_ota\*.py' | ForEach-Object { ,@($_.FullName,(Join-Path '%OUT%\backend\updater\dtu_ota' $_.Name)) };" ^
+  "$pairs += Get-ChildItem 'updater\common\*.py' | ForEach-Object { ,@($_.FullName,(Join-Path '%OUT%\backend\updater\common' $_.Name)) };" ^
+  "foreach($p in $pairs){if(-not(Test-Path $p[1])){Write-Error ('Backend-Datei fehlt: '+$p[1]); exit 1}; $a=(Get-FileHash -Algorithm SHA256 $p[0]).Hash; $b=(Get-FileHash -Algorithm SHA256 $p[1]).Hash; if($a -ne $b){Write-Error ('Backend-Datei weicht ab: '+$p[0]+' -> '+$p[1]); exit 1}};" ^
+  "$legacy='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $bytes=[IO.File]::ReadAllBytes($legacy); $prefix=[Text.Encoding]::ASCII.GetString($bytes,0,[Math]::Min(10,$bytes.Length)); if(-not $prefix.StartsWith(('#!/bin/sh'+[char]10))){Write-Error 'Legacy-Restore-Hook hat keinen exakten LF-Header #!/bin/sh'; exit 1}" || goto :backenderr
+
+echo [OK] Gemeinsamer Controller/Common-Code und produktiver DTU-Runner wurden inhaltlich verifiziert.
 
 echo [6/9] Private Python-%PY_EMBED_VERSION%-Runtime vorbereiten ...
 if not exist "%CACHE%" mkdir "%CACHE%"
@@ -163,7 +164,7 @@ goto :eof
 
 :backenderr
 echo.
-echo FEHLER: Kopiertes Backend ist nicht bytegleich mit dem Repository-Source.
+echo FEHLER: Kopiertes Backend konnte nicht inhaltlich verifiziert werden.
 goto :err
 
 :err
