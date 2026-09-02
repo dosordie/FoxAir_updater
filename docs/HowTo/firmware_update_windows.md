@@ -71,14 +71,24 @@ Nach erfolgreicher Vorprüfung:
 
 Der eigentliche Updatevorgang wird nach dem Start **autonom auf dem LTE-Modem weitergeführt**. Windows liest den dort persistent gespeicherten Zustand und zeigt Ablauf und Fortschritt an.
 
+![Laufendes Firmwareupdate im FoxAir Updater](LTE_update_aktiv.png)
+
 Eine unterbrochene Windows- oder ADB-Verbindung beendet einen bereits gestarteten Updatevorgang daher nicht. Nach Wiederherstellung der Verbindung kann über **Status prüfen** der gespeicherte Stand erneut gelesen werden. Trotzdem sollten Verbindung, Wärmepumpe und LTE-Modem während eines Updates möglichst ungestört bleiben.
 
 > [!IMPORTANT]
 > **100 % Firmwareübertragung bedeutet noch nicht automatisch, dass das Update vollständig abgeschlossen ist.**
 >
-> Nach der Übertragung verarbeitet, prüft und übernimmt das Mainboard die neue Firmware weiter. Erst wenn der FoxAir Updater ausdrücklich **„Das Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.“** meldet, ist der Mainboard-Updatepfad  erfolgreich bestätigt.
+> Nach der Übertragung verarbeitet, prüft und übernimmt das Mainboard die neue Firmware weiter. Erst wenn der FoxAir Updater ausdrücklich **„Das Mainboard-Firmwareupdate wurde erfolgreich abgeschlossen.“** meldet, ist der Mainboard-Updatepfad erfolgreich bestätigt.
+
+Nach Abschluss der eigentlichen Datenübertragung kann die Anzeige bereits 100 % zeigen, während das Mainboard die Firmware intern noch verarbeitet:
+
+![Firmware vollständig übertragen, Mainboard verarbeitet noch](LTE_upload_fertig.png)
 
 Technisch wird der Erfolg erst nach der finalen Mainboard-Rückmeldung **C36E Status 5 / Board-Step 12** als abgeschlossen gewertet. Ein Verbindungsabbruch oder das Erreichen von 100 % darf nicht als Erfolg interpretiert werden.
+
+Erst die ausdrückliche Erfolgsmeldung bestätigt den abgeschlossenen Mainboard-Updatepfad:
+
+![Firmwareupdate erfolgreich abgeschlossen](LTE_update_erfolgreich.png)
 
 ## 6. Status und Wiederaufnahme der Anzeige
 
