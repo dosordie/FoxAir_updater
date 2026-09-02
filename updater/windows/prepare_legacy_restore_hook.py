@@ -4,21 +4,33 @@ import argparse
 from pathlib import Path
 
 
-CANONICAL_HEADER = b"#!/system/bin/sh\n"
+SYSTEM_HEADER = b"#!/system/bin/sh\n"
 LEGACY_HEADER = b"#!/bin/sh\n"
 
 
 def prepare(source: Path, output: Path) -> None:
     raw = source.read_bytes()
-    if not raw.startswith(CANONICAL_HEADER):
+    if raw.startswith(LEGACY_HEADER):
+        # Current canonical hook already uses the exact header required by the
+        # legacy controller. Preserve it byte-for-byte.
+        written = raw
+        body = raw[len(LEGACY_HEADER):]
+    elif raw.startswith(SYSTEM_HEADER):
+        # Backward/forward compatibility for revisions where the autonomous
+        # hook used Android's explicit system shell shebang.
+        body = raw[len(SYSTEM_HEADER):]
+        written = LEGACY_HEADER + body
+    else:
         raise RuntimeError(f"canonical runtime hook has unexpected header: {source}")
+
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(LEGACY_HEADER + raw[len(CANONICAL_HEADER):])
-    written = output.read_bytes()
-    if not written.startswith(LEGACY_HEADER):
+    output.write_bytes(written)
+
+    verified = output.read_bytes()
+    if not verified.startswith(LEGACY_HEADER):
         raise RuntimeError(f"legacy runtime hook header verification failed: {output}")
-    if written[len(LEGACY_HEADER):] != raw[len(CANONICAL_HEADER):]:
-        raise RuntimeError("legacy runtime hook body changed while replacing shebang")
+    if verified[len(LEGACY_HEADER):] != body:
+        raise RuntimeError("legacy runtime hook body changed while preparing restore helper")
 
 
 def main() -> int:
