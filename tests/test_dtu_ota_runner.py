@@ -6,8 +6,8 @@ from dataclasses import asdict
 from pathlib import Path
 from unittest import mock
 
-from tools.dtu_ota_runner.client import DtuOtaClient, RunnerClientError
-from tools.dtu_ota_runner.package import DtuOtaPackage, PackageError, ota_command_bytes
+from updater.dtu_ota.client import DtuOtaClient, RunnerClientError
+from updater.dtu_ota.package import DtuOtaPackage, PackageError, ota_command_bytes
 from tools.testvm.fake_adb import qemu_work_lab_backend
 from tools.testvm.work_lab.rs485_fault_emulator import (
     board_software_info_frame,
@@ -22,10 +22,11 @@ class FakeAdb:
     def __init__(self):
         self.commands = []
         self.files = {}
+        self.active = ""
 
     def shell(self, command, check=True):
         self.commands.append((command, check))
-        if command.startswith("cat '") and command.endswith("/status.json'"):
+        if command.startswith("cat '") and "/status.json'" in command:
             run_id = command.split("/runs/", 1)[1].split("/", 1)[0]
             return json.dumps({
                 "schema": "foxair-dtu-ota-run-v1", "run_id": run_id,
@@ -33,11 +34,14 @@ class FakeAdb:
                 "updated_at": 1, "transfer_started": False,
                 "original_service_authoritative": False, "abort_allowed": True,
                 "recovery": "not-required",
+                "service_restart_requested": False, "service_restart_verified": False,
+                "mqtt_isolation_requested": False, "mqtt_isolated": False,
+                "boot_id": "boot-test",
             })
         if "last_run_id" in command and command.startswith("cat "):
             return "run-1"
         if "active.lock/run_id" in command and command.startswith("cat "):
-            return ""
+            return self.active
         return ""
 
     def push(self, local, remote):
@@ -117,6 +121,24 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertIsNone(client.active_run_id())
         self.assertEqual(client.current_run_id(), "run-1")
 
+    def test_current_prefers_plausible_active_run(self):
+        adb = FakeAdb()
+        adb.active = "active-2"
+        client = DtuOtaClient(adb)
+        self.assertEqual(client.current_run_id(), "active-2")
+
+    def test_prepare_is_side_effect_free_while_active_run_exists(self):
+        with tempfile.TemporaryDirectory() as temp:
+            firmware, _, _, manifest = self.make_inputs(Path(temp))
+            manifest_path = Path(temp) / "FW3.4.json"
+            manifest_path.write_text(json.dumps(asdict(manifest)), encoding="utf-8")
+            adb = FakeAdb()
+            adb.active = "active-2"
+            client = DtuOtaClient(adb)
+            with self.assertRaisesRegex(RunnerClientError, "active-2"):
+                client.prepare(manifest_path=manifest_path, firmware_path=firmware)
+            self.assertEqual(adb.files, {})
+
     def test_prepare_reports_persisted_preflight_reason(self):
         with tempfile.TemporaryDirectory() as temp:
             firmware, hook, runner, manifest = self.make_inputs(Path(temp))
@@ -135,6 +157,9 @@ class DtuOtaPackageTests(unittest.TestCase):
                         "updated_at": 1, "transfer_started": False,
                         "original_service_authoritative": False, "abort_allowed": True,
                         "recovery": "not-required", "reason": "package_validation_failed",
+                        "service_restart_requested": False, "service_restart_verified": False,
+                        "mqtt_isolation_requested": False, "mqtt_isolated": False,
+                        "boot_id": "boot-test",
                         "detail": "DTU package validation failed with code 72 before any service action.",
                     })
                 return original(command, check)
@@ -221,13 +246,41 @@ class DtuOtaPackageTests(unittest.TestCase):
             qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.clear()
 
     def test_qemu_runtime_hook_injects_inside_yield_breakpoint_commands(self):
-        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         qemu = hook.split("SIGFPE_POLICY=nopass", 1)[1].split("else\n", 1)[0]
         commands = qemu.split("commands 1", 1)[1].split("end\n", 1)[0]
         self.assertIn('set {char[512]} 0x94ab4 = "$ESCAPED"', commands)
         self.assertIn("set \\$pc = 0x19958", commands)
         self.assertIn("continue", commands)
         self.assertIn("commands 2", qemu)
+
+    def test_runner_p0_guards_are_persistent_and_side_effect_free(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        terminal = runner.split("terminal_result() {", 1)[1].split("guarded_result() {", 1)[0]
+        guarded = runner.split("guarded_result() {", 1)[1].split("runner_identity() {", 1)[0]
+        run = runner.split("run_action() {", 1)[1].split("classify_action() {", 1)[0]
+        classify = runner.split("classify_action() {", 1)[1].split("ack_action() {", 1)[0]
+        self.assertNotIn('write_status "$state" "$phase" true "$reason" "$detail" || true', terminal)
+        self.assertNotIn("release_lock", guarded)
+        self.assertNotIn("stop_http", guarded)
+        self.assertLess(run.index('status_string state'), run.index("acquire_lock"))
+        self.assertIn("restore_original_confirmed", run)
+        authority = classify.split('if test "$TRANSFER_STARTED" = true', 1)[1].split("else", 1)[0]
+        self.assertNotIn("rm -f \"$LOCK", authority)
+        self.assertIn("boot_fingerprint", classify)
+
+    def test_runner_status_distinguishes_requested_and_verified_flags(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        for field in (
+            "service_restart_requested", "service_restart_verified",
+            "mqtt_isolation_requested", "mqtt_isolated", "boot_id",
+        ):
+            self.assertIn(f'"{field}"', runner)
+        self.assertIn("mqtt_guard_active", runner)
 
 
 if __name__ == "__main__":

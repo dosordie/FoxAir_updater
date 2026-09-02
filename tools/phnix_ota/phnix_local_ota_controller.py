@@ -1343,7 +1343,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serial")
     parser.add_argument(
         "--runtime-helper", type=Path,
-        default=Path(__file__).resolve().with_name("phnix_ota_runtime_hook"),
+        default=Path(__file__).resolve().parents[2] / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
         help="local build-specific helper; copied temporarily to the LTE modem",
     )
     parser.add_argument("--output", choices=("auto", "human", "json"), default="auto",

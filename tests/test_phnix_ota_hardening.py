@@ -108,7 +108,7 @@ class OtaHardeningTests(unittest.TestCase):
         self.assertNotIn("transfer-unattended", source)
 
     def test_runtime_hook_keeps_original_guarded_hold_semantics_in_pr1(self):
-        hook = Path("tools/phnix_ota/phnix_ota_runtime_hook").read_text(encoding="utf-8")
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         cleanup = hook.split("cleanup() {", 1)[1].split("stop_hook() {", 1)[0]
         self.assertIn("kill -STOP", cleanup)
         self.assertNotIn("transfer-unattended", cleanup)

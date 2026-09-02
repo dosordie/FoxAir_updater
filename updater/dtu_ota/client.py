@@ -39,6 +39,9 @@ class DtuOtaClient:
         return f"{REMOTE_BASE}/runs/{_run_id(run_id)}"
 
     def current_run_id(self) -> str:
+        active = self.active_run_id()
+        if active is not None:
+            return active
         value = self.adb.shell(f"cat {REMOTE_BASE}/last_run_id 2>/dev/null || true")
         if not value:
             raise RunnerClientError("DTU has no last_run_id")
@@ -48,7 +51,21 @@ class DtuOtaClient:
         value = self.adb.shell(f"cat {REMOTE_BASE}/active.lock/run_id 2>/dev/null || true")
         if not value:
             return None
-        return _run_id(value.strip())
+        run_id = _run_id(value.strip())
+        raw = self.adb.shell(
+            f"cat '{self._run_dir(run_id)}/status.json' 2>/dev/null || true"
+        )
+        try:
+            status = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            raise RunnerClientError(f"active lock for {run_id} has no valid status")
+        if (
+            status.get("schema") != "foxair-dtu-ota-run-v1"
+            or status.get("run_id") != run_id
+            or status.get("terminal") is True
+        ):
+            raise RunnerClientError(f"active lock for {run_id} is inconsistent with its status")
+        return run_id
 
     def prepare(
         self,
@@ -60,6 +77,9 @@ class DtuOtaClient:
         restart_service_before_update: bool = False,
         isolate_mqtt: bool = False,
     ) -> dict[str, Any]:
+        active = self.active_run_id()
+        if active is not None:
+            raise RunnerClientError(f"active DTU OTA run blocks prepare: {active}")
         run_id = _run_id(run_id or time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 10000:04d}")
         manifest = FirmwareManifest.load(manifest_path)
         firmware = manifest.resolve_firmware(manifest_path, firmware_path)
@@ -126,7 +146,9 @@ class DtuOtaClient:
         except json.JSONDecodeError as error:
             raise RunnerClientError(f"invalid DTU status JSON: {error}") from error
         required = {"schema", "run_id", "state", "phase", "terminal", "updated_at",
-                    "transfer_started", "original_service_authoritative", "abort_allowed", "recovery"}
+                    "transfer_started", "original_service_authoritative", "abort_allowed", "recovery",
+                    "service_restart_requested", "service_restart_verified",
+                    "mqtt_isolation_requested", "mqtt_isolated", "boot_id"}
         missing = sorted(required - value.keys())
         if missing or value.get("schema") != "foxair-dtu-ota-run-v1" or value.get("run_id") != run_id:
             raise RunnerClientError(f"invalid status contract (missing={missing})")
