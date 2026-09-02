@@ -6,7 +6,14 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QCheckBox, QFileDialog, QMessageBox, QPushButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+    QHBoxLayout,
+    QMessageBox,
+    QPushButton,
+)
 
 import foxair_updater_gui as base
 import foxair_updater_runner_product as product
@@ -25,6 +32,11 @@ class MainWindow(product.MainWindow):
         if insert_at < 0:
             insert_at = max(0, layout.count() - 1)
 
+        # Keep the opt-in visually attached to the destructive action instead
+        # of leaving it as a separate full-width row.
+        layout.removeWidget(self.restore_btn)
+        restore_row = QHBoxLayout()
+        restore_row.addWidget(self.restore_btn)
         self.clean_dtu_after_restore = QCheckBox(
             "Danach alle FoxAir-Updater-Dateien vom LTE-Modem entfernen"
         )
@@ -33,7 +45,9 @@ class MainWindow(product.MainWindow):
             "Hooks, temporäre Statusdateien und Runner-Verzeichnisse des FoxAir Updaters. "
             "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik werden nicht gelöscht."
         )
-        layout.insertWidget(insert_at, self.clean_dtu_after_restore)
+        restore_row.addWidget(self.clean_dtu_after_restore)
+        restore_row.addStretch()
+        layout.insertLayout(insert_at, restore_row)
         return widget
 
     def _ui(self):
@@ -52,8 +66,9 @@ class MainWindow(product.MainWindow):
             return
         self.diagnostics_button = QPushButton("Diagnosepaket speichern…")
         self.diagnostics_button.setToolTip(
-            "Speichert den sichtbaren GUI-Log sowie die Textdiagnose des letzten/aktiven "
-            "DTU-OTA-Laufs als ZIP. Firmware, OTA_INFO und Statistik-Binärdaten werden nicht eingebunden."
+            "Speichert den sichtbaren GUI-Log sowie die Textdiagnose aller DTU-OTA-Versuche "
+            "des betreffenden Tages als ZIP. Firmware, OTA_INFO und Statistik-Binärdaten "
+            "werden nicht eingebunden."
         )
         self.diagnostics_button.clicked.connect(self._save_diagnostic_bundle)
         toolbar.insertWidget(max(0, toolbar.indexOf(clear_button)), self.diagnostics_button)
@@ -140,6 +155,20 @@ class MainWindow(product.MainWindow):
         if checkbox is not None:
             checkbox.setEnabled(not self.busy and self._adb_ready())
 
+    def _diagnostic_log_directory(self) -> Path:
+        """Use the same directory in which automatic update logs are stored."""
+        manifest_text = self.update_manifest.text().strip() if hasattr(self, "update_manifest") else ""
+        manifest = Path(manifest_text) if manifest_text else None
+        if manifest is not None and manifest.is_file():
+            firmware_directory = manifest.parent
+            logs = firmware_directory / "Logs"
+            try:
+                logs.mkdir(exist_ok=True)
+                return logs
+            except OSError:
+                return firmware_directory
+        return base.data_dir()
+
     def _save_diagnostic_bundle(self) -> None:
         if self.busy:
             return
@@ -156,7 +185,8 @@ class MainWindow(product.MainWindow):
             return
 
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        default = base.data_dir() / f"FoxAir_Diagnose_{stamp}.zip"
+        log_directory = self._diagnostic_log_directory()
+        default = log_directory / f"FoxAir_Diagnose_{stamp}.zip"
         file_name, _ = QFileDialog.getSaveFileName(
             self,
             "Diagnosepaket speichern",
@@ -187,6 +217,8 @@ class MainWindow(product.MainWindow):
             str(output),
             "--host-log",
             str(host_log),
+            "--host-log-dir",
+            str(log_directory),
             "--app-version",
             base.APP_VERSION,
         ]
@@ -259,10 +291,16 @@ class MainWindow(product.MainWindow):
             suffix = ""
             if isinstance(missing, dict) and missing:
                 suffix = "\n\nEinige optionale Dateien waren nicht vorhanden; dies ist bei manchen Laufphasen normal."
+            run_ids = parsed.get("run_ids") or []
+            attempts = len(run_ids) if isinstance(run_ids, list) else 1
+            host_logs = parsed.get("host_logs") or []
+            host_count = len(host_logs) if isinstance(host_logs, list) else 0
             QMessageBox.information(
                 self,
                 "Diagnosepaket gespeichert",
                 f"Das Diagnosepaket wurde gespeichert:\n{parsed.get('output', self._diagnostic_output)}"
+                f"\n\nEnthaltene DTU-OTA-Versuche dieses Tages: {attempts}"
+                f"\nZusätzliche Windows-Update-Logs dieses Tages: {host_count}"
                 "\n\nFirmware, OTA_INFO und Statistik-Binärdaten wurden nicht eingebunden. "
                 "Bekannte Geräte-/Cloudkennungen werden in Textdateien maskiert."
                 + suffix,
