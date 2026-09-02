@@ -15,6 +15,14 @@ from .package import DtuOtaPackage, RUN_ID_RE, ota_command_bytes, shell_payload_
 
 
 REMOTE_BASE = "/data/foxair_ota_runner"
+STATUS_SCHEMA = "foxair-dtu-ota-run-v1"
+LEGACY_OPTIONAL_STATUS_DEFAULTS = {
+    "service_restart_requested": False,
+    "service_restart_verified": False,
+    "mqtt_isolation_requested": False,
+    "mqtt_isolated": False,
+    "boot_id": "",
+}
 
 
 class RunnerClientError(RuntimeError):
@@ -38,6 +46,12 @@ class DtuOtaClient:
     def _run_dir(self, run_id: str) -> str:
         return f"{REMOTE_BASE}/runs/{_run_id(run_id)}"
 
+    def _active_lock_run_id(self) -> str | None:
+        value = self.adb.shell(f"cat {REMOTE_BASE}/active.lock/run_id 2>/dev/null || true")
+        if not value:
+            return None
+        return _run_id(value.strip())
+
     def current_run_id(self) -> str:
         active = self.active_run_id()
         if active is not None:
@@ -48,10 +62,9 @@ class DtuOtaClient:
         return _run_id(value.strip())
 
     def active_run_id(self) -> str | None:
-        value = self.adb.shell(f"cat {REMOTE_BASE}/active.lock/run_id 2>/dev/null || true")
-        if not value:
+        run_id = self._active_lock_run_id()
+        if run_id is None:
             return None
-        run_id = _run_id(value.strip())
         raw = self.adb.shell(
             f"cat '{self._run_dir(run_id)}/status.json' 2>/dev/null || true"
         )
@@ -60,7 +73,7 @@ class DtuOtaClient:
         except (TypeError, json.JSONDecodeError):
             raise RunnerClientError(f"active lock for {run_id} has no valid status")
         if (
-            status.get("schema") != "foxair-dtu-ota-run-v1"
+            status.get("schema") != STATUS_SCHEMA
             or status.get("run_id") != run_id
             or status.get("terminal") is True
         ):
@@ -150,12 +163,22 @@ class DtuOtaClient:
         except json.JSONDecodeError as error:
             raise RunnerClientError(f"invalid DTU status JSON: {error}") from error
         required = {"schema", "run_id", "state", "phase", "terminal", "updated_at",
-                    "transfer_started", "original_service_authoritative", "abort_allowed", "recovery",
-                    "service_restart_requested", "service_restart_verified",
-                    "mqtt_isolation_requested", "mqtt_isolated", "boot_id"}
+                    "transfer_started", "original_service_authoritative", "abort_allowed", "recovery"}
         missing = sorted(required - value.keys())
-        if missing or value.get("schema") != "foxair-dtu-ota-run-v1" or value.get("run_id") != run_id:
+        if missing or value.get("schema") != STATUS_SCHEMA or value.get("run_id") != run_id:
             raise RunnerClientError(f"invalid status contract (missing={missing})")
+
+        missing_new = sorted(set(LEGACY_OPTIONAL_STATUS_DEFAULTS) - value.keys())
+        if missing_new:
+            active_lock = self._active_lock_run_id()
+            safely_inactive = active_lock != run_id and (
+                value.get("terminal") is True or value.get("state") != "running"
+            )
+            if not safely_inactive:
+                raise RunnerClientError(f"invalid status contract (missing={missing_new})")
+            for field, default in LEGACY_OPTIONAL_STATUS_DEFAULTS.items():
+                value.setdefault(field, default)
+            value["legacy_status"] = True
         return value
 
     def log(self, run_id: str | None = None) -> str:
