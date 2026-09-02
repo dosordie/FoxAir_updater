@@ -72,7 +72,7 @@ rem Legacy Controller validiert historisch explizit #!/bin/sh. Die kanonische Ru
 rem #!/system/bin/sh. Fuer den Legacy-Restore wird deshalb nur die Shebang der separaten Paketkopie
 rem angepasst; der gepruefte Hook-Inhalt darunter bleibt identisch.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p='updater\dtu_ota\payload\phnix_ota_runtime_hook'; $o='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $t=[IO.File]::ReadAllText($p); $t=[regex]::Replace($t,'\A#!/system/bin/sh\r?\n',('#!/bin/sh'+[char]10),1); [IO.File]::WriteAllText($o,$t,(New-Object Text.UTF8Encoding($false)))" || goto :err
+  "$p='updater\dtu_ota\payload\phnix_ota_runtime_hook'; $o='%OUT%\backend\tools\phnix_ota\phnix_ota_runtime_hook'; $t=[IO.File]::ReadAllText($p); if(-not $t.StartsWith('#!/system/bin/sh')){throw 'Unerwartete Hook-Shebang'}; $i=$t.IndexOf([char]10); if($i -lt 0){throw 'Hook hat keine erste Zeile'}; $rest=$t.Substring($i+1); [IO.File]::WriteAllText($o,('#!/bin/sh'+[char]10+$rest),(New-Object Text.UTF8Encoding($false)))" || goto :err
 copy /y tools\phnix_traffic\foxair_traffic_trace "%OUT%\backend\tools\phnix_traffic\" >nul || goto :err
 
 rem Produktiver OTA-Pfad: Host paketiert/liest Status; Supervisor und Hook werden auf die DTU uebertragen.
