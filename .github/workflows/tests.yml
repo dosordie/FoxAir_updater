@@ -35,6 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sh -n tools/phnix_ota/phnix_ota_runtime_hook
+      - run: sh -n updater/dtu_ota/payload/phnix_ota_runtime_hook
       - run: sh -n tools/phnix_ota/phnix-ota-sim
       - run: sh -n tools/phnix_ota/phnix-sim-adb
