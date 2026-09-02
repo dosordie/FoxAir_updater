@@ -113,9 +113,9 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._connection(), "Verbindung")
         self.tabs.addTab(self._backup(), "Backup")
-        self.tabs.addTab(self._update(), "Firmware Update")
-        self.tabs.addTab(self._manifest(), "Manifest")
-        self.tabs.addTab(self._status(), "Status / Recovery")
+        self.tabs.addTab(self._update(), "Firmwareupdate")
+        self.tabs.addTab(self._manifest(), "Update-Datei / Manifest")
+        self.tabs.addTab(self._status(), "Status / Wiederherstellung")
         self.tabs.addTab(self._advanced(), "Erweitert")
         layout.addWidget(self.tabs)
 
@@ -125,7 +125,7 @@ class MainWindow(QMainWindow):
         clear_button = QPushButton("Protokoll leeren")
         clear_button.clicked.connect(self._clear_log)
         row.addWidget(clear_button)
-        save_button = QPushButton("Log speichern…")
+        save_button = QPushButton("Protokoll speichern…")
         save_button.clicked.connect(self._save_log)
         row.addWidget(save_button)
         layout.addLayout(row)
@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.adb_check = QPushButton("ADB prüfen")
         self.adb_check.clicked.connect(self._check_adb)
-        self.adb_reconnect = QPushButton("ADB reconnect")
+        self.adb_reconnect = QPushButton("ADB neu verbinden")
         self.adb_reconnect.clicked.connect(self._reconnect)
         row.addWidget(self.adb_check)
         row.addWidget(self.adb_reconnect)
@@ -256,19 +256,19 @@ class MainWindow(QMainWindow):
 
         self.backup_fw = QCheckBox("Firmware")
         self.backup_fw.setChecked(True)
-        self.backup_info = QCheckBox("OTA_INFO")
+        self.backup_info = QCheckBox("Update-Status (OTA_INFO)")
         self.backup_info.setChecked(True)
         self.backup_stat = QCheckBox("Statistik")
         self.backup_stat.setChecked(True)
-        self.backup_service = QCheckBox("Originaldienst phnixIot4G")
+        self.backup_service = QCheckBox("LTE-Dienst (phnixIot4G)")
         for item in (self.backup_fw, self.backup_info, self.backup_stat, self.backup_service):
             layout.addWidget(item)
 
         details = QLabel(
-            "<b>Firmware:</b> aktuell im LTE-Cache vorhandene OTA-/Firmwaredatei<br>"
-            "<b>OTA_INFO:</b> persistenter OTA-/Resume-Zustand des LTE-Dienstes<br>"
-            "<b>Statistik:</b> persistente Betriebs-, Kommunikations-, Reset- und OTA-Zähler<br>"
-            "<b>Originaldienst phnixIot4G:</b> originale ausführbare PHNIX-LTE-Programmdatei"
+            "<b>Firmware:</b> aktuell im LTE-Modem gespeicherte Firmwaredatei<br>"
+            "<b>Update-Status (OTA_INFO):</b> gespeicherter Update- und Fortsetzungsstatus<br>"
+            "<b>Statistik:</b> gespeicherte Betriebs-, Kommunikations-, Reset- und Updatezähler<br>"
+            "<b>LTE-Dienst (phnixIot4G):</b> Originalprogramm des LTE-Modems"
         )
         details.setWordWrap(True)
         layout.addWidget(details)
@@ -277,7 +277,7 @@ class MainWindow(QMainWindow):
         self.backup_button.clicked.connect(self._backup_run)
         layout.addWidget(self.backup_button)
         note = QLabel(
-            "<b>Read-only:</b> Das Backup erfolgt ausschließlich per <code>adb pull</code> "
+            "<b>Nur lesend:</b> Das Backup liest die ausgewählten Dateien vom LTE-Modem aus "
             "und verändert nichts am LTE-Modem oder Mainboard."
         )
         note.setWordWrap(True)
@@ -323,17 +323,17 @@ class MainWindow(QMainWindow):
             "}"
         )
         layout.addWidget(self.progress)
-        self.ota_reattach_btn = QPushButton("ADB neu verbinden / OTA-Status prüfen")
+        self.ota_reattach_btn = QPushButton("Update-Status prüfen")
         self.ota_reattach_btn.clicked.connect(self._reattach_ota)
         self.ota_reattach_btn.setVisible(False)
         layout.addWidget(self.ota_reattach_btn)
-        self.dry = QPushButton("Vorprüfung / Dry-Run")
+        self.dry = QPushButton("Vorprüfung")
         self.dry.clicked.connect(self._dry)
         layout.addWidget(self.dry)
         self.risk = QCheckBox("Risiko des Firmwareupdates verstanden.")
         self.risk.toggled.connect(self._buttons)
         layout.addWidget(self.risk)
-        self.update_btn = QPushButton("FIRMWAREUPDATE STARTEN")
+        self.update_btn = QPushButton("Firmwareupdate starten")
         self.update_btn.clicked.connect(self._update_run)
         layout.addWidget(self.update_btn)
         layout.addStretch()
@@ -346,10 +346,8 @@ class MainWindow(QMainWindow):
         self.status_btn.clicked.connect(self._status_run)
         layout.addWidget(self.status_btn)
         check_note = QLabel(
-            "<b>Read-only-Prüfung:</b> Prüft das LTE-Modem auf normalen Originalbetrieb: "
-            "Originaldienst läuft, Programmdatei/SHA stimmt, kein Debugger, keine lokale "
-            "OTA-Injection und keine Cloud-Sperre, Watchdogs laufen, MQTT/Cloud ist "
-            "verbunden und temporärer lokaler OTA-Zustand ist bereinigt. Es wird nichts verändert."
+            "<b>Nur Prüfung:</b> Prüft, ob das LTE-Modem wieder im normalen Originalbetrieb ist. "
+            "Die Prüfung verändert keine Einstellungen oder Dateien."
         )
         check_note.setWordWrap(True)
         layout.addWidget(check_note)
@@ -357,11 +355,9 @@ class MainWindow(QMainWindow):
         self.status_text.setWordWrap(True)
         layout.addWidget(self.status_text)
         note = QLabel(
-            "<b>Kontrollierter Recoverypfad:</b> Die Wiederherstellung ist nur vor einem "
-            "begonnenen C5A8-Firmwaretransfer zulässig. Sobald C5A8 begonnen hat, ist das "
-            "automatische Restore absichtlich gesperrt; ab dem ersten C5A8 bleibt der originale "
-            "PHNIX-Dienst autoritativ. C36E Status 3 und ein fehlendes C37B/3 sind ausdrücklich "
-            "keine sicheren Stopp- oder Restorepunkte."
+            "<b>Wiederherstellung:</b> Der Originalzustand kann nur wiederhergestellt werden, "
+            "solange noch keine Firmwareübertragung zum Mainboard begonnen hat. Danach ist diese "
+            "Funktion aus Sicherheitsgründen gesperrt."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -377,19 +373,17 @@ class MainWindow(QMainWindow):
         explanation = QLabel(
             "<h3>Was ist das Manifest?</h3>"
             "Das Manifest beschreibt exakt die Firmwaredatei, die an das Mainboard übertragen "
-            "werden soll. Es definiert Software-/Produktcode, Firmware-/Display-Version, "
-            "Ziel/SSID, Dateigröße, MD5, SHA256 und die zugehörige Firmwaredatei.<br><br>"
+            "werden soll. Es enthält Firmwareversion, Geräte-/Softwarekennung, Ziel, Dateigröße "
+            "und Prüfsummen.<br><br>"
             "<h3>Warum wird es benötigt?</h3>"
-            "Es verbindet <b>Firmwaredatei + erkannte Firmwareidentität + kryptografische "
-            "Prüfsummen</b> zu einem eindeutig überprüfbaren Updatepaket. Vor dem Update werden "
-            "Dateizuordnung, Größe, MD5, SHA256, Softwarecode, angebotene Version und "
-            "Mainboard-Ziel geprüft.<br><br>"
-            "<b>Empfohlener Weg (Full):</b> 1. Originale Firmwaredatei auswählen, "
-            "2. „Manifest automatisch erzeugen“ wählen, 3. die automatische Analyse und "
-            "Eintragung der Werte/Prüfsummen abwarten, 4. das Manifest unter „Firmware Update“ "
-            "auswählen.<br><br><b>Das Manifest verändert die Firmwaredatei NICHT.</b> Der manuelle "
-            "Fallback ist nur vorgesehen, wenn die automatische Analyse nicht möglich ist und "
-            "alle Werte sicher bekannt sind."
+            "Damit wird vor dem Update geprüft, ob Firmwaredatei und Update-Informationen "
+            "wirklich zusammengehören. Die meisten Werte werden automatisch ermittelt und müssen "
+            "normalerweise nicht manuell eingegeben werden.<br><br>"
+            "<b>Empfohlener Weg:</b> 1. Originale Firmwaredatei auswählen, "
+            "2. „Manifest automatisch erzeugen“ wählen, 3. die automatische Analyse abwarten, "
+            "4. das erzeugte Manifest unter „Firmwareupdate“ auswählen.<br><br>"
+            "<b>Das Manifest verändert die Firmwaredatei NICHT.</b> Die manuelle Eingabe ist nur "
+            "vorgesehen, wenn die automatische Analyse nicht möglich ist und alle Werte sicher bekannt sind."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -403,18 +397,18 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
 
         auto_note = QLabel(
-            "<b>Empfohlen:</b> Die Full-Variante analysiert die originale Firmwaredatei selbst, "
-            "liest Software-Code und Version aus dem Image und berechnet die übrigen Manifestfelder. "
-            "Die Firmwaredatei muss keine .bin-Endung besitzen und wird nicht verändert."
+            "<b>Empfohlen:</b> Die automatische Analyse liest die benötigten Kennungen und die "
+            "Firmwareversion direkt aus der Datei und berechnet die Prüfsummen. Die Firmwaredatei "
+            "muss keine .bin-Endung besitzen und wird nicht verändert."
         )
         auto_note.setWordWrap(True)
         layout.addWidget(auto_note)
 
         row = QHBoxLayout()
-        self.manifest_preview_btn = QPushButton("Vorschau aus Firmware (Full / Show)")
+        self.manifest_preview_btn = QPushButton("Vorschau aus Firmware")
         self.manifest_preview_btn.clicked.connect(self._manifest_preview_full)
         row.addWidget(self.manifest_preview_btn)
-        self.manifest_full_btn = QPushButton("Manifest automatisch erzeugen (Full)")
+        self.manifest_full_btn = QPushButton("Manifest automatisch erzeugen")
         self.manifest_full_btn.clicked.connect(self._manifest_full)
         row.addWidget(self.manifest_full_btn)
         row.addStretch()
@@ -423,13 +417,13 @@ class MainWindow(QMainWindow):
         self.manifest_preview = QPlainTextEdit()
         self.manifest_preview.setReadOnly(True)
         self.manifest_preview.setPlaceholderText(
-            "Hier erscheint die Full-/Show-Vorschau des erzeugten Manifests."
+            "Hier erscheint die Vorschau des automatisch erkannten Manifests."
         )
         self.manifest_preview.setMaximumHeight(220)
         layout.addWidget(self.manifest_preview)
 
         fallback = QLabel(
-            "<b>Fallback / manuell:</b> Nur verwenden, wenn die automatische Firmwareanalyse "
+            "<b>Manuell – nur bei Bedarf:</b> Nur verwenden, wenn die automatische Firmwareanalyse "
             "nicht möglich ist und die Werte sicher bekannt sind."
         )
         fallback.setWordWrap(True)
@@ -439,16 +433,16 @@ class MainWindow(QMainWindow):
         form = QFormLayout(form_widget)
         self.sw_code = QLineEdit()
         self.sw_code.setPlaceholderText("82400644")
-        form.addRow("Software Code:", self.sw_code)
+        form.addRow("Softwarecode:", self.sw_code)
         self.display_ver = QLineEdit()
         self.display_ver.setPlaceholderText("V3.4")
-        form.addRow("Display-Version:", self.display_ver)
+        form.addRow("Firmwareversion:", self.display_ver)
         self.ssid = QLineEdit()
         self.ssid.setText("0063")
-        form.addRow("Target SSID:", self.ssid)
+        form.addRow("Zielkennung (SSID):", self.ssid)
         layout.addWidget(form_widget)
 
-        self.manifest_btn = QPushButton("Manifest manuell erzeugen (Fallback)")
+        self.manifest_btn = QPushButton("Manifest manuell erzeugen")
         self.manifest_btn.clicked.connect(self._manifest_run)
         layout.addWidget(self.manifest_btn)
         layout.addStretch()
@@ -744,8 +738,8 @@ class MainWindow(QMainWindow):
         if event in ("guarded-hold", "manual-recovery-required"):
             QMessageBox.critical(
                 self,
-                "Guarded Hold",
-                "Keine weiteren Befehle ausführen und Wärmepumpe/LTE-Modem nicht stromlos machen.",
+                "Update sicher angehalten",
+                "Keine weiteren Updatebefehle ausführen und Wärmepumpe/LTE-Modem nicht stromlos machen.",
             )
         label = record.get("event")
         hook = record.get("hook")
@@ -806,7 +800,7 @@ class MainWindow(QMainWindow):
                         "Keine automatische Aktion ausgeführt."
                     )
                     self.progress_text.setText(
-                        "OTA-Status nicht bestätigt."
+                        "Update-Status konnte nicht bestätigt werden."
                     )
             else:
                 self.ota_monitoring_lost = True
@@ -816,7 +810,7 @@ class MainWindow(QMainWindow):
                     "Keine automatische Aktion ausgeführt."
                 )
                 self.progress_text.setText(
-                    "OTA-Status nicht bestätigt."
+                    "Update-Status konnte nicht bestätigt werden."
                 )
             self._buttons()
         elif op == "adb":
@@ -837,7 +831,7 @@ class MainWindow(QMainWindow):
                 self.pending_after_reconnect = True
                 self.adb_state.setText(
                     f'<span style="color:#b26a00;">ADB-Gerät über {source} ist offline – '
-                    'reconnect wird versucht…</span>'
+                    'Verbindung wird neu aufgebaut…</span>'
                 )
                 self._reconnect(auto=True)
             else:
@@ -871,7 +865,7 @@ class MainWindow(QMainWindow):
                 )
                 self.status_text.setText(headline + "<br>".join(lines))
             except Exception:
-                self.status_text.setText("Status beendet – Details im Log.")
+                self.status_text.setText("Status beendet – Details im Protokoll.")
         elif op == "manifest-preview-full":
             self.manifest_preview.setPlainText(output)
             if code != 0:
@@ -906,10 +900,15 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Backup",
-                "Backup abgeschlossen." if code == 0 else "Backup fehlgeschlagen – Details im Log.",
+                "Backup abgeschlossen." if code == 0 else "Backup fehlgeschlagen – Details im Protokoll.",
             )
         elif op in ("dry", "update", "restore", "same"):
-            text = {"dry": "Dry-Run", "update": "Firmwareupdate", "restore": "Restore", "same": "Gleichversionstest"}[op]
+            text = {
+                "dry": "Vorprüfung",
+                "update": "Firmwareupdate",
+                "restore": "Wiederherstellung",
+                "same": "Prüfung auf gleiche Firmware",
+            }[op]
             (QMessageBox.information if code == 0 else QMessageBox.critical)(
                 self, text, f"{text}: Exit-Code {code}"
             )
@@ -1007,8 +1006,8 @@ class MainWindow(QMainWindow):
         if (
             QMessageBox.question(
                 self,
-                "Restore",
-                "Restore jetzt beim bestehenden Controller anfordern?",
+                "Originalzustand wiederherstellen",
+                "Soll der normale Originalbetrieb des LTE-Modems jetzt kontrolliert wiederhergestellt werden?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -1054,7 +1053,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Manifest",
-                "Für die manuelle Fallback-Erzeugung werden Firmware, Software Code, Display-Version und Target SSID benötigt.",
+                "Für die manuelle Erzeugung werden Firmware, Softwarecode, Firmwareversion und Zielkennung benötigt.",
             )
             return
         output = firmware.with_suffix(".json")
@@ -1076,9 +1075,11 @@ class MainWindow(QMainWindow):
             data = json.loads(path.read_text(encoding="utf-8"))
             firmware = path.parent / str(data.get("firmware_file", ""))
             self.summary.setText(
-                f"Version: <b>{data.get('display_version', '?')}</b> | Wire: {data.get('wire_version', '?')} | "
-                f"Software Code: {data.get('software_code', '?')} | SSID: {data.get('target_ssid', '?')}<br>"
-                f"Firmware: {data.get('firmware_file', '?')} ({'vorhanden' if firmware.is_file() else 'FEHLT'})"
+                f"Firmwareversion: <b>{data.get('display_version', '?')}</b> | "
+                f"Softwarecode: {data.get('software_code', '?')} | "
+                f"Ziel: {data.get('target_ssid', '?')}<br>"
+                f"Firmwaredatei: {data.get('firmware_file', '?')} "
+                f"({'vorhanden' if firmware.is_file() else 'FEHLT'})"
             )
         except Exception:
             self.summary.setText("Noch keine gültige Update-Datei ausgewählt.")
@@ -1122,7 +1123,7 @@ class MainWindow(QMainWindow):
     def _save_log(self):
         file_name, _ = QFileDialog.getSaveFileName(
             self,
-            "Log speichern",
+            "Protokoll speichern",
             str(data_dir() / "foxair-updater.log"),
             "Log (*.log);;Text (*.txt)",
         )
