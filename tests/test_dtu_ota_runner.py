@@ -308,6 +308,13 @@ class DtuOtaPackageTests(unittest.TestCase):
                 {"ttyGS0", "smd8"},
             )
 
+    def test_qemu_runner_log_is_current_run_only(self):
+        backend = Path("tools/testvm/fake_adb/qemu_work_lab_backend.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('log_handle = log_path.open("wb", buffering=0)', backend)
+        self.assertIn('"socat",', backend)
+
     def test_explicit_vm_reset_removes_autonomous_runner_state(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

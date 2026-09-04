@@ -169,6 +169,15 @@ def _read_runner_pid() -> int | None:
     return pid
 
 
+def _process_is_running(pid: int) -> bool:
+    """Treat a terminated but not yet reaped child as stopped."""
+    try:
+        fields = (Path("/proc") / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return False
+    return bool(fields) and fields[0] != "Z"
+
+
 def _remove_stale_lab_device_links() -> None:
     """Remove only PTY links owned by a previous Work-Lab invocation."""
     dev = qemu_rootfs() / "dev"
@@ -176,6 +185,29 @@ def _remove_stale_lab_device_links() -> None:
         path = dev / name
         if path.is_symlink():
             path.unlink(missing_ok=True)
+
+
+def _lab_process_groups() -> set[int]:
+    """Return process groups belonging to the current Work-Lab invocation."""
+    own_group = os.getpgrp()
+    groups: set[int] = set()
+    markers = (
+        "phnixIot4G", "run_scenario_lab.sh", "gdb-multiarch", "socat",
+        "rs485_fault_emulator.py", "mqtt_scenario_stub.py", "qmux_stub.py",
+        "at_emulator.py", "credential_http_stub.py", "firmware_http_stub.py",
+    )
+    lab_marker = str(lab_root())
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+            group = os.getpgid(int(entry.name))
+        except (OSError, ValueError, ProcessLookupError):
+            continue
+        if group != own_group and lab_marker in raw and any(marker in raw for marker in markers):
+            groups.add(group)
+    return groups
 
 
 def _stop_runner_impl() -> None:
@@ -187,9 +219,7 @@ def _stop_runner_impl() -> None:
             pass
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except OSError:
+            if not _process_is_running(pid):
                 break
             time.sleep(0.1)
         else:
@@ -201,36 +231,21 @@ def _stop_runner_impl() -> None:
     # run_scenario_lab creates separate process groups inside unshare. Killing
     # only its outer shell can otherwise leave old ARM/GDB instances behind,
     # making the next scenario race against several "modems".
-    own_group = os.getpgrp()
-    groups: set[int] = set()
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            raw = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-            pid_value = int(entry.name)
-            group = os.getpgid(pid_value)
-        except (OSError, ValueError, ProcessLookupError):
-            continue
-        lab_marker = str(lab_root())
-        lab_process = (
-            (lab_marker in raw and "phnixIot4G" in raw)
-            or ("gdb-multiarch" in raw and "local_ota_handler" in raw)
-            or (lab_marker in raw and "run_scenario_lab.sh" in raw)
-        )
-        if lab_process and group != own_group:
-            groups.add(group)
+    groups = _lab_process_groups()
     for group in groups:
         try:
             os.killpg(group, signal.SIGTERM)
         except OSError:
             pass
-    time.sleep(0.3)
-    for group in groups:
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and _lab_process_groups():
+        time.sleep(0.1)
+    for group in _lab_process_groups():
         try:
             os.killpg(group, signal.SIGKILL)
         except OSError:
             pass
+    time.sleep(0.2)
     # A host/VM reboot cannot run run_scenario_lab.sh's EXIT trap.  Its
     # simulator-owned PTY symlinks then survive and make every later scenario
     # fail with "already exists".  Real files/device nodes remain fail-closed.
@@ -389,7 +404,10 @@ def _start_runner_impl(
     duration = max(5, min(DEFAULT_RUN_SECONDS, MAX_RUN_SECONDS))
     log_path = _runner_log()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = log_path.open("ab", buffering=0)
+    # This is a current-run status log. Per-run forensic logs remain preserved
+    # below LAB_ROOT/logs, while truncation prevents stale failures appearing
+    # repeatedly in every later control-command error.
+    log_handle = log_path.open("wb", buffering=0)
     try:
         proc = subprocess.Popen(
             [str(runner), str(duration), label],
