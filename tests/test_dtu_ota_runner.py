@@ -1,6 +1,8 @@
 import hashlib
 import json
+import os
 import tempfile
+import time
 import unittest
 from dataclasses import asdict
 from pathlib import Path
@@ -289,6 +291,20 @@ class DtuOtaPackageTests(unittest.TestCase):
         finally:
             qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.clear()
 
+    def test_cross_process_intentional_stop_marker_blocks_watchdog(self):
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "intentional-stop"
+            with mock.patch.object(
+                qemu_work_lab_backend, "_intentional_stop_marker", return_value=marker
+            ):
+                marker.write_text(str(time.time() + 60), encoding="ascii")
+                with mock.patch.object(
+                    qemu_work_lab_backend, "_schedule_idle_service_restart"
+                ) as restart:
+                    observed = qemu_work_lab_backend._service_watchdog_transition((4100,), ())
+                self.assertEqual(observed, ())
+                restart.assert_not_called()
+
     def test_qemu_stop_removes_only_stale_lab_device_links(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -314,6 +330,30 @@ class DtuOtaPackageTests(unittest.TestCase):
         )
         self.assertIn('log_handle = log_path.open("wb", buffering=0)', backend)
         self.assertIn('"socat",', backend)
+
+    def test_vm_reset_removes_fake_adb_tmp_authority_markers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = root / "rootfs/data"
+            data.mkdir(parents=True)
+            (data / "phnixIot_device_OTA_INFO").write_bytes(b"old")
+            (data / "phnixIot_device_statisic").write_bytes(b"stats")
+            device_tmp = root / "device-tmp"
+            hook = device_tmp / "phnix_ota_hook"
+            hook.mkdir(parents=True)
+            (hook / "transfer-started").touch()
+            with (
+                mock.patch.object(
+                    qemu_work_lab_backend, "root_path",
+                    side_effect=lambda remote: root / "rootfs" / remote.lstrip("/"),
+                ),
+                mock.patch.object(
+                    qemu_work_lab_backend.base, "state_root", return_value=root
+                ),
+                mock.patch.dict(os.environ, {"FOXAIR_FAKE_ADB_TMP": str(device_tmp)}),
+            ):
+                qemu_work_lab_backend.reset_ota_runtime()
+            self.assertFalse(hook.exists())
 
     def test_explicit_vm_reset_removes_autonomous_runner_state(self):
         with tempfile.TemporaryDirectory() as temp:

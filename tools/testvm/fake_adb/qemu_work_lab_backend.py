@@ -41,6 +41,7 @@ _INTENTIONAL_RUNNER_STOP = threading.Event()
 _SERVICE_WATCHDOG_LOCK = threading.Lock()
 _SERVICE_WATCHDOG_THREAD: threading.Thread | None = None
 DEFAULT_RUN_SECONDS = int(os.environ.get("FOXAIR_QEMU_RUN_SECONDS", str(MAX_RUN_SECONDS)))
+INTENTIONAL_STOP_TTL_SECONDS = 240
 
 
 def _load_base() -> ModuleType:
@@ -86,6 +87,39 @@ def _pid_file() -> Path:
 
 def _runner_log() -> Path:
     return _runtime_dir() / "scenario-lab.out"
+
+
+def _intentional_stop_marker() -> Path:
+    return _runtime_dir() / "intentional-runner-stop"
+
+
+def _intentional_stop_active() -> bool:
+    if _INTENTIONAL_RUNNER_STOP.is_set():
+        return True
+    marker = _intentional_stop_marker()
+    try:
+        expires_at = float(marker.read_text().strip())
+    except (OSError, ValueError):
+        marker.unlink(missing_ok=True)
+        return False
+    if expires_at > time.time():
+        return True
+    marker.unlink(missing_ok=True)
+    return False
+
+
+def _begin_intentional_stop() -> bool:
+    already_active = _intentional_stop_active()
+    _INTENTIONAL_RUNNER_STOP.set()
+    marker = _intentional_stop_marker()
+    marker.write_text(f"{time.time() + INTENTIONAL_STOP_TTL_SECONDS:.3f}\n", encoding="ascii")
+    return already_active
+
+
+def _end_intentional_stop(already_active: bool) -> None:
+    _INTENTIONAL_RUNNER_STOP.clear()
+    if not already_active:
+        _intentional_stop_marker().unlink(missing_ok=True)
 
 
 def _runner_meta() -> Path:
@@ -256,13 +290,11 @@ def _stop_runner_impl() -> None:
 
 def _stop_runner() -> None:
     """Stop the complete lab deliberately without triggering its modem watchdog."""
-    already_suppressed = _INTENTIONAL_RUNNER_STOP.is_set()
-    _INTENTIONAL_RUNNER_STOP.set()
+    already_suppressed = _begin_intentional_stop()
     try:
         _stop_runner_impl()
     finally:
-        if not already_suppressed:
-            _INTENTIONAL_RUNNER_STOP.clear()
+        _end_intentional_stop(already_suppressed)
 
 
 def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | None:
@@ -530,15 +562,13 @@ def _start_runner(
     resume_boot: bool = False,
 ) -> tuple[bool, str]:
     """Start one scenario while suppressing death detection for its replacement gap."""
-    already_suppressed = _INTENTIONAL_RUNNER_STOP.is_set()
-    _INTENTIONAL_RUNNER_STOP.set()
+    already_suppressed = _begin_intentional_stop()
     try:
         return _start_runner_impl(
             kind, value, original_ota=original_ota, resume_boot=resume_boot,
         )
     finally:
-        if not already_suppressed:
-            _INTENTIONAL_RUNNER_STOP.clear()
+        _end_intentional_stop(already_suppressed)
 
 
 def start_original_ota(value: str) -> tuple[bool, str, Path | None]:
@@ -683,7 +713,7 @@ def _service_watchdog_transition(
     if len(current) == 1:
         return current
     if not current and observed:
-        if not _INTENTIONAL_RUNNER_STOP.is_set():
+        if not _intentional_stop_active():
             _schedule_idle_service_restart(observed)
         return ()
     return observed
@@ -766,6 +796,27 @@ def reset_ota_runtime() -> None:
         path = root_path(remote)
         if path.is_dir():
             shutil.rmtree(path)
+    runtime_state = base.state_root() / "runtime-sim" / "runtime.json"
+    runtime_state.parent.mkdir(parents=True, exist_ok=True)
+    runtime_state.write_text(json.dumps({
+        "running": False, "httpd": False, "held": False,
+        "cloud_blocked": False, "watchdogs_paused": False,
+        "recovery_running": False,
+    }, separators=(",", ":")), encoding="utf-8")
+    # The autonomous supervisor is executed in the fake-ADB /tmp namespace,
+    # not ROOTFS/tmp. Remove its markers as part of an explicit VM reset.
+    device_tmp = Path(os.environ.get(
+        "FOXAIR_FAKE_ADB_TMP", str(base.state_root() / "device-tmp")
+    ))
+    for name in (
+        "phnix_ota_hook", "phnix_ota_status.json", "phnix_ota_httpd.pid",
+        "phnix_handshake_trace.json",
+    ):
+        path = device_tmp / name
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
 
 
 def reset_autonomous_runner_state() -> None:
@@ -798,21 +849,6 @@ def _resume_restart_ready(kind: str, value: str, state: dict[str, str]) -> bool:
     except OSError:
         return False
     return resume.is_file() and len(raw) == 220 and 0 < offset < length
-    runtime_state = base.state_root() / "runtime-sim" / "runtime.json"
-    runtime_state.parent.mkdir(parents=True, exist_ok=True)
-    runtime_state.write_text(json.dumps({
-        "running": False, "httpd": False, "held": False,
-        "cloud_blocked": False, "watchdogs_paused": False,
-        "recovery_running": False,
-    }, separators=(",", ":")), encoding="utf-8")
-    # Remove markers left by the pre-unified /tmp mapping once during upgrade.
-    legacy_tmp = base.state_root() / "device-tmp"
-    for name in ("phnix_ota_hook", "phnix_ota_status.json", "phnix_ota_httpd.pid"):
-        path = legacy_tmp / name
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink(missing_ok=True)
 
 
 def apply_control(kind: str, value: str) -> tuple[bool, str]:
