@@ -750,6 +750,15 @@ def reset_ota_runtime() -> None:
             shutil.rmtree(path)
 
 
+def reset_autonomous_runner_state() -> None:
+    """Forget all autonomous OTA runs only for an explicit VM lab reset."""
+    runner_root = root_path("/data/foxair_ota_runner")
+    if runner_root.is_dir():
+        shutil.rmtree(runner_root)
+    else:
+        runner_root.unlink(missing_ok=True)
+
+
 def _resume_restart_ready(kind: str, value: str, state: dict[str, str]) -> bool:
     """Recognise the second, state-preserving half of restart-at-50.
 
@@ -1005,7 +1014,10 @@ def main() -> int:
             print(message)
             return 0 if ok else 3
         if args.command == "reset":
+            _stop_runner()
             reset_state(args.scenario, "success")
+            reset_ota_runtime()
+            reset_autonomous_runner_state()
             ok, message = apply_control("scenario", args.scenario)
         else:
             ok, message = apply_control(args.command, args.value)

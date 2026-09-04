@@ -308,6 +308,23 @@ class DtuOtaPackageTests(unittest.TestCase):
                 {"ttyGS0", "smd8"},
             )
 
+    def test_explicit_vm_reset_removes_autonomous_runner_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runner = root / "data/foxair_ota_runner"
+            (runner / "active.lock").mkdir(parents=True)
+            (runner / "active.lock/run_id").write_text("old-run", encoding="utf-8")
+            unrelated = root / "data/keep-me"
+            unrelated.write_text("safe", encoding="utf-8")
+            with mock.patch.object(
+                qemu_work_lab_backend,
+                "root_path",
+                side_effect=lambda remote: root / remote.lstrip("/"),
+            ):
+                qemu_work_lab_backend.reset_autonomous_runner_state()
+            self.assertFalse(runner.exists())
+            self.assertEqual(unrelated.read_text(encoding="utf-8"), "safe")
+
     def test_qemu_runtime_hook_injects_inside_yield_breakpoint_commands(self):
         hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         qemu = hook.split("SIGFPE_POLICY=nopass", 1)[1].split("else\n", 1)[0]
