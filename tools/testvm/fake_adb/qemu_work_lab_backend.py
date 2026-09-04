@@ -169,6 +169,15 @@ def _read_runner_pid() -> int | None:
     return pid
 
 
+def _remove_stale_lab_device_links() -> None:
+    """Remove only PTY links owned by a previous Work-Lab invocation."""
+    dev = qemu_rootfs() / "dev"
+    for name in ("ttyGS0", "smd8", "ttyHSL2"):
+        path = dev / name
+        if path.is_symlink():
+            path.unlink(missing_ok=True)
+
+
 def _stop_runner_impl() -> None:
     pid = _read_runner_pid()
     if pid is not None:
@@ -222,6 +231,10 @@ def _stop_runner_impl() -> None:
             os.killpg(group, signal.SIGKILL)
         except OSError:
             pass
+    # A host/VM reboot cannot run run_scenario_lab.sh's EXIT trap.  Its
+    # simulator-owned PTY symlinks then survive and make every later scenario
+    # fail with "already exists".  Real files/device nodes remain fail-closed.
+    _remove_stale_lab_device_links()
     _restore_late_gdb()
     _remove_rootfs_busybox_overlay()
 

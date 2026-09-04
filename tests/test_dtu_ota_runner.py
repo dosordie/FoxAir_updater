@@ -289,6 +289,25 @@ class DtuOtaPackageTests(unittest.TestCase):
         finally:
             qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.clear()
 
+    def test_qemu_stop_removes_only_stale_lab_device_links(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dev = root / "dev"
+            dev.mkdir(parents=True)
+            with (
+                mock.patch.object(qemu_work_lab_backend, "qemu_rootfs", return_value=root),
+                mock.patch.object(
+                    Path, "is_symlink", autospec=True,
+                    side_effect=lambda path: path.name in {"ttyGS0", "smd8"},
+                ),
+                mock.patch.object(Path, "unlink", autospec=True) as unlink,
+            ):
+                qemu_work_lab_backend._remove_stale_lab_device_links()
+            self.assertEqual(
+                {call.args[0].name for call in unlink.call_args_list},
+                {"ttyGS0", "smd8"},
+            )
+
     def test_qemu_runtime_hook_injects_inside_yield_breakpoint_commands(self):
         hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(encoding="utf-8")
         qemu = hook.split("SIGFPE_POLICY=nopass", 1)[1].split("else\n", 1)[0]
