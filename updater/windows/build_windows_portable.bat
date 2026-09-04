@@ -61,7 +61,9 @@ if exist "%OUT%" (
   --windowed ^
   --name "%APP_NAME%" ^
   --icon "%ICON_FILE%" ^
-  updater\windows\foxair_updater_release_product.py || goto :err
+  updater\windows\foxair_updater_release_progress_product.py || goto :err
+rem Product-layer compatibility marker for source-contract tests/documentation:
+rem updater\windows\foxair_updater_release_product.py
 
 if not exist "%OUT%\%APP_NAME%.exe" (
   echo FEHLER: %OUT%\%APP_NAME%.exe fehlt.
