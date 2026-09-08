@@ -1,14 +1,14 @@
 # PHNIX Firmwarefamilien / Softwarecodes / Versionslinien
 
-Stand: 2026-08-27
+Stand: 2026-09-08
 
-Diese Datei sammelt die bisher bekannten Beziehungen zwischen **Maincontroller-Softwarecode**, **Softwareversion** und mutmaßlicher **Firmware-/Controllerfamilie**. Sie ergänzt die OTA-/C544-Analyse und trennt bewusst zwischen statisch belegten Informationen aus der Display-Firmware, dynamisch bestätigten Daten eines realen Boards, öffentlichen Nutzerberichten und noch unbestätigten Arbeitshypothesen.
+Diese Datei sammelt die bisher bekannten Beziehungen zwischen **Maincontroller-Softwarecode**, **Softwareversion** und mutmaßlicher **Firmware-/Controllerfamilie**. Sie ergänzt die OTA-/C544-Analyse und trennt bewusst zwischen statisch belegten Informationen aus Display-/Mainboard-Firmware, dynamisch bestätigten Daten eines realen Boards, öffentlichen Nutzerberichten und noch unbestätigten Arbeitshypothesen.
 
 ## 1. Kurzfazit
 
-Der aktuelle Kenntnisstand spricht deutlich dafür, dass die PHNIX-Softwareversion `Vx.y` **nicht global über alle Gerätefamilien vergleichbar** ist.
+Der aktuelle Kenntnisstand zeigt deutlich, dass die PHNIX-Softwareversion `Vx.y` **nicht global über alle Gerätefamilien vergleichbar** ist.
 
-Stattdessen ist sehr wahrscheinlich:
+Stattdessen gilt als belastbares Arbeitsmodell:
 
 ```text
 Softwarecode / deviceSoftwareCode
@@ -32,7 +32,12 @@ gegenüber
 
 `V3.3` ist damit nicht automatisch ein kompatibles oder „neueres“ Ziel für ein Gerät aus der Linie `82400416 V2.8`.
 
-Diese Interpretation wird auch direkt durch das LTE-OTA-Programm gestützt: `dev_otavercode_compare()` akzeptiert einen Resume nur, wenn der gespeicherte Ziel-Softwarecode **bytegenau** mit dem aktuell vom Mainboard gemeldeten Softwarecode übereinstimmt. Siehe [`PHNIX_phnixIot4G_C544_softcode_resume.md`](PHNIX_phnixIot4G_C544_softcode_resume.md).
+Diese Interpretation wird inzwischen von zwei Seiten direkt gestützt:
+
+1. Das LTE-OTA-Programm akzeptiert einen Resume nur, wenn der gespeicherte Ziel-Softwarecode **bytegenau** mit dem aktuell vom Mainboard gemeldeten Softwarecode übereinstimmt. Siehe [`PHNIX_phnixIot4G_C544_softcode_resume.md`](PHNIX_phnixIot4G_C544_softcode_resume.md).
+2. Die Mainboard-Firmware `82400644 V3.4` prüft beim C350-Allow-Handshake den **8-Byte-Softwarecode auf exakte Gleichheit** und danach die **4-Byte-Version auf Gleichheit/Ungleichheit**. Siehe [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md).
+
+Damit ist der Softwarecode für die untersuchte V3.4 nicht mehr nur ein indirekt abgeleiteter, sondern ein **direkt im Mainboard durchgesetzter Familien-Schlüssel**.
 
 ---
 
@@ -71,7 +76,7 @@ WarmLink zeigt den Maincontroller-Code teilweise verkürzt an, z. B.:
 82400539 -> SW-Code 539
 ```
 
-Die Zuordnung der Kurzform zu den letzten drei Ziffern ist bei `82400644` durch Live-Daten plus WarmLink-Beobachtungen praktisch bestätigt.
+Die Zuordnung der Kurzform zu den letzten drei Ziffern ist bei `82400644` durch Live-Daten plus WarmLink-/Forumbeobachtungen praktisch bestätigt.
 
 ---
 
@@ -134,9 +139,9 @@ Das zeigt, dass PHNIX das Schema **Softwarecode + Softwareversion** systematisch
 
 ## 4. Beobachtete Linie 82400644 / Kurzcode 644
 
-### 4.1 Dynamisch bestätigt
+### 4.1 Dynamisch und statisch bestätigt
 
-Für das im Projekt untersuchte reale Mainboard ist bestätigt:
+Für das im Projekt untersuchte reale Mainboard ist aus einem C544-Frame bestätigt:
 
 | Feld | Wert |
 |---|---|
@@ -145,7 +150,18 @@ Für das im Projekt untersuchte reale Mainboard ist bestätigt:
 | Softwarecode | `82400644` |
 | Softwareversion | `0033` / `V3.3` |
 
-Der Wert stammt aus einem realen C544-Frame und ist damit die derzeit stärkste Referenz für die 644-Familie.
+Zusätzlich ist die nachfolgende V3.4 inzwischen direkt aus dem Mainboard-Binary bestätigt:
+
+```text
+GL9_V3.4(1).bin
+Datei-Offset 0x43020 / Flash 0x08093020:
+
+824006440034
+^^^^^^^^^^^^
+82400644 + 0034
+```
+
+Damit ist für die untersuchte Firmware **`82400644 V3.4` statisch bewiesen**. Die frühere Einstufung als bloße starke Arbeitshypothese ist überholt.
 
 ### 4.2 Display-Firmware
 
@@ -167,7 +183,7 @@ Im Thread „FoxAIR Wärmepumpen – Erfahrungen, Meinungen & Tipps“ wurden fo
 | `V1.3` | **ja, SW-Code 644** | realer WarmLink-Stand einer FoxAir |
 | `V1.2` | im konkreten Beitrag nicht erneut genannt | realer älterer Firmwarestand im selben FoxAir-Thread |
 | `V3.3` | im konkreten Forumsbeitrag nicht genannt | real auf PC4003-G/FoxAir per Remote-Update; zusätzlich bei unserem Board als `82400644 V3.3` dynamisch bestätigt |
-| `V3.4` | im konkreten Forumsbeitrag nicht genannt | real durch Remote-Update einer FoxAir GL-9-1 von V1.3 auf V3.4 bestätigt |
+| `V3.4` | im konkreten älteren Forumsbeitrag nicht genannt | real durch Remote-Update einer FoxAir GL-9-1 von V1.3 auf V3.4 bestätigt; inzwischen zusätzlich als `82400644 V3.4` direkt im Mainboard-Binary belegt |
 
 Relevante Forumstellen:
 
@@ -177,20 +193,55 @@ Relevante Forumstellen:
 - Remote-Update FoxAir GL-9-1 **V1.3 -> V3.4**, Beitrag #790: <https://www.photovoltaikforum.com/thread/242531-foxair-w%C3%A4rmepumpen-erfahrungen-meinungen-tipps/?pageNo=79>
 - V1.3 mit **Softwarecode 644** sowie V1.2-Erwähnung, Beiträge #846/#847: <https://www.photovoltaikforum.com/thread/242531-foxair-w%C3%A4rmepumpen-erfahrungen-meinungen-tipps/?pageNo=85>
 
+#### Neu bekannte Modellzuordnungen aus dem Forum / Feldberichten
+
+Für folgende FoxAir-Modelle wurde inzwischen **SW-Code 644** berichtet:
+
+```text
+GL9
+GL15-1
+BL12-3
+```
+
+Diese Modellzuordnung stammt aus Forum-/Feldbeobachtungen und ist als solche zu kennzeichnen. Sie zeigt aber, dass `644` **nicht nur auf ein einzelnes GL9-Modell beschränkt** ist, sondern über mehrere FoxAir-Leistungs-/Modellvarianten verwendet wird.
+
 ### 4.4 Was daraus bereits geschlossen werden kann
 
-Für die FoxAir-/GL-Beobachtungen ist `644` sehr stark mit dieser Produkt-/Controllerlinie verknüpft. Sicher belegt sind innerhalb dieser Linie mindestens:
+Für die FoxAir-Beobachtungen ist `644` sehr stark mit einer gemeinsamen Maincontroller-/Firmwarelinie verknüpft. Sicher belegt sind innerhalb dieser Linie mindestens:
 
 ```text
 82400644 V2.2   Display-Firmware-Referenz von 2023
 82400644 V2.1   reales FoxAir/WarmLink-Gerät
 82400644 V1.3   reales FoxAir/WarmLink-Gerät
 82400644 V3.3   dynamisch bestätigtes Projekt-Mainboard
+82400644 V3.4   direkt aus GL9_V3.4(1).bin bestätigt
 ```
 
 Die Reihenfolge der numerischen Versionsstände ist dabei auffällig (`V2.2` bereits 2023, später reale Geräte mit `V2.1` und `V1.3`). Deshalb darf aus Funddatum oder Versionsnummer allein keine einfache globale Releasechronologie konstruiert werden. OEM-/Produktvarianten, Branches oder unterschiedliche Freigabestände sind möglich.
 
-Für **V3.4** ist die Firmware selbst real bestätigt, der konkrete Forumsbeitrag zeigt jedoch keinen Softwarecode. Da eine FoxAir GL-9-1 von V1.3 auf V3.4 aktualisiert wurde und V1.3 bei anderen FoxAir-Geräten als 644 bestätigt ist, ist `82400644 V3.4` eine **starke Arbeitshypothese**, aber bis zu einem C544-/WarmLink-Beleg noch nicht als vollständig bestätigt zu markieren.
+Die neuen Modellmeldungen `GL9`, `GL15-1` und `BL12-3` zeigen zusätzlich, dass die 644-Linie offenbar **modellübergreifend** eingesetzt wird. Daraus folgt jedoch noch nicht automatisch, dass jede 644-Firmware auf jedem dieser Modelle ohne weitere Hardwareprüfung austauschbar ist.
+
+### 4.5 Mainboard-seitiger C350-Allow-Check in V3.4
+
+Die Mainboard-Firmware `82400644 V3.4` vergleicht beim C350-Allow-Handshake:
+
+```text
+1. Softwarecode: exakt 8 Byte
+2. Version:      exakt 4 Byte
+```
+
+Die Freigabelogik lautet sinngemäß:
+
+```text
+Softwarecode unterschiedlich -> REJECT
+Softwarecode gleich + Version gleich -> REJECT
+Softwarecode gleich + Version unterschiedlich -> ALLOW
+```
+
+Es gibt in diesem Allow-Pfad **keinen Größer-/Kleiner-Vergleich der Version**. Deshalb verhindert dieser Check auch keinen Downgrade innerhalb derselben Softwarecode-Familie.
+
+Details und Disassembly-Fundstellen:
+[`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md).
 
 ---
 
@@ -248,7 +299,7 @@ Daher ist die 539-Linie als durch Firmwarequellen belegte PHNIX-Familie zu führ
 
 | Voller Softwarecode | Kurzcode | bekannte Versionen / Hinweise | Belegstufe | Produktzuordnung |
 |---|---:|---|---|---|
-| `82400644` | 644 | V1.3, V2.1, V2.2, V3.3; V3.4 sehr wahrscheinlich | Display-FW + Forum + Live-C544 | stark FoxAir/GL-nahe Linie |
+| `82400644` | 644 | V1.3, V2.1, V2.2, V3.3, **V3.4 bestätigt** | Display-FW + Forum + Live-C544 + Mainboard-V3.4-Binary | FoxAir-Linie; Forum/Feld: **GL9, GL15-1, BL12-3** |
 | `82400416` | 416 | V1.2+, externer Realbericht V2.6 -> V2.8 | Display-FW + externer Nutzerbericht | PHNIX; genaue Baureihe offen, R32 nur Vermutung |
 | `82400539` | 539 | V1.0+, V1.3 | Display-FW | Produktzuordnung offen |
 | `82400463` | 463 | eigener Display-/Line-Controller-Code | Display-FW | DWIN/Line Controller, **nicht Mainboard** |
@@ -266,14 +317,19 @@ Mindestens erforderlich ist die Prüfung des vollständigen Maincontroller-Softw
 Konzeptionell:
 
 ```text
-82400644 V1.3 -> 82400644 V3.3    grundsätzlich gleiche Softwarefamilie
-82400644 V3.3 -> 82400644 V3.4    grundsätzlich gleiche Softwarefamilie, sofern V3.4-Code bestätigt
+82400644 V1.3 -> 82400644 V3.3    gleiche Softwarefamilie
+82400644 V3.3 -> 82400644 V3.4    gleiche Softwarefamilie; V3.4-Code bestätigt
+82400644 V3.4 -> 82400644 V3.3    C350-Allow der V3.4 blockiert Downgrade nicht
 82400416 V2.6 -> 82400416 V2.8    gleiche Softwarefamilie laut Nutzerbericht
 
 82400416 V2.8 -> 82400644 V3.3    NICHT allein aufgrund 3.3 > 2.8 zulässig
 ```
 
-Diese Trennung entspricht auch dem originalen LTE-OTA-Code: Beim Resume wird der Softwarecode mit `strcmp()` exakt verglichen. Ein anderer Softwarecode führt zum Abbruch des Resume-Pfads.
+Diese Trennung entspricht sowohl dem originalen LTE-OTA-Code als auch der Mainboard-V3.4-Logik:
+
+- Beim DTU-Resume wird der Softwarecode exakt verglichen.
+- Das Mainboard V3.4 verlangt im C350-Allow-Pfad ebenfalls einen exakt passenden 8-Byte-Softwarecode.
+- Bei passendem Softwarecode wird die Version dort nur auf **gleich/ungleich**, nicht auf **älter/neuer**, geprüft.
 
 ### 8.1 Empfohlener Sicherheitsansatz
 
@@ -287,17 +343,20 @@ vollständiger Maincontroller-Softwarecode
 
 Der **Softwarecode ist damit ein harter Familien-Schlüssel**.
 
-Ob innerhalb derselben Softwarecode-Familie jede Firmware auch über unterschiedliche Hardwarecodes hinweg kompatibel ist, ist noch nicht bewiesen. Daher sollte der Hardwarecode bis zu weiteren Vergleichsdaten nicht ignoriert werden.
+Ob innerhalb derselben Softwarecode-Familie jede Firmware auch über unterschiedliche Hardwarecodes und Modelle hinweg kompatibel ist, ist noch nicht bewiesen. Das ist durch die neuen 644-Modellzuordnungen (`GL9`, `GL15-1`, `BL12-3`) sogar besonders wichtig: Gleicher Softwarecode bedeutet nicht automatisch, dass Hardwareunterschiede ignoriert werden dürfen.
+
+Der Hardwarecode sollte daher bis zu weiteren Vergleichsdaten nicht ignoriert werden.
 
 ---
 
 ## 9. Offene Punkte
 
-1. C544/WarmLink-Daten einer realen **V3.4** erfassen und prüfen, ob der Softwarecode tatsächlich `82400644` bleibt.
-2. Vollständigen Hardwarecode und möglichst Modell/Kältemittel des **416 V2.8**-Geräts erfassen.
-3. Prüfen, ob `416` tatsächlich einer R32-Produktfamilie entspricht oder eine andere technische/OEM-Abgrenzung beschreibt.
-4. Ein reales `539`-Gerät identifizieren und dessen Hardwarecode, Produktserie und aktuellen Versionsstand erfassen.
-5. Weitere PHNIX-/OEM-Geräte sammeln und jeweils das Tupel dokumentieren:
+1. C544/WarmLink-Daten eines realen **V3.4**-Boards weiterhin erfassen, um den jetzt statisch bewiesenen `82400644`-Code zusätzlich dynamisch nach dem Update zu bestätigen.
+2. Für die gemeldeten 644-Modelle **GL9, GL15-1 und BL12-3** möglichst zusätzlich Hardwarecode, Hardwareversion, Softwareversion und exakte Modellbezeichnung sammeln.
+3. Vollständigen Hardwarecode und möglichst Modell/Kältemittel des **416 V2.8**-Geräts erfassen.
+4. Prüfen, ob `416` tatsächlich einer R32-Produktfamilie entspricht oder eine andere technische/OEM-Abgrenzung beschreibt.
+5. Ein reales `539`-Gerät identifizieren und dessen Hardwarecode, Produktserie und aktuellen Versionsstand erfassen.
+6. Weitere PHNIX-/OEM-Geräte sammeln und jeweils das Tupel dokumentieren:
 
 ```text
 Hersteller/OEM
@@ -309,7 +368,7 @@ Softwarecode
 Softwareversion
 ```
 
-6. Erst bei ausreichender Datenbasis festlegen, ob der Softwarecode eine komplette Produktreihe, eine Mainboardgeneration, ein PHNIX-Softwareprojekt oder eine Kombination daraus bezeichnet.
+7. Erst bei ausreichender Datenbasis festlegen, ob der Softwarecode eine komplette Produktreihe, eine Mainboardgeneration, ein PHNIX-Softwareprojekt oder eine Kombination daraus bezeichnet.
 
 ---
 
@@ -319,16 +378,17 @@ Derzeit sollte im Projekt folgende Terminologie verwendet werden:
 
 ```text
 Softwarecode / deviceSoftwareCode
-= Maincontroller-Firmwarefamilie / Softwareprojekt (Arbeitshypothese mit starken Belegen)
+= Maincontroller-Firmwarefamilie / Softwareprojekt
 
 Softwareversion / deviceSoftwareVer
 = Revision innerhalb dieser Familie
 ```
 
-Für `82400644` kann zusätzlich formuliert werden:
+Für `82400644` kann inzwischen konkreter formuliert werden:
 
 ```text
-stark mit der untersuchten FoxAir-/GL-Plattform verknüpfte Firmwarefamilie
+FoxAir-nahe, modellübergreifend eingesetzte Maincontroller-Firmwarefamilie;
+belegt bzw. berichtet u. a. bei GL9, GL15-1 und BL12-3
 ```
 
 Noch **nicht** ausreichend belegt sind dagegen starre Zuordnungen wie:
