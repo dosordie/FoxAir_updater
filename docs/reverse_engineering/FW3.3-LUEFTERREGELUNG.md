@@ -1,10 +1,10 @@
 # Mainboard-Firmware V3.3 – Lüfterregelung
 
-Stand: 23. August 2026
+Stand: 8. September 2026
 
-Diese Datei dokumentiert die statisch rekonstruierte Lüfterregelung der PHNIX-/FoxAir-Mainboard-Firmware `82400644 / V3.3`.
+Diese Datei dokumentiert die statisch rekonstruierte Lüfterregelung der PHNIX-/FoxAir-Mainboard-Firmware `82400644 / V3.3`. Am Ende befindet sich ein klar gekennzeichneter **V3.4-Nachtrag** zu F01/F10, H33 und den in V3.4 verschobenen internen Sollkanälen.
 
-Untersucht wurde dasselbe Mainboard-Image wie in den übrigen V3.3-Analysen:
+Untersucht wurde für den Hauptteil dasselbe V3.3-Mainboard-Image wie in den übrigen V3.3-Analysen:
 
 ```text
 Größe:       287598 Byte
@@ -15,7 +15,7 @@ Imagebasis:  0x08050000
 
 Bewertungsstufen:
 
-- **bestätigt** – direkt im Binary nachgewiesen bzw. mit Register-/Busdaten geschlossen
+- **bestätigt** – direkt im jeweils genannten Binary nachgewiesen bzw. mit Register-/Busdaten geschlossen
 - **sehr wahrscheinlich** – Datenfluss ist geschlossen, die originale PHNIX-Bezeichnung eines Parameters fehlt noch
 - **Hypothese** – plausible, aber noch nicht ausreichend belegte Zuordnung
 
@@ -54,7 +54,7 @@ Die öffentlichen Register sind funktional klar getrennt:
 | 2076 | Zieldrehzahl des Lüftermotors, primärer Sollkanal | bestätigt |
 | 2019 Bit 2 | mindestens ein Lüfter meldet tatsächliche Aktivität | bestätigt |
 
-Der normale Hauptregler liegt ungefähr bei:
+Der normale V3.3-Hauptregler liegt ungefähr bei:
 
 ```text
 0x0805FEA8 … 0x08060B06
@@ -72,49 +72,19 @@ Der Statusbuilder übernimmt drei Werte aus der Lüfter-Runtime-Struktur:
 0x2001691C
 ```
 
-Rekonstruierte Felder:
-
 | Struktur | Offset | Modbus | Funktion |
 |---:|---:|---:|---|
 | `0x2001691C` | `+0x02` | 2076 | veröffentlichter Lüfter-Zielsollwert |
 | `0x2001691C` | `+0x0C` | 2074 | tatsächliche Lüfterrückmeldung 1 |
 | `0x2001691C` | `+0x0E` | 2075 | tatsächliche Lüfterrückmeldung 2 |
 
-Im Statusbuilder ungefähr um `0x0806C698` ist die Zuordnung direkt sichtbar:
-
-```text
-0x2001691C +0x0C → Register 2074
-0x2001691C +0x0E → Register 2075
-0x2001691C +0x02 → Register 2076
-```
-
 **Bewertung: bestätigt.**
 
 ---
 
-## 3. Register 2076 stammt aus dem primären Lüfter-Sollkanal
+## 3. V3.3: primärer und zweiter Lüfter-Sollkanal
 
-Der primäre intern berechnete Lüfter-Sollwert liegt bei:
-
-```text
-0x20016F0A
-```
-
-Ein zweiter Kanal liegt unmittelbar daneben:
-
-```text
-0x20016F0C
-```
-
-Die Statuslogik übernimmt den ersten Kanal nach:
-
-```text
-0x2001691C +0x02
-```
-
-und veröffentlicht ihn damit als Register 2076.
-
-Somit gilt:
+V3.3:
 
 ```text
 0x20016F0A = Lüfter-Sollkanal 1
@@ -122,101 +92,74 @@ Somit gilt:
 2076       = veröffentlichter Sollwert von Kanal 1
 ```
 
+Die Statuslogik übernimmt den ersten Kanal nach `0x2001691C+0x02` und veröffentlicht ihn als 2076.
+
 **Bewertung: bestätigt.**
 
 ---
 
 ## 4. Register 2019 Bit 2 ist kein Sollbefehl
 
-Der Builder von Register 2019 prüft die tatsächlichen Rückmeldungen:
+Der Builder prüft die tatsächlichen Rückmeldungen:
 
 ```text
 0x2001691C +0x0C
 0x2001691C +0x0E
 ```
 
-Wenn mindestens einer dieser Werte ungleich `0` ist, wird gesetzt:
+Wenn mindestens einer dieser Werte ungleich `0` ist:
 
 ```text
-Register 2019 Bit 2 = 1
+MAIN:2019 Bit2 = 1
 ```
 
 Damit bedeutet Bit 2 funktional:
 
 > Mindestens ein Lüfter liefert eine von Null verschiedene tatsächliche Drehzahl-/Aktivitätsrückmeldung.
 
-Es ist **kein Lüfter-Enable-Befehl** und auch nicht einfach eine Kopie von Register 2076.
-
-**Bewertung: bestätigt.**
+Es ist **kein Lüfter-Enable-Befehl** und keine Kopie von 2076.
 
 ---
 
 ## 5. Lüfterrückmeldungen kommen über den Bus
 
-Die Werte für:
-
-```text
-0x2001691C +0x0C
-0x2001691C +0x0E
-```
-
-werden in der Kommunikationsverarbeitung aus empfangenen Busdaten aktualisiert.
+Die Werte `0x2001691C+0x0C/+0x0E` werden aus empfangenen Busdaten aktualisiert.
 
 Damit sind 2074 und 2075 keine lokal vom Mainboard gemessenen PWM-Tachowerte, sondern Rückmeldungen eines angeschlossenen Leistungs-/Inverter-/Lüftermoduls.
 
-Die Firmware enthält mehrere Hardware-/Plattformvarianten; die genaue Position der Rückmeldewörter innerhalb des Remote-Frames kann je nach konfiguriertem Pfad variieren. Der Datenfluss zum öffentlichen Hauptstatus ist aber eindeutig.
-
-**Bewertung: bestätigt** für Bus-Herkunft, **sehr wahrscheinlich** für die konkrete Hardwarebezeichnung des Remote-Moduls.
+Die Firmware unterstützt mehrere Hardware-/Plattformvarianten; der Datenfluss zum öffentlichen Hauptstatus ist eindeutig.
 
 ---
 
-## 6. Buspfad der Lüfter-Sollwerte
+## 6. V3.3-Buspfad der Lüfter-Sollwerte
 
-Die berechneten Sollkanäle werden vor dem ausgehenden FC10-Paket in einen Kommunikationspuffer kopiert:
+Vor dem FC10-Paket:
 
 ```text
 0x20016F0A → 0x2001233E
 0x20016F0C → 0x20012340
 ```
 
-Der relevante Puffer beginnt bei:
+Bei der 16-Wort-H33-Variante ab Remote-Register 1999 ergibt sich:
 
 ```text
-0x2001232C
+0x2001233E → INV1:TX:2008
+0x20012340 → INV1:TX:2009
 ```
 
-Bei der 16-Wort-Variante des Pakets beginnt die Übertragung bei Remote-Register:
-
-```text
-1999 / 0x07CF
-```
-
-Aus den Wortpositionen ergibt sich:
-
-```text
-0x2001233E → Remote-Register 2008
-0x20012340 → Remote-Register 2009
-```
-
-Damit ist der Sollpfad:
+Damit:
 
 ```text
 Lüfterregler
   ↓
 0x20016F0A / 0x20016F0C
   ↓
-FC10 ab Register 1999
+FC10 ab 1999
   ↓
-Wortpositionen 2008 / 2009
+INV1:TX:2008 / 2009
   ↓
 Remote-/Leistungsmodul
 ```
-
-Ein Konfigurationsfeld entscheidet, ob die längere 16-Wort-Variante verwendet wird; andere Plattformvarianten übertragen kürzere Frames.
-
-Wichtig:
-
-> Die untersuchte V3.3 steuert die Lüfter in diesem Pfad über die Buskommunikation. Es wurde kein lokaler Mainboard-PWM-Ausgang als eigentlicher Fan-Actuator dieses Reglers gefunden.
 
 **Bewertung: bestätigt.**
 
@@ -224,122 +167,79 @@ Wichtig:
 
 ## 7. Live-Struktur der Lüfterparameter
 
-Der Lüfterregler benutzt einen konsolidierten Live-Parameterblock bei:
+Der Lüfterregler benutzt den Parameterblock:
 
 ```text
 0x20016A04
 ```
 
-Die Hauptparameterkopie zeigt, dass dieser Block aus mehreren nicht direkt aufeinanderfolgenden Modbusparametern aufgebaut wird:
-
-| Live-Offset | Modbusregister | beobachtete Rolle im Lüftercode |
+| Live-Offset | MAIN | Code / Rolle |
 |---:|---:|---|
-| `+0x00` | 1059 | Hauptkonfiguration / Lüftermodus; sehr wahrscheinlich F01 |
-| `+0x02` | 1060 | Temperaturstützpunkt einer Kennlinie |
-| `+0x04` | 1062 | Temperaturstützpunkt einer Kennlinie |
-| `+0x06` | 1066 | Temperaturstützpunkt alternativer Kennlinie |
-| `+0x08` | 1068 | Temperaturstützpunkt alternativer Kennlinie |
-| `+0x18` | 1074 | zweiter Lüfter / Doppel-Lüfter-Konfiguration bzw. Freigabe |
-| `+0x0A` | 1081 | niedriger Sollwert / Plateau |
-| `+0x0C` | 1083 | Sollwert / Plateau der alternativen Kennlinie |
-| `+0x0E` | 1087 | weiterer Kennlinien-/Grenzwert |
-| `+0x10` | 1089 | weiterer Kennlinien-/Grenzwert |
+| `+0x00` | 1059 | **F01 / Lüftermotortyp** |
+| `+0x02` | 1060 | F02 / Temperaturstützpunkt |
+| `+0x04` | 1062 | F03 / Temperaturstützpunkt |
+| `+0x06` | 1066 | F05 / alternativer Temperaturstützpunkt |
+| `+0x08` | 1068 | F06 / alternativer Temperaturstützpunkt |
+| `+0x0A` | 1081 | **F18 / minimale Lüfterdrehzahl Kühlen** |
+| `+0x0C` | 1083 | **F19 / minimale Lüfterdrehzahl Heizen** |
+| `+0x0E` | 1087 | F22 / manuelle Fan-Funktion |
+| `+0x10` | 1089 | **F23 / DC/AC Fan Rated Speed** |
+| `+0x12` | 1103 | **F25 / maximale Lüfterdrehzahl Kühlen** |
+| `+0x14` | 1104 | **F26 / maximale Lüfterdrehzahl Heizen** |
+| `+0x18` | 1074 | **F10 / Lüfteranzahl** |
 | `+0x1A` | 1101 | zusätzlicher Temperatur-/Betriebsgrenzwert |
 | `+0x1C` | 1102 | Abschalt-/Untergrenze der Hauptkennlinie |
-| `+0x12` | 1103 | hoher Lüfter-Sollwert / Referenz |
-| `+0x14` | 1104 | hoher Sollwert / Referenz der alternativen Kennlinie |
 
-Die Registeradressen und ihre Live-Offets sind **bestätigt**.
-
-Die exakten Fxx-Namen aller verstreuten Parameter sollen erst dann fest benannt werden, wenn die originale Registertabelle für diesen Bereich erneut vollständig gegengeprüft ist. Die funktionale Verwendung im Code ist dagegen bereits klar.
+Die früher bewusst vorsichtig formulierten Zuordnungen `1059≈F01` und `1074≈Doppellüfter` sind inzwischen durch Registerkatalog + V3.4-Verbraucher ausreichend geschlossen.
 
 ---
 
 ## 8. Primärer Regelwert: Register 2049 = Verdampfertemperatur
 
-Ein wichtiger offener Punkt konnte geschlossen werden.
-
-Der Lüftercode liest seinen zentralen Temperaturwert aus:
+Der Lüftercode liest den zentralen Temperaturwert aus:
 
 ```text
 0x20015FA8 + 0x0C
 ```
 
-Der Hauptstatusbuilder kopiert exakt dieses Feld nach:
+Der Hauptstatusbuilder kopiert dieses Feld nach:
 
 ```text
-Register 2049
-```
-
-und Register 2049 ist in der bekannten Hauptstatusbelegung:
-
-```text
-Verdampfertemperatur
+MAIN:2049 = Verdampfertemperatur
 ```
 
 Damit ist bestätigt:
 
-> Die normale Lüfterkennlinie der V3.3 wird wesentlich aus der Verdampfertemperatur gebildet.
-
-**Bewertung: bestätigt.**
+> Die normale Lüfterkennlinie wird wesentlich aus der Verdampfertemperatur gebildet.
 
 ---
 
 ## 9. Hauptkennlinie: stückweise linear über Verdampfertemperatur
 
-Ein zentraler Zweig des Lüfterreglers liegt ungefähr im Bereich:
+V3.3 verwendet im Hauptzweig:
 
 ```text
-0x08060776 … 0x080608D4
+T_evap = MAIN:2049
+
+T_off  = MAIN:1102
+T_low  = MAIN:1062
+T_high = MAIN:1060
+
+S_low  = MAIN:1081 / F18
+S_high = MAIN:1103 / F25
 ```
 
-Für diesen Modus lassen sich folgende Größen direkt benennen:
-
-```text
-T_evap = Register 2049
-
-T_off  = fan_param +0x1C  = Register 1102
-T_low  = fan_param +0x04  = Register 1062
-T_high = fan_param +0x02  = Register 1060
-
-S_low  = fan_param +0x0A  = Register 1081
-S_high = fan_param +0x12  = Register 1103
-```
-
-Die Firmware bildet sinngemäß:
+Sinngemäß:
 
 ```text
 wenn T_evap <= T_off:
     S = 0
-
 sonst wenn T_evap <= T_low:
     S = S_low
-
 sonst wenn T_evap >= T_high:
     S = S_high
-
 sonst:
-    S = S_low
-        + (T_evap - T_low)
-          × (S_high - S_low)
-          / (T_high - T_low)
-```
-
-Das ist eine echte lineare Interpolation zwischen zwei Temperaturstützpunkten.
-
-Funktional ergibt sich:
-
-```text
-Lüfter-Sollwert
-  ^
-  |                    ───────── S_high
-  |                  /
-  |                /
-  |──────── S_low /
-  |
-  | 0
-  +--------------------------------→ Verdampfertemperatur
-      T_off   T_low        T_high
+    S = lineare Interpolation zwischen S_low und S_high
 ```
 
 **Bewertung: bestätigt.**
@@ -348,66 +248,36 @@ Lüfter-Sollwert
 
 ## 10. Alternative Kennlinie
 
-Ein zweiter Regelmodus innerhalb derselben zentralen Lüfterfunktion verwendet analog:
+Ein alternativer Pfad verwendet analog:
 
 ```text
-Register 1068 / Live +0x08
-Register 1066 / Live +0x06
-Register 1083 / Live +0x0C
-Register 1104 / Live +0x14
+MAIN:1068 / F06
+MAIN:1066 / F05
+MAIN:1083 / F19
+MAIN:1104 / F26
 ```
 
-als Temperatur- und Sollwertstützpunkte.
+und dieselbe Verdampfertemperaturquelle.
 
-Auch dieser Pfad interpoliert abhängig von derselben Verdampfertemperatur und benutzt damit keine völlig andere Sensorquelle.
-
-Die Umschaltung hängt von der Lüfter-/Maschinenkonfiguration und Betriebsart ab.
-
-**Bewertung: bestätigt** für Kennlinienstruktur und Sensorquelle; **sehr wahrscheinlich** für die exakte PHNIX-Bezeichnung der beiden Kennlinienmodi.
+**Bewertung: Kennlinienstruktur/Sensorquelle bestätigt.**
 
 ---
 
 ## 11. Außentemperatur als zusätzliche obere Begrenzung
 
-Neben der Verdampfertemperatur ruft der Regler auch den bereits bekannten Außentemperatur-Helper auf:
+Neben T03/MAIN:2049 wird T04/Außentemperatur ausgewertet.
 
-```text
-0x0808799C
-```
-
-Dieser liefert T04 / Außentemperatur.
-
-In mehreren Außentemperaturbändern wird daraus ein zusätzlicher Lüfter-Grenzwert gebildet. Dabei verwendet der Code unter anderem die Faktoren:
-
-```text
-0.8
-0.6
-```
-
-auf hohe Lüfterreferenzwerte.
-
-Der anschließend berechnete Wert wird als obere Begrenzung benutzt:
-
-```text
-wenn AT_Limit != 0 und AT_Limit < Kennlinienwert:
-    Lüfter-Soll = AT_Limit
-```
-
-Damit ist die Struktur:
+In mehreren AT-Bändern entstehen zusätzliche Fan-Limits; im Code treten unter anderem Faktoren `0,8` und `0,6` auf hohe Lüfterreferenzen auf.
 
 ```text
 Verdampfertemperatur-Kennlinie
         ↓
 primärer Sollwert
         ↓
-Außentemperaturabhängiges Limit
+AT-abhängiges Limit
         ↓
-begrenzter Lüfter-Sollwert
+begrenzter Fan-Sollwert
 ```
-
-Im Code sind mehrere T04-Bänder mit Stützpunkten unter anderem im Bereich um hohe positive Außentemperaturen sowie im kalten Bereich vorhanden.
-
-Die exakte Bezeichnung der zugehörigen Engineeringparameter ist noch offen, die 0,6-/0,8-Skalierung und die Limitfunktion sind direkt nachgewiesen.
 
 **Bewertung: bestätigt.**
 
@@ -415,145 +285,103 @@ Die exakte Bezeichnung der zugehörigen Engineeringparameter ist noch offen, die
 
 ## 12. Einfluss des Kompressorzustands
 
-Zusätzliche Betriebsbedingungen können den normalen Kennlinienwert überschreiben bzw. auf einen definierten Anteil eines hohen Lüfterreferenzwertes setzen.
-
-Direkt im Code vorhanden ist unter anderem:
+Zusätzliche Betriebsbedingungen können den Kennlinienwert überschreiben, unter anderem mit:
 
 ```text
 Soll = (2 × Referenz) / 3
 ```
 
-Je nach Kennlinien-/Betriebszweig wird dabei eine der hohen Referenzen verwendet:
+wobei abhängig vom Pfad MAIN:1103 oder 1104 als hohe Referenz dient.
+
+---
+
+## 13. Zweiter Lüfter / F10
 
 ```text
-Register 1103
-oder
-Register 1104
+MAIN:1074 / F10
+Live: 0x20016A04 + 0x18
 ```
 
-Damit reagiert die Lüftersteuerung nicht ausschließlich auf die Verdampfertemperatur, sondern besitzt besondere Verdichter-/Betriebszustände mit definierter Drehzahlvorgabe.
+Offizielle Belegung:
+
+```text
+0 = Einzel-Lüfter
+1 = Doppel-Lüfter
+```
+
+V3.3 führt zwei Sollkanäle. Je nach F10/Betriebszustand kann Kanal 2:
+
+- auf 0 bleiben,
+- Kanal 1 folgen,
+- durch einen Sonderpfad separat gesetzt werden.
+
+V3.4 bestätigt diese Interpretation erneut: bei Einzel-Lüfter-Konfiguration wird der zweite Sollkanal in relevanten Pfaden gezielt auf 0 gesetzt; bei Doppel-Lüfter-Konfiguration wird er verwendet.
 
 **Bewertung: bestätigt.**
 
 ---
 
-## 13. Zweiter Lüfter und Kanalzuordnung
-
-Die Firmware führt zwei Sollkanäle:
+## 14. F01 – Lüftermotortyp
 
 ```text
-Kanal 1 = 0x20016F0A
-Kanal 2 = 0x20016F0C
+MAIN:1059 / F01
+Live: 0x20016A04 + 0x00
 ```
 
-Ein Parameter bei:
+Aktueller Registerkatalog:
 
 ```text
-0x20016A04 +0x18
-= Register 1074
+0 = Legacy: Hochgeschwindigkeits-Lüfter
+1 = Legacy: zweistufiger Lüfter
+3 = DC Fan Motor
+4 = DC Fan Motor External Drive
 ```
 
-entscheidet in mehreren Pfaden darüber, ob Kanal 2 ebenfalls angesteuert wird.
+V3.3 behandelt insbesondere die Werte 3/4 als aktive Regel-/Topologiepfade; bei Konfiguration 0 werden Sollkanäle in entsprechenden Pfaden auf 0 gesetzt.
 
-Je nach Konfiguration/Betriebszustand kann Kanal 2:
+V3.4 schließt zusätzlich die Driver-Selektion im integrierten Unit-1-Paket:
 
-- `0` bleiben
-- den Wert von Kanal 1 übernehmen
-- durch einen Sonderpfad separat gesetzt werden
+```text
+F01 == 3 → Fan-Driver-Selektor 1
+F01 == 4 → Fan-Driver-Selektor 2
+```
 
-Damit unterstützt dieselbe V3.3 sowohl Ein- als auch Zwei-Lüfter-Konfigurationen.
+Damit ist F01 eindeutig ein **echter Hardware-/Driverselektor** und nicht nur ein Displayparameter.
 
 **Bewertung: bestätigt.**
-
----
-
-## 14. Hauptkonfiguration Register 1059
-
-Der Wert:
-
-```text
-0x20016A04 +0x00
-= Register 1059
-```
-
-wird im Lüftercode als übergeordneter Konfigurations-/Topologiewert ausgewertet.
-
-Beobachtete relevante Werte sind unter anderem:
-
-```text
-0
-3
-4
-```
-
-Bei Konfiguration `0` werden die Lüfter-Sollkanäle in den entsprechenden Pfaden auf `0` gesetzt. Werte 3/4 aktivieren dagegen konkrete Regel-/Kanalpfade.
-
-Aufgrund der Parameterstruktur ist Register 1059 **sehr wahrscheinlich F01 / Fan-Motor-Konfiguration bzw. Fan Mode**.
-
-Die funktionale Rolle ist bestätigt; die exakte deutsche Tabellenbezeichnung wird bis zur erneuten Gegenprüfung der Originalparameterliste bewusst nicht härter benannt.
 
 ---
 
 ## 15. Schutzübersteuerung
 
-Die normale Kennlinie ist nicht die letzte Instanz.
+Bei bestimmten Schutzflags im Bereich `0x20016E0C` wird während laufender Anlage der Fan-Sollwert direkt überschrieben, unter anderem mit einer `2/3`-Referenz.
 
-Bei bestimmten internen Schutzflags in der Struktur um:
-
-```text
-0x20016E0C
-```
-
-wird während laufender Anlage der Lüfter-Sollwert direkt überschrieben.
-
-Der Code benutzt dabei unter anderem:
-
-```text
-Soll Kanal 1 = (2 × Register-1104-Referenz) / 3
-```
-
-und lässt Kanal 2 bei vorhandener Zwei-Lüfter-Konfiguration folgen.
-
-Damit können Schutzfunktionen eine feste, von der normalen Verdampfertemperaturkennlinie unabhängige Lüftervorgabe erzwingen.
-
-**Bewertung: bestätigt.**
+Damit können Schutzfunktionen eine von der normalen Verdampfertemperaturkennlinie unabhängige Lüftervorgabe erzwingen.
 
 ---
 
 ## 16. Abtauung überschreibt den Normalregler
 
-Die Abtau-State-Machine schreibt direkt auf:
+Die Abtau-State-Machine schreibt direkt auf die V3.3-Sollkanäle:
 
 ```text
 0x20016F0A
 0x20016F0C
 ```
 
-und kann daher den normalen Lüfterregler vollständig übersteuern.
+und kann daher den Normalregler vollständig übersteuern.
 
 Je nach Defrost-State werden:
 
-- beide Lüfter auf `0` gesetzt
-- ein spezieller Abtau-Sollwert gebildet
-- Kanal 2 abhängig von der Zwei-Lüfter-Konfiguration mitgeführt oder abgeschaltet
-
-Damit gilt:
-
-```text
-Normalbetrieb
-    → Verdampfertemperatur-Kennlinie + AT-Limit + Schutzlogik
-
-Abtauung
-    → eigener Defrost-Lüfterpfad
-```
-
-**Bewertung: bestätigt.**
+- beide Lüfter auf 0 gesetzt,
+- spezielle Abtau-Sollwerte gebildet,
+- Kanal 2 abhängig von F10 mitgeführt oder abgeschaltet.
 
 ---
 
 ## 17. Internes Fan-Command-Active-Flag
 
-Am Ende der Sollwertbildung prüft die Firmware:
+Am Ende der Sollwertbildung prüft V3.3:
 
 ```text
 0x20016F0A != 0
@@ -561,47 +389,23 @@ oder
 0x20016F0C != 0
 ```
 
-und setzt bzw. löscht daraufhin ein internes Flag im Bereich `0x20016E0C`.
+und setzt/löscht ein internes Command-Flag.
 
-Dieses Flag bedeutet funktional:
+Dieses Flag bedeutet:
 
 ```text
 Mainboard fordert mindestens einen Lüfter an
 ```
 
-Es ist ausdrücklich **nicht identisch** mit Register 2019 Bit 2.
-
-Unterschied:
-
-```text
-internes Command-Flag
-    = Sollbefehl ungleich 0
-
-2019 Bit 2
-    = tatsächliche Lüfterrückmeldung ungleich 0
-```
-
-Das ist für Diagnose und Fehlersuche wichtig: Ein Sollbefehl kann existieren, obwohl noch keine reale Lüfterrückmeldung anliegt.
+und ist ausdrücklich nicht identisch mit `MAIN:2019 Bit2`, das aus der tatsächlichen Rückmeldung entsteht.
 
 ---
 
 ## 18. Register 2108 – Fan Mute Flag / verwandter Status
 
-Im Hauptstatusbereich existiert zusätzlich Register 2108, das in älteren Display-/ASM-Unterlagen als:
+`MAIN:2108` wird in älteren Display-/ASM-Unterlagen als Fan-Mute-/Lüfter-Stummschaltstatus bezeichnet.
 
-```text
-Lüfter-Stummschalt-Flag / Fan Mute Flag
-```
-
-bezeichnet wird.
-
-Der V3.3-Statusbuilder erzeugt diesen Wert aus mehreren internen Lauf-/Statusbedingungen als kleinen Statuswert.
-
-Er ist **nicht der primäre Lüfter-Sollwert**, nicht die tatsächliche Drehzahl und auch nicht die Grundlage von Register 2019 Bit 2.
-
-Für die eigentliche Fan-Regelung sind 2074–2076 und die oben beschriebenen RAM-Kanäle die wichtigeren Anker.
-
-**Bewertung: bestätigt** für Trennung vom Hauptregler; die vollständige semantische Bedeutung aller 2108-Zustände bleibt ein eigener kleiner Restpunkt.
+Es ist nicht der primäre Lüfter-Sollwert und nicht die Grundlage von MAIN:2019 Bit2. Die vollständige Semantik aller 2108-Zustände bleibt ein eigener Restpunkt.
 
 ---
 
@@ -613,13 +417,11 @@ Für die eigentliche Fan-Regelung sind 2074–2076 und die oben beschriebenen RA
                            ▼
                     zusätzliches Limit
                            │
-                           │
-Register 2049              │
-Verdampfertemperatur       │
-       │                   │
-       ▼                   │
-stückweise lineare         │
-Lüfterkennlinie ───────────┘
+MAIN:2049                 │
+Verdampfertemperatur      │
+       │                  │
+       ▼                  │
+lineare Fan-Kennlinie ────┘
        │
        ▼
 Kompressor-/Betriebszustände
@@ -631,18 +433,14 @@ Schutz-Overrides
 Defrost-Override
        │
        ▼
-0x20016F0A / 0x20016F0C
+interne Fan-Sollkanäle
        │
-       ├────────────→ 2076 veröffentlicht Kanal 1
+       ├────────────→ MAIN:2076
+       ▼
+INV1:TX:2008 / 2009
        │
        ▼
-FC10 Remote 2008 / 2009
-       │
-       ▼
-Leistungs-/Lüftermodul
-       │
-       ▼
-reale Lüfter
+Leistungs-/Fan-Modul
        │
        ▼
 Bus-Rückmeldung
@@ -650,16 +448,13 @@ Bus-Rückmeldung
        ▼
 0x2001691C +0x0C / +0x0E
        │
-       ├────────→ 2074 / 2075
-       │
-       └────────→ 2019 Bit 2
+       ├────────→ MAIN:2074 / 2075
+       └────────→ MAIN:2019 Bit2
 ```
 
 ---
 
-## 20. Praktische Diagnosemöglichkeiten über Modbus
-
-Mit den öffentlichen Registern lässt sich die Fan-Kette recht gut beobachten:
+## 20. Praktische Diagnose über Modbus
 
 ```text
 2048 = Außentemperatur
@@ -667,62 +462,107 @@ Mit den öffentlichen Registern lässt sich die Fan-Kette recht gut beobachten:
 2074 = Lüfter 1 Ist/Rückmeldung
 2075 = Lüfter 2 Ist/Rückmeldung
 2076 = Lüfter Soll Kanal 1
-2019 Bit 2 = mindestens ein Lüfter tatsächlich aktiv
+2019 Bit2 = mindestens ein Lüfter tatsächlich aktiv
 ```
 
-Damit kann man beispielsweise unterscheiden:
-
-### Soll vorhanden, Lüfter steht
+Beispiel Soll vorhanden, Lüfter steht:
 
 ```text
 2076 > 0
 2074 = 0
 2075 = 0
-2019 Bit 2 = 0
+2019 Bit2 = 0
 ```
 
-→ Mainboard fordert Lüfter an, es kommt aber keine tatsächliche Lüfterrückmeldung.
-
-### Normaler laufender Lüfter
-
-```text
-2076 > 0
-2074 > 0
-2019 Bit 2 = 1
-```
-
-### Zwei-Lüfter-Betrieb
-
-```text
-2074 > 0
-2075 > 0
-2019 Bit 2 = 1
-```
-
-### Abtau-/Sonderzustand
-
-2076 bzw. die tatsächlichen Lüfterwerte können bewusst von der normalen, aus 2049 erwartbaren Kennlinie abweichen, weil Defrost- und Schutzpfade direkt auf die Sollkanäle schreiben.
+→ Mainboard fordert an, aber keine reale Fan-Rückmeldung.
 
 ---
 
-## 21. Was noch offen ist
+## 21. Fan-Leistung / unterschiedliche Hardwareleistung
 
-Der Regelblock ist funktional weitgehend geschlossen. Offen bleiben vor allem die Benennungen und Varianten:
+Es wurde **kein einzelner Parameter gefunden, der direkt eine Nennleistung wie „150 W / 250 W / 400 W Fan“ auswählt**.
 
-1. exakte offizielle Fxx-Namen, Min/Max/Default der verstreuten Register 1059, 1060, 1062, 1066, 1068, 1074, 1081, 1083, 1087, 1089, 1101–1104
-2. exakte physikalische Einheit/Skalierung der rohen Lüfter-Soll- und Istwerte 2074–2076
-3. vollständige Zuordnung aller Hardwareplattformvarianten des empfangenen und gesendeten Remote-Frames
-4. vollständige semantische Auflösung von Register 2108
-5. praktische Live-Gegenprobe der Kennlinie mit gleichzeitigem Log von 2048, 2049 und 2074–2076
+Die Fan-Hardware wird vielmehr durch eine Kombination beschrieben:
 
-Die Hauptarchitektur, Sensorquelle, Kennlinienform, Soll-/Ist-Trennung, Zwei-Lüfter-Unterstützung, Schutz-/Defrost-Overrides und der Buspfad sind dagegen direkt aus dem V3.3-Binary belegt.
+```text
+F01  Driver-/Motortyp
+F10  Anzahl Lüfter
+F18/F19 minimale Drehzahlen
+F23  Nenn-Drehzahl
+F25/F26 maximale Drehzahlen
+F27  Fan Motor Power Curve
+D14/D15 Fan-Speed-/Power-Ratios im Defrost
+D16  maximale Fan-Motor-Power für Forced-Defrost-Bedingung
+```
+
+Aktuelle externe Driver-Telemetrie:
+
+```text
+MAIN:2131 / T47 = Leistung des externen Fan-Motor-Drivers
+MAIN:2132 / T48 = Strom des externen Fan-Motor-Drivers
+```
+
+Bei `F27 / MAIN:1061` ist der Name „Fan Motor Power Curve“ belegt, die exakte physikalische Skalierung/Einheit soll aber weiterhin nicht vorschnell als Watt interpretiert werden.
 
 ---
 
-## 22. Zusammenhang mit anderen Analysen
+## 22. Offene Punkte
 
-Siehe außerdem:
+1. exakte physikalische Einheit/Skalierung der rohen Lüfter-Soll-/Istwerte 2074–2076
+2. vollständige Zuordnung aller Hardwareplattformvarianten der Remote-Frames
+3. vollständige Semantik von MAIN:2108
+4. praktische Live-Gegenprobe der Kennlinien mit 2048/2049/2074–2076
+5. F27 „Fan Motor Power Curve“ physikalisch vollständig schließen
 
-- `FW3.3-ERKENNTNISSE.md` – zentrale Gesamtübersicht
-- `FW3.3-EEV-SMART-REGELUNG.md` – EEV-/Smart-Regelung
-- `FW3.3-OELRUECKFUEHRUNG.md` – Ölrückführungszyklus und externe Rekonstruktion
+Die Hauptarchitektur, Sensorquelle, Kennlinienform, Soll-/Ist-Trennung, F01/F10-Hardwarewirkung, Zwei-Lüfter-Unterstützung, Schutz-/Defrost-Overrides und der Buspfad sind dagegen belegt.
+
+---
+
+## 23. V3.4-Nachtrag – interne Solladressen und H33
+
+V3.4 nutzt weiterhin denselben Unit-1-Remoteaufbau:
+
+```text
+INV1:TX:2008 = Fan-Soll 1
+INV1:TX:2009 = Fan-Soll 2
+```
+
+Die internen RAM-Sollkanäle des entsprechenden V3.4-Schedulerpfads sind jedoch gegenüber V3.3 verschoben:
+
+```text
+V3.3:
+0x20016F0A
+0x20016F0C
+
+V3.4:
+0x20016F18
+0x20016F1A
+```
+
+Damit gilt ausdrücklich:
+
+> Interne Fan-RAM-Adressen dürfen nicht versionsübergreifend ungeprüft übernommen werden. Die Remote-Registersemantik 2008/2009 bleibt dagegen erhalten.
+
+V3.4 bestätigt außerdem erneut H33:
+
+```text
+MAIN:1019 / H33 = 0
+→ Unit1 FC10 5 Wörter / FC03 22 Wörter
+
+MAIN:1019 / H33 != 0
+→ Unit1 FC10 16 Wörter / FC03 51 Wörter
+```
+
+Die lange Variante enthält Fan-Driver-Steuerung/-Telemetrie.
+
+Weitere V3.4-Hardwarezusammenhänge stehen in [`FW3.4-HARDWARE-KONFIGURATION.md`](FW3.4-HARDWARE-KONFIGURATION.md).
+
+---
+
+## 24. Zusammenhang mit anderen Analysen
+
+- [`FW3.4-HARDWARE-KONFIGURATION.md`](FW3.4-HARDWARE-KONFIGURATION.md) – Hardware-/Maschinenprofile einschließlich F01/F10/F23/F25/F26
+- [`FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md`](FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md)
+- [`FW3.3-ERKENNTNISSE.md`](FW3.3-ERKENNTNISSE.md)
+- [`FW3.3-EEV-SMART-REGELUNG.md`](FW3.3-EEV-SMART-REGELUNG.md)
+- [`FW3.3-OELRUECKFUEHRUNG.md`](FW3.3-OELRUECKFUEHRUNG.md)
