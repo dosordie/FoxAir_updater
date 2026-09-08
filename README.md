@@ -17,6 +17,14 @@ Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 
 Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt [`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), das weiterhin für normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
 
+## 💙 Unterstützung
+
+Ich bastle an diesem Tool in meiner Freizeit.  
+Wenn er dir gefällt oder dir weiterhilft, freue ich mich über eine kleine Spende:
+
+[![Spenden via PayPal](https://img.shields.io/badge/Spenden-PayPal-blue.svg?logo=paypal)](https://www.paypal.com/paypalme/AuhuberD)
+
+
 ## Windows GUI v0.4.0
 
 Die Windows-Version ist der hauptsächliche Endanwenderweg des Projekts. Sie steht als **Portable-ZIP** und **Setup-EXE** auf der GitHub-Releases-Seite bereit:
@@ -258,12 +266,6 @@ Enthalten sind unter anderem Firmware-Reverse-Engineering, PHNIX-LTE-Modem-/Runt
 
 Nicht Schwerpunkt dieses Repositorys sind die normale FoxAir-Control-GUI, normale Endanwender-Steuerlogik oder allgemeine Modbus-Werkzeuge ohne direkten Firmware-/Updater-Bezug.
 
-## 💙 Unterstützung
-
-Ich bastle an diesem Tool in meiner Freizeit.  
-Wenn er dir gefällt oder dir weiterhilft, freue ich mich über eine kleine Spende:
-
-[![Spenden via PayPal](https://img.shields.io/badge/Spenden-PayPal-blue.svg?logo=paypal)](https://www.paypal.com/paypalme/AuhuberD)
 
 ## Lizenz
 
