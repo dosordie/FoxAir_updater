@@ -1,6 +1,6 @@
 # FoxAir / PHNIX Reverse-Engineering-Katalog
 
-Stand: 5. September 2026
+Stand: 8. September 2026
 
 Dieser Katalog gilt **ausschließlich für Dateien in `docs/reverse_engineering/`**.
 
@@ -132,8 +132,9 @@ known_corrections:
 | **interner Modbus, Boardadressen, Slave Units, RS485/UART** | [`FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md`](FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md) | UART-Hardware / Unit-1-Protokoll |
 | **Warmlink externer Modbus / 0x63 Dispatcher** | [`FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md`](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md) | Modbus-Katalog |
 | **SG Ready / PV / Register 8801** | [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md) | Parameter-Audit |
-| **Firmwarefamilien / Softwarecodes / 82400644 / Versionen** | [`PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md`](PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md) | V3.3-Erkenntnisse / V3.3→V3.4 Live Update |
-| **Mainboard OTA allgemein, C350, C36E, C5A8, C544** | [`PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md`](PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md) | Board OTA State Machine / Completion / Live Update |
+| **Firmwarefamilien / Softwarecodes / 82400644 / 644 / GL9 / GL15-1 / BL12-3 / Versionen** | [`PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md`](PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md) | [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md), V3.3→V3.4 Live Update |
+| **C350 Allow, Softwarecode-Prüfung, Gleichversion, Downgrade, C36E Status 0/1** | [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md) | Firmwarefamilien / Gleichversion-Live-Test / OTA-Kurzreferenz |
+| **Mainboard OTA allgemein, C350, C36E, C5A8, C544** | [`PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md`](PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md) | [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md), Board OTA State Machine / Completion / Live Update |
 | **V3.3 → V3.4 realer Updateablauf** | [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md) | OTA-Kurzreferenz |
 | **DTU / phnixIot4G Gesamtarchitektur** | [`PHNIX_phnixIot4G_program_map.md`](PHNIX_phnixIot4G_program_map.md) | `PHNIX_phnixIot4G_RE.md` als BASIS + Non-OTA Architecture |
 | **MQTT Datenpfad / MQTT↔RS485 Bridge / Topics** | [`PHNIX_phnixIot4G_normal_mqtt_bridge.md`](PHNIX_phnixIot4G_normal_mqtt_bridge.md) | Cloud Telemetry Commands |
@@ -152,8 +153,9 @@ known_corrections:
 | Dokument | Status | Firmware | Inhalt / Keywords |
 |---|---|---|---|
 | [`FW3.3-ERKENNTNISSE.md`](FW3.3-ERKENNTNISSE.md) | **VERSIONIERT** | V3.3 | breite Mainboard-Gesamtübersicht; Spezialdokumente bei Detailfragen bevorzugen |
-| [`PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md`](PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md) | **KANONISCH** | mehrere | Firmwarefamilien, Softwarecodes, Versionszuordnung |
+| [`PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md`](PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md) | **KANONISCH** | mehrere | Firmwarefamilien, Softwarecodes, Versionszuordnung, 644-Modellzuordnungen |
 | [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md) | **LIVE** | V3.3→V3.4 | realer Updatebeweis, Version 0033 → 0034 |
+| [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md) | **VERSIONIERT** | V3.4 | Mainboard-C350-Allow: 8-Byte-Softwarecode exakt, 4-Byte-Version gleich/ungleich, Downgrade nicht blockiert |
 
 ## Spezialdokument
 
@@ -261,6 +263,7 @@ Hinweis vom Audit 05.09.2026: Der aktuelle `FoxAir_Control/data/foxair_phnix_reg
 ## Aktuelle Primärreferenzen
 
 - [`PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md`](PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md) — **KANONISCH**, kompakter Gesamtpfad.
+- [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md) — **VERSIONIERT**, V3.4 Mainboard-Allow-Logik für Softwarecode/Version und Downgrade-Verhalten.
 - [`PHNIX_phnixIot4G_board_ota_state_machine.md`](PHNIX_phnixIot4G_board_ota_state_machine.md) — **KANONISCH**, `board_ota_step` / Zustandsmaschine.
 - [`PHNIX_phnixIot4G_board_ota_completion.md`](PHNIX_phnixIot4G_board_ota_completion.md) — **KANONISCH**, Abschluss / C36E Status 3/5 / Step 12.
 - [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md) — **LIVE**, kompletter V3.3→V3.4-Lauf.
@@ -409,6 +412,7 @@ FW3.3-PUMPEN-PWM-REGELUNG.md
 FW3.3-SG-READY-MODBUS-8801.md
 FW3.3-UNIT1-INVERTER-PROTOKOLL.md
 FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md
+FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md
 FW3.4-WW-HEIZEN-UMSCHALTUNG-VERDICHTER.md
 ```
 
