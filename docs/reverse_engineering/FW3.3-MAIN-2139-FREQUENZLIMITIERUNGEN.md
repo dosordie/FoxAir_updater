@@ -1,14 +1,14 @@
 # Mainboard-Firmware V3.3 – MAIN:2139 Frequenzbegrenzungs-/Schutzstatus
 
-Stand: 28. August 2026
+Stand: 8. September 2026
 
-Dieses Dokument untersucht `MAIN:2139` der Mainboard-Firmware `82400644 / V3.3`.
+Dieses Dokument untersucht `MAIN:2139` der Mainboard-Firmware `82400644 / V3.3` und enthält einen klar gekennzeichneten V3.4-Nachtrag für neu geschlossene höhere Bits.
 
 Frühere Audits konnten das Register nur als aktives, aber fachlich unbekanntes Statuswort klassifizieren. Die inzwischen rekonstruierten Writer zeigen, dass `MAIN:2139` mehrere **Frequenzbegrenzungs- und Schutzzustände** sammelt.
 
 Bewertung:
 
-- **bestätigt** – Quelle und Schutzsemantik im V3.3-Binary geschlossen
+- **bestätigt** – Quelle und Schutzsemantik im jeweils genannten Binary geschlossen
 - **sehr wahrscheinlich** – Datenpfad stark geschlossen, letzte Herstellerbezeichnung offen
 - **offen** – Bit existiert bzw. kann gesetzt werden, fachliche Bedeutung noch nicht belastbar geschlossen
 
@@ -18,15 +18,16 @@ Bewertung:
 
 Aktuell sind folgende Bits geschlossen:
 
-| Bit | Maske | Bedeutung | Pumpen-Override 100 % |
-|---:|---:|---|---|
-| 0 | `0x0001` | noch offen | offen |
-| 1 | `0x0002` | übermäßige T01/T02-Wasserspreizung / A24-Schutz | **ja, bestätigt** |
-| 2 | `0x0004` | noch offen | offen |
-| 3 | `0x0008` | A27 Temperaturdifferenz-Frequenzbegrenzung | direkte Pumpenkopplung nicht separat bestätigt |
-| 4 | `0x0010` | Niederdruck-Frequenzbegrenzung | **ja, bestätigt** |
-| 5 | `0x0020` | AC-Eingangsstrom-Frequenzbegrenzung | direkte Pumpenkopplung nicht separat bestätigt |
-| 6 | `0x0040` | Abgastemperatur-/Discharge-Frequenzbegrenzung | **ja, bestätigt** |
+| Bit | Maske | Bedeutung | Pumpen-Override 100 % | Quelle |
+|---:|---:|---|---|---|
+| 0 | `0x0001` | noch offen | offen | V3.3 |
+| 1 | `0x0002` | übermäßige T01/T02-Wasserspreizung / A24-Schutz | **ja, bestätigt** | V3.3 |
+| 2 | `0x0004` | noch offen | offen | V3.3 |
+| 3 | `0x0008` | A27 Temperaturdifferenz-Frequenzbegrenzung | direkte Pumpenkopplung nicht separat bestätigt | V3.3 |
+| 4 | `0x0010` | Niederdruck-Frequenzbegrenzung | **ja, bestätigt** | V3.3 |
+| 5 | `0x0020` | AC-Eingangsstrom-Frequenzbegrenzung | direkte Pumpenkopplung nicht separat bestätigt | V3.3 |
+| 6 | `0x0040` | Abgastemperatur-/Discharge-Frequenzbegrenzung | **ja, bestätigt** | V3.3 |
+| **8** | **`0x0100`** | **SG-/Zusatzheizungs-Koordination: relatives Verdichterfrequenzlimit über MAIN:1422 aktiv** | **nicht nachgewiesen** | **V3.4** |
 
 Damit ist `MAIN:2139` kein klassisches Fehlerwort im Sinn „Störung vorhanden/Anlage aus“, sondern ein Sammelstatus für aktive Schutz- bzw. Leistungsbegrenzungszustände.
 
@@ -167,9 +168,11 @@ MAIN:2139 Bit5
 
 publiziert.
 
+Seit dem V3.4-Hardwareaudit ist zusätzlich bestätigt, dass `MAIN:1343 / A39 = Max. Current Value` über `0x200162D8+0x5C` direkt als `INV1:TX:2002` an das Inverter-/Leistungsboard übertragen wird. Damit ist A39 ein zentraler statischer Stromlimit-/Driverparameter; `MAIN:2057` bleibt die reale AC-Eingangsstrom-Rückmeldung für den laufenden Limiter.
+
 Im bisherigen Pumpen-Xref-Audit wurde für Bit5 keine separate direkte Vollpumpenbedingung nachgewiesen. Das Bit ist daher sicher ein Frequenz-Limiterstatus, aber nicht automatisch ein Pumpen-Override.
 
-**Bewertung: bestätigt.**
+**Bewertung: V3.3-Limiter bestätigt; A39→INV1:2002 zusätzlich in V3.4 bestätigt.**
 
 ---
 
@@ -208,9 +211,78 @@ Derselbe interne Zustand ist außerdem eine direkte Vollpumpenbedingung:
 
 ---
 
-# 7. Zusammenhang zur Pumpenregelung
+# 7. V3.4-Nachtrag: Bit8 – SG-/Zusatzheizungs-Koordination
 
-Mindestens drei der geschlossenen `MAIN:2139`-Schutzzustände besitzen eine direkte Kopplung zum 100-%-Pumpenpfad:
+V3.4 packt den internen Zustand:
+
+```text
+0x20016A44 + 0x09 != 0
+```
+
+als:
+
+```text
+MAIN:2139 |= 0x0100
+→ MAIN:2139 Bit8 = 1
+```
+
+Dieser Zustand ist mit einem echten Verdichter-Frequenzlimit gekoppelt.
+
+## 7.1 MAIN:1422 als relative Grenze
+
+```text
+MAIN:1422
+Live: 0x20016A24 + 0x00
+Factory-Default V3.4: 70
+```
+
+Der Limiter berechnet sinngemäß:
+
+```text
+F_limit = MAIN:1422 × F_ref / 100
+```
+
+und klemmt das Ergebnis anschließend zwischen:
+
+```text
+dynamische Mindestfrequenz
+und
+C03 / maximale Kompressorfrequenz
+```
+
+`F_ref` ist die A26-/T04-/T02-abhängige 100-%-Referenzfrequenz, die in `FW3.4-HARDWARE-KONFIGURATION.md` vollständig dokumentiert ist.
+
+## 7.2 Herkunft des Zustands
+
+Die zugehörige State-Machine verwendet unter anderem:
+
+```text
+MAIN:1049 / A31  Electric Heater On AT
+MAIN:1050 / A32  Electric Heater Delays Comp. On Time
+MAIN:1063 / A33  Electric Heater Opening Temp. Diff
+MAIN:1031 / A35  Electric Heater Off Temp. Diff
+MAIN:1032 / H18  Electric Heater Energy Stage
+```
+
+und besitzt einen aktiven Pfad für:
+
+```text
+SG-Ready Mode 4 / High PV
+```
+
+Damit lautet die derzeit belastbare Arbeitsbezeichnung:
+
+> **Bit8 = SG-/Zusatzheizungs-Koordination: relatives Verdichterfrequenzlimit über MAIN:1422 aktiv.**
+
+Der Writer des Bits und der Frequenzlimit-Datenfluss sind bestätigt. Die originale PHNIX-Bitbezeichnung und die vollständige Zuordnung der benachbarten internen Zustände `0x20016A44+8/+9/+A` zu den physischen E-Heizer-Ausgängen bleiben offen.
+
+**Bewertung: Datenfluss bestätigt; Herstellerwortlaut offen.**
+
+---
+
+# 8. Zusammenhang zur Pumpenregelung
+
+Mindestens drei der V3.3-geschlossenen `MAIN:2139`-Schutzzustände besitzen eine direkte Kopplung zum 100-%-Pumpenpfad:
 
 ```text
 Bit1  Wasser-ΔT/A24
@@ -230,7 +302,7 @@ und gleichzeitig
 
 Das ist thermodynamisch plausibel: Bei kritischen Zuständen versucht V3.3 zusätzlich, den maximal verfügbaren Wasserdurchsatz bereitzustellen.
 
-Nicht für jedes `2139`-Bit ist diese Pumpenkopplung bestätigt. Insbesondere Bit3 und Bit5 sind aktuell als Frequenz-Limiterstatus geschlossen, aber nicht als eigenständige Pumpen-Overridequelle.
+Nicht für jedes `2139`-Bit ist diese Pumpenkopplung bestätigt. Insbesondere Bit3, Bit5 und das neue V3.4-Bit8 sind aktuell als Frequenz-Limiterstatus geschlossen, aber **nicht** als eigenständige Pumpen-Overridequelle.
 
 Details zum Pumpenpfad:
 
@@ -238,7 +310,7 @@ Details zum Pumpenpfad:
 
 ---
 
-# 8. Offene Bits
+# 9. Offene Bits
 
 Noch nicht fachlich geschlossen:
 
@@ -260,17 +332,27 @@ Diese Kandidaten sind ausdrücklich **noch keine Zuordnungen**.
 
 ---
 
-# 9. Status
+# 10. Status
 
 | Aussage | Bewertung |
 |---|---|
 | `MAIN:2139` ist ein Frequenzbegrenzungs-/Schutzstatuswort | bestätigt |
-| Bit1 = übermäßige Wasser-Spreizung / A24 | bestätigt |
-| Bit3 = A27 Temperaturdifferenz-Limiter | bestätigt |
-| Bit4 = Niederdruck-Limiter | bestätigt |
-| Bit5 = AC-Eingangsstrom-Limiter | bestätigt |
-| Bit6 = Abgastemperatur-Limiter | bestätigt |
-| Bit1/4/6 erzwingen zusätzlich 100 % Pumpen-PWM | bestätigt |
-| Bit3/5 erzwingen direkt 100 % Pumpen-PWM | bisher nicht nachgewiesen |
+| Bit1 = übermäßige Wasser-Spreizung / A24 | bestätigt V3.3 |
+| Bit3 = A27 Temperaturdifferenz-Limiter | bestätigt V3.3 |
+| Bit4 = Niederdruck-Limiter | bestätigt V3.3 |
+| Bit5 = AC-Eingangsstrom-Limiter | bestätigt V3.3 |
+| Bit6 = Abgastemperatur-Limiter | bestätigt V3.3 |
+| **Bit8 = SG-/Zusatzheizungs-Koordination, relatives Limit über MAIN:1422** | **bestätigt V3.4 für Writer/Limitpfad; Herstellerwortlaut offen** |
+| Bit1/4/6 erzwingen zusätzlich 100 % Pumpen-PWM | bestätigt V3.3 |
+| Bit3/5/8 erzwingen direkt 100 % Pumpen-PWM | bisher nicht nachgewiesen |
 | Bit0 | offen |
 | Bit2 | offen |
+
+---
+
+# 11. Verwandte Dokumente
+
+- [`FW3.4-HARDWARE-KONFIGURATION.md`](FW3.4-HARDWARE-KONFIGURATION.md) – A26/T04/T02-Referenzkennfeld, A39, C04, MAIN:1422 und Hardwareprofile
+- [`FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md`](FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md)
+- [`FW3.3-PUMPEN-100-PROZENT-OVERRIDES.md`](FW3.3-PUMPEN-100-PROZENT-OVERRIDES.md)
+- [`FW3.3-MODBUS-GESAMTKATALOG.md`](FW3.3-MODBUS-GESAMTKATALOG.md)
