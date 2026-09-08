@@ -1,10 +1,10 @@
 # Mainboard-Firmware V3.3 – Kompressor- und Inverteransteuerung
 
-Stand: 24. August 2026
+Stand: 8. September 2026
 
-Diese Datei dokumentiert die vollständige bisher rekonstruierte Kette von der Kompressor-Sollwertbildung im FoxAir-/PHNIX-Mainboard bis zum externen Inverter-/Leistungsboard Unit `0x01` und zurück.
+Diese Datei dokumentiert die vollständige bisher rekonstruierte Kette von der Kompressor-Sollwertbildung im FoxAir-/PHNIX-Mainboard bis zum externen Inverter-/Leistungsboard Unit `0x01` und zurück. Am Ende befindet sich ein **V3.4-Nachtrag**, der mehrere bisher offene Punkte schließt. V3.4-Codeadressen dürfen wegen der anderen Imagebasis nicht als V3.3-Adressen gelesen werden.
 
-Untersuchtes Binary:
+Untersuchtes V3.3-Binary:
 
 ```text
 Produkt-/Softwarekennung: 82400644
@@ -17,7 +17,7 @@ Imagebasis:               0x08050000
 
 Bewertung:
 
-- **bestätigt** – direkt im Binary bzw. zusätzlich im realen Busverkehr nachgewiesen
+- **bestätigt** – direkt im jeweiligen Binary bzw. zusätzlich im realen Busverkehr nachgewiesen
 - **sehr wahrscheinlich** – Datenfluss ist geschlossen, letzte Herstellersemantik fehlt
 - **Hypothese** – noch nicht ausreichend verifiziert
 
@@ -81,13 +81,7 @@ Bestätigt:
 0x20016AA4 + 0x08 = finale Kompressor-Sollfrequenz
 ```
 
-Dieser Wert wird öffentlich als:
-
-```text
-Register 2071
-```
-
-bereitgestellt und unmittelbar an Unit `0x01` gesendet.
+Dieser Wert wird öffentlich als Register `2071` bereitgestellt und unmittelbar an Unit `0x01` gesendet.
 
 ## 2.2 Inverter-Telemetrieblock
 
@@ -130,11 +124,7 @@ Schutz- und Sonderzustände
 2071
 ```
 
-Bestätigte C-Parameter im Liveblock:
-
-```text
-0x20016B20
-```
+Bestätigte C-Parameter im Liveblock `0x20016B20`:
 
 | Register | Parameter | Funktion |
 |---:|---|---|
@@ -160,24 +150,13 @@ Soll <= C03
 Soll >= dynamische Mindestfrequenz
 ```
 
-Zusätzliche Sonderpfade können diese normale Sollwertbildung vorgeben bzw. übersteuern, beispielsweise:
-
-- Abtauung,
-- Ölrückführung,
-- Schutz-/Derating-Zustände,
-- Factory-/Manual-Betrieb.
+Zusätzliche Sonderpfade können diese normale Sollwertbildung vorgeben bzw. übersteuern, beispielsweise Abtauung, Ölrückführung, Schutz-/Derating-Zustände sowie Factory-/Manual-Betrieb.
 
 ---
 
 # 4. Beispiel Ölrückführung
 
-Die Oil-Return-State-Machine setzt bei aktiver Ölrückführung nominal:
-
-```text
-60 Hz
-```
-
-als Kompressoranforderung.
+Die Oil-Return-State-Machine setzt bei aktiver Ölrückführung nominal `60 Hz` als Kompressoranforderung.
 
 Auch dieser Sonderwert läuft anschließend durch die gemeinsame Ausgangskette und landet bei:
 
@@ -193,7 +172,7 @@ Das bestätigt, dass Unit `0x01` der gemeinsame Endpunkt sowohl für normale Reg
 
 # 5. Modbus-Master-Scheduler
 
-Der Unit-`0x01`-Dialog ist Bestandteil des festen internen Schedulers um:
+Der Unit-`0x01`-Dialog ist Bestandteil des festen internen V3.3-Schedulers um:
 
 ```text
 0x08064C40 … 0x08064FC6
@@ -217,11 +196,7 @@ State 6:
 
 Die Länge hängt von H33 ab.
 
-Der Modbus-Request-Builder liegt bei:
-
-```text
-0x080695F0
-```
+Der V3.3-Modbus-Request-Builder liegt bei `0x080695F0`.
 
 ---
 
@@ -251,8 +226,6 @@ FC10 1999, 5 Wörter
 FC03 2099, 22 Wörter
 ```
 
-Das ist der reine/kurze Verdichterdriver-Pfad.
-
 ## H33 != 0
 
 ```text
@@ -262,26 +235,13 @@ FC03 2099, 51 Wörter
 
 Die zusätzlichen Register enthalten Fan-Driver-Sollwerte und -Rückmeldungen.
 
-## Reale FoxAir
-
-Der reale Mitschnitt zeigt:
-
-```text
-Unit 0x01 FC10 1999 qty=16
-Unit 0x01 ACK
-Unit 0x01 FC03 2099 qty=51
-Unit 0x01 Antwort mit 51 Wörtern
-```
-
-Damit läuft die konkrete Anlage in der integrierten H33-Variante.
-
-**Bewertung: bestätigt.**
+Der reale Mitschnitt zeigt die H33-integrierte 16/51-Wort-Variante. **Bewertung: bestätigt.**
 
 ---
 
 # 7. FC10-Sollwertpaket an Unit 0x01
 
-Sendepuffer:
+Sendepuffer V3.3:
 
 ```text
 0x2001232C
@@ -289,29 +249,14 @@ Sendepuffer:
 
 ## 7.1 Remote-Register 1999 – Kompressor-Sollfrequenz
 
-Die Firmware kopiert:
-
 ```text
 0x20016AA4+0x08
+→ INV1:TX:1999
 ```
-
-in das erste Sendewort:
-
-```text
-Unit 0x01, Register 1999
-```
-
-Das ist die zentrale Verdichter-Sollfrequenz.
 
 **Bewertung: bestätigt.**
 
 ## 7.2 Remote-Register 2000 – Run-/Mode-Wort
-
-Die Firmware bildet das zweite Wort aus der Sollfrequenz und einem internen Modusflag bei:
-
-```text
-0x20016FBA
-```
 
 Bytegenau:
 
@@ -319,14 +264,14 @@ Bytegenau:
 wenn Sollfrequenz == 0:
     Reg. 2000 = 0
 
-wenn Sollfrequenz != 0 und internes Flag == 0:
+wenn Sollfrequenz != 0 und internes Flag 0x20016FBA == 0:
     Reg. 2000 = 1
 
-wenn Sollfrequenz != 0 und internes Flag != 0:
+wenn Sollfrequenz != 0 und internes Flag 0x20016FBA != 0:
     Reg. 2000 = 3
 ```
 
-Damit ist die Funktion als Run-/Mode-Kommando bestätigt; die offizielle Bedeutung der Modi `1` und `3` wird noch separat benannt.
+Die Funktion als Run-/Mode-Kommando ist bestätigt; die offizielle Bedeutung der Modi `1` und `3` bleibt offen.
 
 ## 7.3 Remote-Register 2001
 
@@ -334,19 +279,34 @@ Damit ist die Funktion als Run-/Mode-Kommando bestätigt; die offizielle Bedeutu
 Reg. 2001 = 0
 ```
 
-im normalen beobachteten Pfad.
+im normalen beobachteten Pfad. Offizielle Funktion offen.
 
-Die offizielle Funktion ist noch offen.
+## 7.4 Remote-Register 2002 – Maximalstrom A39
 
-## 7.4 Remote-Register 2002
-
-Quelle:
+Früher war lediglich die Quelle bekannt:
 
 ```text
 0x200162D8 + 0x5C
 ```
 
-Das Wort wird direkt an den Driver übertragen. Die genaue Semantik ist noch offen.
+Der V3.4-Audit hat den Parameterpfad vollständig geschlossen:
+
+```text
+MAIN:1343 / A39
+= Max. Current Value / Maximaler Stromwert
+      ↓
+0x200162D8 + 0x5C
+      ↓
+INV1:TX:2002
+```
+
+Damit gilt:
+
+> **INV1:TX:2002 = vom Mainboard an den Inverter übertragener A39-Maximalstrom-/Stromlimitwert.**
+
+A39 ist im Registerkatalog als `AMP_X2` definiert, also `A = RAW / 2` für die Bedien-/Katalogdarstellung. Eine spezielle Empfängersemantik für A39=0 ist noch nicht belegt.
+
+**Bewertung: in V3.4 bestätigt; die RAM-Struktur ist gegenüber V3.3 gleich.**
 
 ## 7.5 Remote-Register 2003 – Driver-/Kompressormodellcode
 
@@ -356,23 +316,26 @@ Quelle ist C04:
 0x20016B20 + 0x06
 ```
 
-Wenn C04 ungleich null ist, bildet die Firmware:
+Wenn C04 ungleich null ist:
 
 ```text
-Unit1_Reg2003 = C04 + 0x083A
+INV1:TX:2003 = C04 + 0x083A
 ```
 
-ansonsten wird C04 direkt übernommen.
+sonst `0`.
 
-Im realen Mitschnitt wurde beispielsweise:
+Beispiel:
 
 ```text
-2003 = 2119
+C04 = 13
+→ INV1:TX:2003 = 2119
 ```
 
-beobachtet.
+Der vollständige V3.4-Xref-Audit findet **keine lokale C04→Kompressordaten-Tabelle auf dem Mainboard**. C04 wird hier im Wesentlichen als opaque Driver-/Kompressormodell-Selektor behandelt.
 
-Das ist ein klarer Modell-/Driver-Auswahlpfad; die genaue Kodetabelle ist noch offen.
+Daher beweist der zulässige C04-Bereich `0..99` nicht 100 physische Verdichtertypen. Die konkrete Modell-/Motorparametertabelle sitzt sehr wahrscheinlich im Unit-1-Driver.
+
+**Bewertung: Transport/Transformation bestätigt; konkrete C04→Verdichterzuordnung offen.**
 
 ---
 
@@ -388,22 +351,30 @@ Bei aktivem H33 werden zusätzlich unter anderem aufgebaut:
 2010 = 0
 ```
 
-Quellen:
+Für V3.3 stammen die beiden Fan-Sollwerte aus:
 
 ```text
 2008 ← 0x20016F0A
 2009 ← 0x20016F0C
 ```
 
-Damit teilt sich das Inverterboard denselben FC10-Block für:
+V3.4 verwendet im entsprechenden Schedulerpfad dagegen:
 
 ```text
-Verdichter
-+
-Fan-Motor-Driver
+2008 ← 0x20016F18
+2009 ← 0x20016F1A
 ```
 
-Die Lüfterregelung selbst bleibt auf dem Regelmainboard; Unit `0x01` erhält nur die bereits berechneten Sollwerte.
+Das ist ein wichtiger Versionsunterschied bei **internen RAM-Adressen**, nicht bei den Remote-Registern.
+
+V3.4 schließt zusätzlich die F01-Selektoren:
+
+```text
+MAIN:1059 / F01 == 3 → Driver-Selektor 1
+MAIN:1059 / F01 == 4 → Driver-Selektor 2
+```
+
+Details stehen in `FW3.3-LUEFTERREGELUNG.md` und `FW3.4-HARDWARE-KONFIGURATION.md`.
 
 ---
 
@@ -417,34 +388,30 @@ FC03
 Start 2099
 ```
 
-Die Antwortwörter werden in die Struktur `0x200168C4` überführt.
-
-## 9.1 Direkt rekonstruierte Anfangsregister
+Die Antwortwörter werden in `0x200168C4` überführt.
 
 | Unit-1-Register | internes Ziel | Funktion |
 |---:|---:|---|
 | 2099 | `0x200168C4+0x00` | noch offen |
-| 2100 | `+0x02` | noch offen |
+| 2100 | `+0x02` | Driver Fault Word 1 / in öffentlichen Fehlerpfad |
 | 2101 | `+0x04` | noch offen |
 | 2102 | `+0x06` | Kompressor-Istfrequenz |
 | 2103 | `+0x08` | maximale Inverter-/Kompressorfrequenz |
-| 2104 | `+0x0A` | noch offen |
+| 2104 | `+0x0A` | IPM-/Temperaturgrenzwertpfad |
 | 2105 | `+0x0C` | AC-Eingangsspannung |
 | 2106 | `+0x0E` | AC-Eingangsstrom |
 | 2107 | `+0x10` | Kompressor-Phasenstrom |
 | 2108 | `+0x12` | DC-Bus-Spannung |
 
-Die öffentlichen Mainboardregister entstehen erst anschließend aus dieser Struktur.
-
-Daraus folgt:
+Öffentliche Hauptpfade:
 
 ```text
-Unit1-Reg2102 → 0x200168C4+6 → Mainboard 2072
-Unit1-Reg2103 → 0x200168C4+8 → Mainboard 2073
-Unit1-Reg2105 → 0x200168C4+C → Mainboard 2062
-Unit1-Reg2106 → 0x200168C4+E → Mainboard 2057
-Unit1-Reg2107 → 0x200168C4+10 → Mainboard 2042
-Unit1-Reg2108 → 0x200168C4+12 → Mainboard 2043
+Unit1-Reg2102 → MAIN:2072
+Unit1-Reg2103 → MAIN:2073
+Unit1-Reg2105 → MAIN:2062
+Unit1-Reg2106 → MAIN:2057
+Unit1-Reg2107 → MAIN:2042
+Unit1-Reg2108 → MAIN:2043
 ```
 
 **Bewertung: bestätigt.**
@@ -453,7 +420,7 @@ Unit1-Reg2108 → 0x200168C4+12 → Mainboard 2043
 
 # 10. Plausibilisierung mit realem Bus
 
-Im Mitschnitt bei stillstehendem Verdichter wurde in einer Unit-`0x01`-Antwort unter anderem beobachtet:
+Bei stillstehendem Verdichter wurden unter anderem beobachtet:
 
 ```text
 2102 = 0
@@ -462,7 +429,7 @@ Im Mitschnitt bei stillstehendem Verdichter wurde in einer Unit-`0x01`-Antwort u
 2108 ≈ 313…315
 ```
 
-Das passt hervorragend zu:
+Passend zu:
 
 ```text
 Istfrequenz       0 Hz
@@ -471,125 +438,71 @@ kleiner Eingangsstrom
 DC-Zwischenkreis  ~313 V
 ```
 
-Damit wird die statische Registerzuordnung zusätzlich durch reale elektrische Größen gestützt.
-
 ---
 
 # 11. Öffentlicher Kompressorstatus 2019 Bit 0
 
-Register 2019 Bit 0 wird nicht aus einem Kompressorrelais gebildet.
-
-Die Firmware prüft:
+`MAIN:2019 Bit0` wird aus:
 
 ```text
 0x200168C4 + 0x06 != 0
 ```
 
-also die vom Inverter zurückgemeldete tatsächliche Frequenz.
+gebildet und zeigt damit tatsächlichen vom Driver gemeldeten Verdichterlauf.
 
-Damit gilt:
-
-```text
-2019 Bit 0 = 1
-```
-
-nur wenn der Inverter tatsächlich eine von null verschiedene Verdichterfrequenz meldet.
-
-Das ist diagnostisch wichtig:
+Diagnostisch:
 
 ```text
-2071 > 0, aber 2072 = 0
+2071 > 0, 2072 = 0
 ```
 
-bedeutet:
-
-```text
-Mainboard fordert Verdichter an,
-aber Inverter meldet noch keinen laufenden Verdichter.
-```
+bedeutet: Mainboard fordert an, Inverter meldet noch keinen realen Lauf.
 
 ---
 
 # 12. Diagnose der Verbindung zum Leistungsboard
 
-Der normale H33=1-Zyklus sieht auf dem Draht so aus:
+Normaler H33=1-Zyklus:
 
 ```text
-Mainboard → 0x01:
-    FC10, Start 1999, 16 Wörter
-
-0x01 → Mainboard:
-    FC10 ACK
-
-Mainboard → 0x01:
-    FC03, Start 2099, 51 Wörter
-
-0x01 → Mainboard:
-    FC03 Antwort, 51 Wörter
+Mainboard → 0x01: FC10 Start 1999, 16 Wörter
+0x01 → Mainboard: FC10 ACK
+Mainboard → 0x01: FC03 Start 2099, 51 Wörter
+0x01 → Mainboard: FC03 Antwort, 51 Wörter
 ```
 
-Damit lassen sich Kommunikationsfehler klar vom Regelalgorithmus unterscheiden.
-
-## Beispiel 1
-
-```text
-2071 > 0
-FC10 an Unit1 sichtbar
-kein ACK / keine FC03-Antwort
-```
-
-→ Kommunikations-/Powerboardproblem wahrscheinlich.
-
-## Beispiel 2
-
-```text
-FC10/FC03 laufen sauber
-2071 > 0
-2072 bleibt 0
-```
-
-→ Board kommuniziert, startet den Verdichter aber nicht bzw. hält ihn aufgrund eigener Driverbedingungen zurück.
-
-## Beispiel 3
-
-```text
-2072 > 0
-2019 Bit0 = 1
-```
-
-→ tatsächlicher Verdichterlauf vom Driver bestätigt.
+Damit lassen sich Kommunikationsprobleme von Regel-/Driverproblemen trennen.
 
 ---
 
 # 13. Wo endet die Mainboardregelung und wo beginnt der Inverter?
 
-Die Trennlinie ist jetzt klar:
-
 ## Regelmainboard
 
 verantwortlich für:
 
-- Betriebsart,
-- Temperaturregelung,
-- Kompressor-Sollfrequenz,
-- C02/C03 und dynamische Frequenzgrenzen,
-- Abtau-Sollwerte,
-- Oil Return,
-- Schutz-/Derating-Vorgaben,
-- Fan-Sollwerte.
+- Betriebsart
+- Temperaturregelung
+- Kompressor-Sollfrequenz
+- C02/C03 und dynamische Frequenzgrenzen
+- Abtau-Sollwerte
+- Oil Return
+- Schutz-/Derating-Vorgaben
+- Fan-Sollwerte
+- A26-abhängige Maschinenreferenz und relative Frequenzlimits
 
 ## Unit-0x01-Leistungsboard
 
 verantwortlich für:
 
-- Umsetzung des Frequenzsollwertes in reale Motorleistung,
-- Inverter-/IPM-Leistungselektronik,
-- DC-Zwischenkreis,
-- Messung von Strömen und Spannungen,
-- Rückmeldung der tatsächlichen Frequenz,
-- bei H33=1 zusätzlich Fan-Motor-Driver-Kommunikation/-Leistungselektronik.
-
-Damit ist die Systemarchitektur funktional getrennt.
+- Umsetzung des Frequenzsollwertes in reale Motorleistung
+- Inverter-/IPM-Leistungselektronik
+- DC-Zwischenkreis
+- Messung von Strömen und Spannungen
+- Rückmeldung der tatsächlichen Frequenz
+- Interpretation des C04-Driverprofils
+- Interpretation des A39-Maximalstromwertes
+- bei H33=1 zusätzlich Fan-Motor-Driver-Kommunikation/-Leistungselektronik
 
 ---
 
@@ -604,38 +517,35 @@ FC03 1011…1024
 
 als separaten Fan-Motor-Driver-Pfad.
 
-Dieser Pfad kann Lüfter-Istwerte direkt in dieselben Runtime-Felder schreiben, aus denen Mainboard 2074/2075 entstehen.
+Dieser Pfad kann Lüfter-Istwerte direkt in dieselben Runtime-Felder schreiben, aus denen MAIN:2074/2075 entstehen.
 
-Bei der realen untersuchten Anlage:
-
-- Unit `0x01` benutzt den H33-erweiterten 16/51-Wort-Dialog,
-- Unit `0x04` wird zwar gepollt,
-- eine Unit-`0x04`-Antwort wurde im Mitschnitt nicht beobachtet.
-
-Das spricht dafür, dass die Lüfter bei dieser Variante über den integrierten Unit-`0x01`-Driver laufen.
+Bei der real untersuchten Anlage läuft der H33-erweiterte Unit-1-Pfad; Unit 0x04 wurde gepollt, antwortete im beobachteten Mitschnitt aber nicht.
 
 ---
 
 # 15. Noch offene Kompressor-/Inverterpunkte
 
 1. Remote-Reg. 2000 Modi `1` und `3` offiziell benennen.
-2. Remote-Reg. 2002 vollständig zurückverfolgen.
-3. C04 → Remote-Reg. 2003 Modellcodetabelle rekonstruieren.
-4. Unit-1-Reg. 2099–2149 vollständig benennen.
-5. Inverter-/Driver-Fehlerbits und Abschaltursachen kartieren.
-6. Kommunikationstimeouts des Mainboards bis zu öffentlichen Alarmbits verfolgen.
-7. physische Inverterplatine/P-N identifizieren.
-8. internen Modbus-UART bis USART/GPIO/RS485-Transceiver verfolgen.
-9. prüfen, welche Schutzentscheidungen das Unit-0x01-Board zusätzlich autonom trifft.
+2. C04 → konkrete Verdichter-/Motortyp-Tabelle auf der Unit-1-Seite rekonstruieren.
+3. Unit-1-Reg. 2099–2149 vollständig benennen.
+4. Inverter-/Driver-Fehlerbits und Abschaltursachen vollständig kartieren.
+5. physische Inverterplatine/P-N identifizieren.
+6. prüfen, welche Schutzentscheidungen das Unit-0x01-Board zusätzlich autonom trifft.
+7. Empfängersemantik von A39=0 auf dem Unit-1-Board klären.
+
+Der frühere offene Punkt **„Remote-Reg. 2002 vollständig zurückverfolgen“ ist geschlossen**: `INV1:TX:2002 = MAIN:1343 / A39 Max. Current Value`.
 
 ---
 
 # 16. Verwandte Dokumente
 
-- [`FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md`](FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md) – vollständiger interner Adress-/Boardplan
-- [`FW3.3-LUEFTERREGELUNG.md`](FW3.3-LUEFTERREGELUNG.md) – Berechnung der Fan-Sollwerte vor Übergabe an das Driverboard
-- [`FW3.3-OELRUECKFUEHRUNG.md`](FW3.3-OELRUECKFUEHRUNG.md) – Oil-Return-Sonderfrequenz
-- [`FW3.3-ERKENNTNISSE.md`](FW3.3-ERKENNTNISSE.md) – Gesamtübersicht
+- [`FW3.4-HARDWARE-KONFIGURATION.md`](FW3.4-HARDWARE-KONFIGURATION.md) – Hardwareparameter, A26-Maschinenprofile, C04, A39, MAIN:1422
+- [`FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md`](FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md)
+- [`FW3.3-LUEFTERREGELUNG.md`](FW3.3-LUEFTERREGELUNG.md)
+- [`FW3.3-OELRUECKFUEHRUNG.md`](FW3.3-OELRUECKFUEHRUNG.md)
+- [`FW3.3-MAIN-2139-FREQUENZLIMITIERUNGEN.md`](FW3.3-MAIN-2139-FREQUENZLIMITIERUNGEN.md)
+- [`FW3.3-MODBUS-SERVICE-ENGINEERING-AUDIT.md`](FW3.3-MODBUS-SERVICE-ENGINEERING-AUDIT.md)
+- [`FW3.3-ERKENNTNISSE.md`](FW3.3-ERKENNTNISSE.md)
 
 ---
 
@@ -665,4 +575,100 @@ Unit 0x01 Remote 2102ff
 Mainboard 2072/2073, Strom, AC/DC usw.
 ```
 
-Damit ist die Kompressoransteuerung vom Regelalgorithmus bis zur physischen Leistungsboard-Schnittstelle geschlossen.
+---
+
+# 18. V3.4-Nachtrag – A26-Maschinenreferenz, DIAG 6023 und MAIN 1422
+
+Die V3.4-Analyse schließt einen zusätzlichen, für die Hardware-/Leistungsklassifikation wichtigen Pfad.
+
+## 18.1 A26 ist mehr als der Kältemittelname
+
+`MAIN:1054 / A26` wird einerseits über `A26 % 2` für R32/R290-Stoffdaten ausgewertet:
+
+```text
+0,2,4,6 → R32-Familie
+1,3,5,7 → R290-Familie
+```
+
+Andererseits wählt der **volle A26-Wert 0..7** eines von acht `7×8`-Maschinenkennfeldern.
+
+Die Achsen sind bestätigt:
+
+```text
+7 Zeilen  = T04 Außentemperatur
+8 Spalten = T02 Auslass-/Vorlaufwassertemperatur
+```
+
+Der Tabellenwert bildet eine Referenzfrequenz:
+
+```text
+F_ref = 30 Hz + Index × 6 Hz
+```
+
+Details und vollständige Tabellen: `FW3.4-HARDWARE-KONFIGURATION.md`.
+
+## 18.2 F_ref ist 100-%-Maschinenreferenz, nicht direkter Sollwert
+
+V3.4 benutzt `F_ref` sowohl zur Diagnose als auch für echte relative Frequenzlimits.
+
+Diagnose:
+
+```text
+DIAG:6023 ≈ MAIN:2072 / F_ref × 100
+```
+
+`DIAG:6023` selbst hat keinen nachgewiesenen Rückverbrauch in EEV-, Fan-, COP- oder Leistungsregelung.
+
+Regelung:
+
+```text
+F_limit = Prozent × F_ref / 100
+```
+
+anschließend:
+
+```text
+dynamische Mindestfrequenz <= F_limit <= C03
+```
+
+## 18.3 MAIN:1422
+
+`MAIN:1422` liegt bei:
+
+```text
+0x20016A24 + 0x00
+Factory-Default V3.4 = 70
+```
+
+und wird in einem SG-Ready-/Zusatzheizungs-Koordinationspfad als Prozentwert benutzt:
+
+```text
+F_limit = MAIN:1422 % × F_ref
+```
+
+Der zugehörige Aktivstatus ist:
+
+```text
+0x20016A44+0x09
+→ MAIN:2139 Bit8
+```
+
+Die State-Machine berücksichtigt A31/A32/A33/A35, H18 und einen SG-Ready-Mode-4-/High-PV-Pfad. `MAIN:1422` ist daher **kein statischer GL7/GL9/GL12-Hardwareparameter**.
+
+## 18.4 Konsequenz für die Maschinenkonfiguration
+
+Die eigentliche Hardware-/Leistungsklasse ergibt sich nach jetzigem Stand aus einer Kombination von:
+
+```text
+C04  Verdichter-/Driverprofil
+A26  Kältemittel + Maschinenreferenzkennfeld
+C03  maximale Frequenz
+A39  maximales Stromlimit
+Fxx  Lüfterhardware/-kennlinien
+H33  Driverarchitektur
+A40  Nenn-Wasserdurchfluss
+```
+
+Ein einzelnes Mainboardregister „Nennheizleistung 7/9/12 kW“ wurde nicht gefunden.
+
+**Bewertung: V3.4-Datenflüsse bestätigt; konkrete GL-Leistungsklassen-Zuordnung noch offen.**
