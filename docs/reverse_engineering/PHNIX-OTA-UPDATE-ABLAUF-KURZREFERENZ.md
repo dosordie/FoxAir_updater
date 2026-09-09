@@ -1,6 +1,6 @@
 # PHNIX OTA Update-Ablauf – Kurzreferenz
 
-Stand: 29. August 2026
+Stand: 9. September 2026
 
 Diese Datei fasst den aktuell bekannten und inzwischen teilweise **live bestätigten** PHNIX-/FoxAir-Mainboard-Updatepfad kompakt zusammen. Sie trennt bewusst zwischen:
 
@@ -140,7 +140,7 @@ Es gibt keinen bekannten OTA-Sonderzweig, der diesen Rebootpfad während eines M
 
 ## 6. C350 – Firmwareangebot
 
-C350 enthält Software-Code und angebotene Wire-Version.
+C350 enthält **Software-Code und angebotene Wire-Version**.
 
 Beispiel V3.4:
 
@@ -148,6 +148,34 @@ Beispiel V3.4:
 Software-Code: 82400644
 Wire-Version:   0034
 ```
+
+Für die Mainboard-Firmware `82400644 V3.4` ist die C350-Allow-Logik inzwischen direkt aus dem Mainboard-Binary rekonstruiert. Sie prüft zuerst den 8-Byte-Softwarecode exakt und danach die 4-Byte-Version nur auf Gleichheit/Ungleichheit:
+
+```text
+Softwarecode ungleich
+    -> C36E Status 0
+
+Softwarecode gleich + Version gleich
+    -> C36E Status 0
+
+Softwarecode gleich + Version ungleich
+    -> C36E Status 1
+```
+
+Sinngemäß:
+
+```c
+if (incoming_softwarecode != own_softwarecode)
+    allow = 0;
+else if (incoming_version == own_version)
+    allow = 0;
+else
+    allow = 1;
+```
+
+Wichtig: In diesem V3.4-Allow-Pfad gibt es **keinen Größer-/Kleiner-Vergleich der Version**. Eine ältere Version derselben Softwarecode-Familie wird auf C350-Ebene daher genauso freigegeben wie eine neuere. Der Mainboard-Check verhindert damit Cross-Family-Angebote, aber **keinen Downgrade innerhalb derselben Softwarecode-Familie**.
+
+Siehe [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md).
 
 ### Gleiche Version
 
@@ -169,9 +197,9 @@ kein C5A8
 keine Firmwaredaten zum Mainboard
 ```
 
-Dieser V3.3→V3.3-Pfad wurde real bestätigt.
+Dieser Gleichversionspfad wurde real bestätigt.
 
-### Neue/akzeptierte Version
+### Abweichende Version bei gleichem Softwarecode
 
 ```text
 C350
@@ -180,6 +208,8 @@ C36E Status 1
 ```
 
 Danach folgt C357.
+
+`Status 1` bedeutet an dieser Stelle **nicht automatisch „angebotene Version ist neuer“**, sondern für die analysierte V3.4 nur: Softwarecode passt und Version ist ungleich.
 
 ## 7. C357 – Dateigröße und MD5
 
@@ -353,10 +383,10 @@ Die frühere technische Schätzung von 10–15 Minuten war damit deutlich zu nie
 
 ## 16. Statuscodes
 
-| C36E | Bedeutung im bekannten V3.3/Mainboardpfad |
+| C36E | Bedeutung im bekannten Mainboard-OTA-Pfad |
 |---:|---|
-| 0 | kein Update / gleiche oder nicht akzeptierte Firmware |
-| 1 | C350 akzeptiert |
+| 0 | C350 nicht freigegeben; für V3.4: Softwarecode ungleich oder Version gleich |
+| 1 | C350 akzeptiert; für V3.4: Softwarecode gleich und Version ungleich |
 | 2 | C357 akzeptiert |
 | 3 | Staging vollständig + Staging-MD5 erfolgreich; Promotion läuft weiter |
 | 4 | Staging-/Datenprüfung fehlgeschlagen |
@@ -393,12 +423,15 @@ Die frühere technische Schätzung von 10–15 Minuten war damit deutlich zu nie
 - konkrete Flashbereiche;
 - zweistufige MD5-Struktur;
 - Copy-/Descriptor-/Commitdetails;
-- Cancel-/Rollback- und Fehlerpfade.
+- Cancel-/Rollback- und Fehlerpfade;
+- V3.4-C350-Allow-Logik mit exaktem Softwarecodevergleich und Gleich-/Ungleich-Versionsprüfung.
 
 Nicht in gleicher Tiefe live getestet sind andere Mainboardfamilien, andere Softwarecodes und reale Unterbrechungen in kritischen Flash-/Promotionphasen.
 
 ## 19. Weiterführende Dokumente
 
+- [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md)
+- [`PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md`](PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md)
 - [`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
 - [`PHNIX_phnixIot4G_board_ota_completion.md`](PHNIX_phnixIot4G_board_ota_completion.md)
 - [`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](PHNIX_phnixIot4G_watchdogs_reset_counters.md)
