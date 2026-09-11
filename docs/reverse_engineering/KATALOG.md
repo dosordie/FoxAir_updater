@@ -1,6 +1,6 @@
 # FoxAir / PHNIX Reverse-Engineering-Katalog
 
-Stand: 8. September 2026
+Stand: 11. September 2026
 
 Dieser Katalog gilt **ausschließlich für Dateien in `docs/reverse_engineering/`**.
 
@@ -83,6 +83,10 @@ superseded:
       - FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md
       - FW3.3-MODBUS-PARAMETER-1001-1540-AUDIT.md
 
+  FW3.3-SG-READY-MODBUS-8801.md:
+    replaced_by:
+      - FW3.4-SG-READY-MODBUS-8801.md
+
 known_corrections:
   PHNIX_phnixIot4G_RE.md:
     mqtt_transport:
@@ -131,7 +135,7 @@ known_corrections:
 | **Status 2001–2180, Livewerte, Fehler, Ausgänge** | [`FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md`](FW3.3-MODBUS-STATUS-2001-2180-AUDIT.md) | Gesamtkatalog / Service Audit |
 | **interner Modbus, Boardadressen, Slave Units, RS485/UART** | [`FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md`](FW3.3-INTERNER-MODBUS-BOARDARCHITEKTUR.md) | UART-Hardware / Unit-1-Protokoll |
 | **Warmlink externer Modbus / 0x63 Dispatcher** | [`FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md`](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md) | Modbus-Katalog |
-| **SG Ready / PV / Register 8801** | [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md) | Parameter-Audit |
+| **SG Ready / PV / Register 8801 / SG01=3 / SG01=7 / Low PV / High PV** | [`FW3.4-SG-READY-MODBUS-8801.md`](FW3.4-SG-READY-MODBUS-8801.md) | Parameter-Audit; Warmlink-Dispatcher |
 | **Firmwarefamilien / Softwarecodes / 82400644 / 644 / GL9 / GL15-1 / BL12-3 / Versionen** | [`PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md`](PHNIX_FIRMWAREFAMILIEN_SOFTWARECODES.md) | [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md), V3.3→V3.4 Live Update |
 | **C350 Allow, Softwarecode-Prüfung, Gleichversion, Downgrade, C36E Status 0/1** | [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md) | Firmwarefamilien / Gleichversion-Live-Test / OTA-Kurzreferenz |
 | **Mainboard OTA allgemein, C350, C36E, C5A8, C544** | [`PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md`](PHNIX-OTA-UPDATE-ABLAUF-KURZREFERENZ.md) | [`FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md`](FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md), Board OTA State Machine / Completion / Live Update |
@@ -239,7 +243,8 @@ Hinweis vom Audit 05.09.2026: Der aktuelle `FoxAir_Control/data/foxair_phnix_reg
 
 ## Sonderpfade
 
-- [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md) — SG Ready / Register 8801.
+- [`FW3.4-SG-READY-MODBUS-8801.md`](FW3.4-SG-READY-MODBUS-8801.md) — **KANONISCH**, klassischer virtueller SG-Ready-Pfad plus neuer V3.4-`SG01=7`-Pfad mit Low/Neutral/High PV; neue Realtests ausstehend.
+- [`FW3.3-SG-READY-MODBUS-8801.md`](FW3.3-SG-READY-MODBUS-8801.md) — **SUPERSEDED**, Redirect auf die V3.4-Referenz.
 - [`FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md`](FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md) — Warmlink/DTU Dispatcher Unit `0x63`.
 
 ## Begleitdatensätze
@@ -409,10 +414,11 @@ FW3.3-PUMPEN-100-PROZENT-OVERRIDES.md
 FW3.3-PUMPEN-DURCHFLUSS-KALIBRIERUNG-UPM4L.md
 FW3.3-PUMPEN-EXTERNER-DURCHFLUSS.md
 FW3.3-PUMPEN-PWM-REGELUNG.md
-FW3.3-SG-READY-MODBUS-8801.md
+FW3.3-SG-READY-MODBUS-8801.md                      # SUPERSEDED
 FW3.3-UNIT1-INVERTER-PROTOKOLL.md
 FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md
 FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md
+FW3.4-SG-READY-MODBUS-8801.md
 FW3.4-WW-HEIZEN-UMSCHALTUNG-VERDICHTER.md
 ```
 
@@ -498,6 +504,7 @@ modbus_v3.3_master_ranges.csv
 |---|---|
 | `FW3.3-HYD61-EXTERNER-DURCHFLUSS.md` | **SUPERSEDED** → Redirect auf `FW3.3-PUMPEN-EXTERNER-DURCHFLUSS.md` |
 | `FW3.3-MODBUS-KORREKTUREN-FOXAIR_CONTROL.md` | **SUPERSEDED** → Redirect auf finale Delta-/Audit-Dokumente |
+| `FW3.3-SG-READY-MODBUS-8801.md` | **SUPERSEDED** → Inhalt/Provenance in `FW3.4-SG-READY-MODBUS-8801.md` übernommen und um V3.4-`SG01=7` ergänzt |
 
 ## Bewusst getrennt gelassen
 
@@ -544,8 +551,8 @@ Diese alten Dateien bleiben als Analyseprovenance erhalten. Für neue Antworten 
 - elektrische Heizstäbe
 - Temperatursensoren / ADC
 - Fehler- und Schutz-State-Machines
-- Zeitprogramme / SG Ready / PV-Logik
+- Zeitprogramme
 - Display-/DWIN-Protokoll
 ```
 
-Bis eigene Spezialdokumente existieren, sollen solche Fragen zunächst über `FW3.3-ERKENNTNISSE.md`, Modbus-Katalog und thematisch benachbarte Dokumente geroutet werden.
+Für **SG Ready / PV-Logik** existiert inzwischen mit `FW3.4-SG-READY-MODBUS-8801.md` ein eigenes Spezialdokument. Für die übrigen noch offenen Kategorien sollen Fragen zunächst über `FW3.3-ERKENNTNISSE.md`, Modbus-Katalog und thematisch benachbarte Dokumente geroutet werden.
