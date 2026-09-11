@@ -20,5 +20,7 @@ Für den neuen V3.4-`SG01=7`-Pfad gilt inzwischen:
 
 - `8801=1` / Low PV: **live bestätigt am 11.09.2026**,
 - `8801=2` / Neutral: **live bestätigt am 11.09.2026**,
-- `8801=3` / High PV: statisch rekonstruiert, Live-Test noch offen,
-- Änderungen von `1336 / SG03` im aktiven Low-PV-State wirken grundsätzlich, zeigen live aber eine leichte, noch nicht quantifizierte Reaktionsverzögerung; ein klassischer 10-Minuten-Hold ist für reine `1336`-Änderungen statisch nicht erkennbar.
+- `8801=3` / High PV: **live bestätigt am 11.09.2026**,
+- damit sind alle drei vorgesehenen PV-Zustände praktisch bestätigt,
+- Änderungen von `1336 / SG03` im aktiven Low-PV-State wirken grundsätzlich, zeigen live aber eine leichte, noch nicht quantifizierte Reaktionsverzögerung; ein klassischer 10-Minuten-Hold ist für reine `1336`-Änderungen statisch nicht erkennbar,
+- die Hersteller-App zeigte beim virtuellen High-PV-Test einen falschen SG-Zustand; das passt sehr gut dazu, dass die Anzeige aus den physischen SG-Bits in `MAIN:2034` statt aus dem wirksamen Zustand `MAIN:2133` abgeleitet wird. Die genaue App-Implementierung ist noch nicht statisch bestätigt.
