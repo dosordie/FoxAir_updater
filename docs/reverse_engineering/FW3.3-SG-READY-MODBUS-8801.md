@@ -16,4 +16,9 @@ Die neue Datei erhält ausdrücklich die Provenance der V3.3-Live-Tests:
 - Reset dieses Holds bei Änderung von `MAIN:1334`,
 - Unterschied zwischen direktem User-/Mainboard-Modbus und Warmlink/LTE-Unit `0x63`.
 
-Neu hinzugekommen ist der in V3.4 statisch rekonstruierte `SG01=7`-Pfad mit `8801=1/2/3 -> Low PV / Neutral / High PV`. Die zugehörigen Realtests stehen noch aus.
+Für den neuen V3.4-`SG01=7`-Pfad gilt inzwischen:
+
+- `8801=1` / Low PV: **live bestätigt am 11.09.2026**,
+- `8801=2` / Neutral: **live bestätigt am 11.09.2026**,
+- `8801=3` / High PV: statisch rekonstruiert, Live-Test noch offen,
+- Änderungen von `1336 / SG03` im aktiven Low-PV-State wirken grundsätzlich, zeigen live aber eine leichte, noch nicht quantifizierte Reaktionsverzögerung; ein klassischer 10-Minuten-Hold ist für reine `1336`-Änderungen statisch nicht erkennbar.
