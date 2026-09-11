@@ -7,14 +7,17 @@ Dieses Dokument ist die aktuelle Referenz für die SG-Ready-/PV-Logik der Mainbo
 Es führt zwei getrennte virtuelle Steuerpfade zusammen:
 
 1. den bereits unter V3.3 statisch und am realen Gerät bestätigten klassischen SG-Ready-Modbuspfad mit `MAIN:1334 / SG01 = 3`,
-2. den in V3.4 statisch rekonstruierten neuen 3-stufigen PV-Pfad mit `MAIN:1334 / SG01 = 7`.
+2. den in V3.4 rekonstruierten neuen 3-stufigen PV-Pfad mit `MAIN:1334 / SG01 = 7`.
 
 Wichtig für die Beweislage:
 
 - Die Live-Tests des klassischen `SG01=3`-Pfads stammen vom 24.08.2026 unter V3.3.
-- Der neue `SG01=7`-Pfad ist aus V3.4 statisch rekonstruiert.
-- Die realen Funktionstests für `SG01=7` stehen noch aus.
-- Insbesondere ist noch offen, ob der neue interne State-6/7/8-Pfad denselben festen 10-Minuten-Hold verwendet wie der klassische State-1/2/3/4-Pfad.
+- Der neue `SG01=7`-Pfad wurde aus V3.4 statisch rekonstruiert.
+- Am 11.09.2026 wurden unter V3.4 `SG01=7` mit `8801=1` (Low PV) und `8801=2` (Neutral) am realen Gerät erfolgreich getestet.
+- `SG01=7` mit `8801=3` (High PV) ist noch nicht live getestet; der statische Codepfad spricht jedoch dafür, dass auch dieser Zustand vorhanden ist.
+- Bei Änderungen von `MAIN:1336 / SG03` im aktiven Low-PV-Zustand wurde live eine leichte Reaktionsverzögerung beobachtet. Diese ist noch nicht zeitlich vermessen.
+- Die statische V3.4-Analyse zeigt für reine `1336`-Änderungen keinen 10-Minuten-State-Hold; die beobachtete kurze Verzögerung ist daher getrennt von der klassischen 10-Minuten-Umschaltsperre zu behandeln.
+- Für Zustandswechsel innerhalb des neuen State-6/7/8-Pfads ist noch nicht abschließend bestätigt, ob derselbe feste 10-Minuten-Hold wie beim klassischen State-1/2/3/4-Pfad gilt.
 
 ---
 
@@ -52,13 +55,11 @@ MAIN:2133 = 1 / 2 / 3
 
 Der neue Pfad bildet damit nicht vier klassische SG-Kontaktzustände nach, sondern bietet eine kompakte 3-stufige PV-Führung.
 
-| `SG01 / 1334` | `8801` | interner State | `MAIN:2133` | Bedeutung |
-|---:|---:|---:|---:|---|
-| 7 | 1 | 6 | 1 | Low PV / Leistungsbegrenzung |
-| 7 | 2 | 7 | 2 | Neutral / Normalregelung |
-| 7 | 3 | 8 | 3 | High PV / Sollwertverschiebungen |
-
-**Status dieser Tabelle: V3.4 statisch rekonstruiert, Live-Test ausstehend.**
+| `SG01 / 1334` | `8801` | interner State | `MAIN:2133` | Bedeutung | Status |
+|---:|---:|---:|---:|---|---|
+| 7 | 1 | 6 | 1 | Low PV / Leistungsbegrenzung | **live bestätigt 11.09.2026** |
+| 7 | 2 | 7 | 2 | Neutral / Normalregelung | **live bestätigt 11.09.2026** |
+| 7 | 3 | 8 | 3 | High PV / Sollwertverschiebungen | **statisch rekonstruiert, Live-Test offen** |
 
 ---
 
@@ -93,6 +94,8 @@ Aus dem bisherigen Reverse Engineering sind folgende Werte funktional bekannt:
 1334 = 3  klassischer virtueller SG-Ready-Modus über 8801
 1334 = 7  neuer V3.4 3-Stufen-PV-Modus über 8801
 ```
+
+`1334=7` ist inzwischen nicht mehr nur ein statischer Firmwarebefund: Der Pfad wurde am 11.09.2026 mit `8801=1` und `8801=2` am realen Gerät erfolgreich benutzt.
 
 Die Werte zwischen `3` und `7` sind damit nicht automatisch frei oder bedeutungslos; sie sind in diesem Dokument lediglich nicht als Teil der beiden untersuchten virtuellen Pfade klassifiziert.
 
@@ -186,7 +189,7 @@ MAIN:1334 / SG01 = 7
 
 Dieser Pfad benutzt ebenfalls `ENG:CTRL:8801`, interpretiert dessen Werte aber nicht als die vier klassischen SG-Ready-Kontaktkombinationen.
 
-Stattdessen gilt statisch rekonstruiert:
+Statisch rekonstruiert gilt:
 
 ```text
 8801 = 1 -> interner State 6 -> Low PV
@@ -204,7 +207,29 @@ State 8 -> 2133 = 3
 
 Sinngemäß entspricht dies einer Ausgabe `internal_state - 5`.
 
-**Bewertung: V3.4 statisch rekonstruiert; Live-Verifikation steht aus.**
+## Live-Verifikation 11.09.2026
+
+Am realen Gerät mit Firmware V3.4 erfolgreich getestet:
+
+```text
+1334 = 7
+8801 = 1
+→ Low-PV-Pfad funktioniert
+
+1334 = 7
+8801 = 2
+→ Neutral-/Normalpfad funktioniert
+```
+
+Noch offen:
+
+```text
+1334 = 7
+8801 = 3
+→ High PV / State 8
+```
+
+Der State-8-Codepfad ist statisch vorhanden; die reale Wirkung ist noch nicht bestätigt.
 
 ---
 
@@ -238,7 +263,18 @@ wenig PV verfügbar
 
 Wichtig: Dieser Zustand ist damit funktional etwas anderes als der klassische Mode-1-Schlaf-/Sperrzustand des `SG01=3`-Pfads, obwohl `MAIN:2133` nach außen den Wert `1` meldet.
 
-**Live-Test offen:** Zu prüfen sind reale Verdichterfrequenz, Leistungsaufnahme, Startfreigabe und die genaue Einheit/Skalierung von `SG03` in diesem Pfad.
+## Live-Status
+
+`1334=7` mit `8801=1` wurde am 11.09.2026 erfolgreich am realen Gerät getestet.
+
+Bei Änderungen von `1336 / SG03` innerhalb des bereits aktiven Low-PV-Zustands wurde eine **leichte Reaktionsverzögerung** der tatsächlichen Wirkung beobachtet.
+
+Noch offen sind insbesondere:
+
+- exakte Einheit/Skalierung von `SG03`,
+- quantitative Beziehung zu Verdichterfrequenz bzw. Leistungsaufnahme,
+- genaue Dauer der beobachteten kurzen Reaktionsverzögerung,
+- welcher nachgelagerte Regler die Verzögerung verursacht.
 
 ---
 
@@ -263,7 +299,7 @@ normale WP-Regelung nach den regulären Sollwerten
 
 Damit eignet sich `8801=2` im neuen Pfad als Mittelstellung zwischen Low- und High-PV.
 
-**Bewertung: V3.4 statisch rekonstruiert; Live-Test ausstehend.**
+**Live bestätigt am 11.09.2026:** `1334=7` mit `8801=2` funktioniert am realen Gerät als Neutral-/Normalpfad.
 
 ---
 
@@ -298,7 +334,7 @@ Das ältere Display-/DWIN-Changelog passt dazu: Für `SG05`, `SG06` und `SG07` w
 
 `SG04 / MAIN:1337` wurde bei der bisherigen statischen Verfolgung des neuen State-6/7/8-Pfads nicht als wirksamer Parameter identifiziert.
 
-**Bewertung: V3.4 statisch rekonstruiert; reale Sollwert- und Betriebswirkung muss noch getestet werden.**
+**Bewertung: V3.4 statisch rekonstruiert; Live-Test von `8801=3` steht noch aus.**
 
 ---
 
@@ -322,6 +358,8 @@ PV-Überschuss:
 
 Damit kann eine externe Steuerung wie Node-RED die Wärmepumpe grob nach verfügbarer PV-Leistung führen, ohne laufend die normalen Heizungs- oder Warmwasser-Sollwerte selbst zu überschreiben.
 
+Für den Low-PV-Zustand ist besonders interessant, dass `1336 / SG03` innerhalb desselben Zustands verändert werden kann. Nach der statischen Analyse ist eine solche Parameteränderung nicht an den klassischen 10-Minuten-State-Hold gekoppelt. Im Live-Test wurde jedoch eine kurze Wirkungslatenz beobachtet, die bei dynamischer Nachführung berücksichtigt werden muss.
+
 Die internen Schutz-, Betriebs- und Sollwertlogiken der Wärmepumpe bleiben dabei grundsätzlich im Regelpfad.
 
 ---
@@ -340,11 +378,11 @@ Für den klassischen `SG01=3`-Pfad ist `MAIN:2133` als tatsächlich aktiver SG-M
 
 Für den neuen `SG01=7`-Pfad ergibt die V3.4-Analyse:
 
-| interner State | `2133` | neue Bedeutung |
-|---:|---:|---|
-| 6 | 1 | Low PV |
-| 7 | 2 | Neutral |
-| 8 | 3 | High PV |
+| interner State | `2133` | neue Bedeutung | Live-Status |
+|---:|---:|---|---|
+| 6 | 1 | Low PV | **bestätigt** |
+| 7 | 2 | Neutral | **bestätigt** |
+| 8 | 3 | High PV | **offen** |
 
 Damit ist `2133` kontextabhängig zu interpretieren. `2133=1` bedeutet bei `SG01=3` Schlafmodus, bei `SG01=7` dagegen Low-PV-Leistungsbegrenzung.
 
@@ -412,28 +450,73 @@ Dieser Mechanismus sollte nicht als Trick für schnelle normale Regelung missbra
 
 ---
 
-# 14. Offener Punkt: Hold-Verhalten des neuen SG01=7-Pfads
+# 14. Verzögerungen im neuen SG01=7-Pfad
 
-Für den neuen V3.4-State-6/7/8-Pfad ist derzeit **nicht abschließend bestätigt**, ob:
+Beim neuen V3.4-Pfad müssen zwei Arten von Änderungen klar getrennt werden:
+
+## 14.1 Änderung der Stufe über 8801
+
+Beispiele:
 
 ```text
-- derselbe 10-Minuten-Hold gilt,
+8801: 1 -> 2   Low PV -> Neutral
+8801: 2 -> 3   Neutral -> High PV
+8801: 3 -> 1   High PV -> Low PV
+```
+
+Für diese State-Wechsel ist derzeit noch nicht abschließend bestätigt, ob:
+
+```text
+- derselbe 10-Minuten-Hold wie beim klassischen Pfad gilt,
 - ein anderer Timer gilt,
 - oder die drei PV-Stufen ohne diesen klassischen Hold übernommen werden.
 ```
 
-Bis zum Live-Test darf die bekannte V3.3-Hold-Logik nicht ungeprüft auf `SG01=7` übertragen werden.
+`8801=1` und `8801=2` sind als Zustände live bestätigt; die genaue Umschaltzeit zwischen den Zuständen wurde beim bisherigen Test noch nicht systematisch vermessen.
 
-Für die geplanten Tests sollte daher bei jeder Änderung von `8801` gleichzeitig mindestens beobachtet werden:
+## 14.2 Änderung von 1336 / SG03 bei bereits aktivem Low PV
+
+Beispiel:
 
 ```text
-8801  Sollwert
-2133  übernommene / gemeldete Stufe
-Zeitpunkt der Änderung
-Zeitpunkt der tatsächlichen Wirkung
-Verdichterfrequenz / Leistungsaufnahme
-wirksame Heiz-/WW-Sollwerte
+1334 = 7
+8801 = 1
+→ Low PV bereits aktiv
+
+1336 wird geändert
+→ State 6 bleibt aktiv
+→ nur der Low-PV-Leistungswert ändert sich
 ```
+
+Die statische V3.4-Analyse zeigt hier **keinen Weg über den klassischen 10-Minuten-State-Hold**. `SG03/1336` wird im laufenden SG-/Regelpfad erneut eingelesen und im aktiven State 6 verwendet.
+
+Daraus folgt:
+
+> Eine reine Änderung von `1336` sollte nicht 10 Minuten auf eine neue State-Freigabe warten müssen.
+
+Im Realtest am 11.09.2026 wurde trotzdem eine **leichte Verzögerung zwischen Änderung von `1336` und sichtbarer Wirkung** festgestellt.
+
+Diese Verzögerung ist derzeit:
+
+```text
+vorhanden:       live beobachtet
+genaue Dauer:    noch nicht gemessen
+10-Minuten-Hold: nach statischer Analyse nein
+Ursache:         noch offen
+```
+
+Mögliche nachgelagerte Ursachen wie normale Leistungsregelung, Verdichterfrequenzrampe oder weitere Filter-/Zeitglieder sind plausibel, aber derzeit **nicht als Ursache bestätigt**.
+
+Für eine dynamische PV-Regelung sollte `1336` daher nicht im Sekundenraster aggressiv nachgeregelt werden, bevor die reale Reaktionszeit vermessen ist.
+
+## 14.3 Aktueller Verzögerungsstatus kompakt
+
+| Änderung | bekannte Verzögerung | Status |
+|---|---|---|
+| klassischer `SG01=3`, neuer `8801`-State | fester 10-Minuten-Hold | **V3.3 Binary + live bestätigt** |
+| Änderung `1334` im klassischen Pfad | setzt Hold zurück | **V3.3 Binary + live bestätigt** |
+| neuer `SG01=7`, Wechsel `8801=1/2/3` | noch nicht systematisch vermessen | **offen** |
+| `1336/SG03` ändern, während `SG01=7` + `8801=1` aktiv ist | kurze Wirkungslatenz beobachtet; keine 10 Minuten erwartet | **live beobachtet, Dauer offen** |
 
 ---
 
@@ -494,22 +577,21 @@ Details zum separaten Warmlink-Pfad:
 
 ---
 
-# 17. Empfohlene Live-Testmatrix für SG01 = 7
+# 17. Live-Testmatrix für SG01 = 7
 
-Die folgenden Tests sind noch ausstehend und sollten möglichst mit Zeitstempel und Log der relevanten Register durchgeführt werden.
-
-| Test | Einstellung | Erwartung aus V3.4-Analyse | zu beobachten |
+| Test | Einstellung | Erwartung aus V3.4-Analyse | Status / zu beobachten |
 |---|---|---|---|
-| Neutral | `1334=7`, `8801=2` | normale Regelung | `2133=2`, keine SG-Offsets |
-| Low PV | `1334=7`, `8801=1` | Leistungsbegrenzung über `1336/SG03` | `2133=1`, Hz/Watt-Reaktion |
-| High PV | `1334=7`, `8801=3` | SG05/06/07 aktiv | `2133=3`, Sollwertverschiebungen |
-| Low→Neutral | `1→2` | Zustandswechsel | Übernahmezeit / Hold |
-| Neutral→High | `2→3` | Zustandswechsel | Übernahmezeit / Hold |
-| High→Low | `3→1` | Zustandswechsel | Übernahmezeit / Hold |
+| Neutral | `1334=7`, `8801=2` | normale Regelung | **live bestätigt 11.09.2026** |
+| Low PV | `1334=7`, `8801=1` | Leistungsbegrenzung über `1336/SG03` | **live bestätigt 11.09.2026** |
+| High PV | `1334=7`, `8801=3` | SG05/06/07 aktiv | **noch offen** |
+| `1336` im Low-PV-State ändern | `1334=7`, `8801=1`, nur `1336` ändern | Leistungswert wird ohne State-Wechsel nachgeführt | **Wirkung bestätigt; leichte Verzögerung beobachtet, Dauer vermessen** |
+| Low→Neutral | `1→2` | Zustandswechsel | Übernahmezeit / möglicher Hold noch vermessen |
+| Neutral→High | `2→3` | Zustandswechsel | Übernahmezeit / möglicher Hold |
+| High→Low | `3→1` | Zustandswechsel | Übernahmezeit / möglicher Hold |
 | Quellenwechsel | `1334: 7→0→7` | interner Reset möglich | Hold-/State-Verhalten |
 | Neustart | Reboot mit `1334=7` | Persistenz offen | 1334/8801/2133 nach Boot |
 
-Zusätzlich sollten für Low PV verschiedene `SG03`-Werte getestet werden, um Skalierung, Grenzwerte und die tatsächliche Leistungsbegrenzung zu bestimmen.
+Zusätzlich sollten für Low PV verschiedene `SG03`-Werte getestet werden, um Skalierung, Grenzwerte, tatsächliche Leistungsbegrenzung und die reale Reaktionszeit quantitativ zu bestimmen.
 
 Für High PV sollten `SG05`, `SG06` und `SG07` zunächst mit kleinen, eindeutig erkennbaren Werten getestet werden.
 
@@ -532,9 +614,9 @@ Dabei den bestätigten 10-Minuten-Hold berücksichtigen.
 ```text
 MAIN:1334 = 7
 
-8801 = 1 -> Low PV
-8801 = 2 -> Neutral
-8801 = 3 -> High PV
+8801 = 1 -> Low PV       [live bestätigt]
+8801 = 2 -> Neutral      [live bestätigt]
+8801 = 3 -> High PV      [Live-Test offen]
 
 1336 / SG03 -> Low-PV-Leistungswert
 1338 / SG05 -> High-PV-WW-Anhebung
@@ -544,7 +626,14 @@ MAIN:1334 = 7
 2133 = 1 / 2 / 3 -> gemeldete Stufe
 ```
 
-Bis zum Abschluss der Live-Tests sollte eine externe Automatisierung den neuen Pfad als experimentell behandeln und insbesondere nicht voraussetzen, dass Umschaltungen sofort oder exakt wie im klassischen Pfad erfolgen.
+Für eine PV-Regelung bietet es sich an, den State relativ selten über `8801` zu wechseln und innerhalb des aktiven Low-PV-State den Leistungswert über `1336` nachzuführen.
+
+Dabei beachten:
+
+- Für reine `1336`-Änderungen ist kein 10-Minuten-State-Hold erkennbar.
+- Eine kurze reale Wirkungslatenz wurde jedoch beobachtet.
+- Vor einer schnellen geschlossenen Regelung sollte diese Latenz zunächst gemessen werden.
+- Für State-Wechsel über `8801` im neuen Pfad ist das genaue Hold-/Timing-Verhalten noch offen.
 
 ---
 
@@ -569,9 +658,18 @@ wenn SG01 = 3:
     1..4 = klassische SG-Ready-Modi
 
 wenn SG01 = 7:
-    1 = Low PV
-    2 = Neutral
-    3 = High PV
+    1 = Low PV      [live bestätigt]
+    2 = Neutral     [live bestätigt]
+    3 = High PV     [statisch bestätigt, Live-Test offen]
+```
+
+Zusätzlicher Hinweis für `1336 / SG03`:
+
+```text
+bei SG01=7 und 8801=1:
+    dynamischer Low-PV-Leistungswert
+    kein klassischer 10-Minuten-Hold für reine Parameteränderung erkennbar
+    kurze reale Wirkungslatenz beobachtet
 ```
 
 Die UI sollte deshalb `8801` nicht ohne Kontext von `1334` beschriften.
@@ -587,16 +685,20 @@ Die UI sollte deshalb `8801` nicht ohne Kontext von `1334` beschriften.
 | `8801` direkter User-Modbus R/W | **V3.3 live bestätigt** |
 | klassischer 10-Minuten-Hold | **V3.3 Binary bestätigt + live konsistent** |
 | Änderung von `1334` resettiert klassischen Hold | **V3.3 Binary + live bestätigt** |
-| `1334=7` neuer V3.4-PV-Pfad | **V3.4 statisch rekonstruiert** |
-| `8801=1/2/3 -> State 6/7/8` | **V3.4 statisch rekonstruiert** |
-| `State 6/7/8 -> 2133=1/2/3` | **V3.4 statisch rekonstruiert** |
-| Low PV nutzt `SG03/1336` | **V3.4 statisch rekonstruiert** |
-| Neutral = Normalregelung | **V3.4 statisch rekonstruiert** |
-| High PV nutzt `SG05/1338`, `SG06/1339`, `SG07/1340` | **V3.4 statisch rekonstruiert** |
+| `1334=7` neuer V3.4-PV-Pfad grundsätzlich | **V3.4 statisch + live bestätigt** |
+| `8801=1 -> State 6 / Low PV` | **V3.4 statisch + live bestätigt 11.09.2026** |
+| `8801=2 -> State 7 / Neutral` | **V3.4 statisch + live bestätigt 11.09.2026** |
+| `8801=3 -> State 8 / High PV` | **V3.4 statisch rekonstruiert; Live-Test offen** |
+| `State 6/7/8 -> 2133=1/2/3` | **States 6/7 live bestätigt; State 8 offen** |
+| Low PV nutzt `SG03/1336` | **V3.4 statisch + live bestätigt** |
+| `1336` während Low PV dynamisch änderbar | **live bestätigt** |
+| 10-Minuten-Hold bei reiner `1336`-Änderung | **statisch nicht erkennbar / nicht erwartet** |
+| kurze Wirkungslatenz nach `1336`-Änderung | **live beobachtet; Dauer/Ursache offen** |
+| Neutral = Normalregelung | **V3.4 statisch + live bestätigt** |
+| High PV nutzt `SG05/1338`, `SG06/1339`, `SG07/1340` | **V3.4 statisch rekonstruiert; Live-Test offen** |
 | `SG04/1337` im neuen Pfad wirksam | **bisher nicht nachgewiesen** |
-| 10-Minuten-Hold auch bei `SG01=7` | **offen / Live-Test ausstehend** |
-| reale Low-/High-PV-Wirkung | **Live-Test ausstehend** |
+| 10-Minuten-Hold bei State-Wechseln unter `SG01=7` | **offen / noch vermessen** |
 | `2034` als physischer Eingangsrückkanal | **für klassischen Pfad bestätigt; für neuen Pfad als Rohstatus einzuordnen** |
 | Warmlink `0x63` als direkter Ersatz für User-Modbus-8801 | **V3.3 nicht bestätigt / normaler Dispatcher unterstützt 8801 nicht** |
 
-Damit ist der klassische virtuelle SG-Ready-Pfad als belastbare Referenz erhalten und der neue V3.4-`SG01=7`-Pfad so dokumentiert, dass die anstehenden Realtests gezielt die noch offenen Punkte schließen können.
+Damit ist der neue V3.4-`SG01=7`-Pfad inzwischen teilweise live geschlossen: Low PV und Neutral funktionieren am realen Gerät. Für High PV sowie das genaue Timing der State-Wechsel und die kurze Reaktionslatenz von `1336` stehen noch gezielte Messungen aus.
