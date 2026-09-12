@@ -14,6 +14,7 @@
 set -u
 
 PROGRAM_NAME=${0##*/}
+SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || printf '%s\n' "$0")
 USB_VENDOR_ID="1e0e"
 USB_PRODUCT_ID="9001"
 USB_INTERFACE_NUM="04"
@@ -25,10 +26,15 @@ HEARTBEAT_INTERVAL=300
 DEFAULT_LOG_DIR="${HOME:-.}/FoxAir_Logs"
 LOG_DIR="${LOG_DIR:-$DEFAULT_LOG_DIR}"
 NO_RESTART=0
+RUN_MODE="foreground"
+DAEMON_MODE=0
 ADB_SELECTED_SERIAL=""
 LOGGER_PID=""
 HEARTBEAT_PID=""
-READY_FILE="${TMPDIR:-/tmp}/phnix_debug_logger.$$.${RANDOM}.ready"
+READY_FILE=""
+BACKGROUND_READY_FILE=""
+PID_FILE=""
+STATUS_FILE=""
 PARENT_CLEANED=0
 
 OTA_MARKERS=(
@@ -48,11 +54,21 @@ PHNIX Debug-Dauerlogger
 Verwendung:
   ./$PROGRAM_NAME
   ./$PROGRAM_NAME --no-restart
+  ./$PROGRAM_NAME --background [--no-restart]
+  ./$PROGRAM_NAME --follow
+  ./$PROGRAM_NAME --status
+  ./$PROGRAM_NAME --stop
   ./$PROGRAM_NAME --help
 
 Optionen:
   --no-restart   ADB-Verbindung prüfen, phnixIot4G aber NICHT neu starten;
                  serielles Logging läuft trotzdem.
+  --background   Logger vom Terminal entkoppelt im Hintergrund starten und
+                 anschließend die Live-Statusausgabe anzeigen.
+  --follow       Live-Status eines bereits laufenden Hintergrund-Loggers anzeigen.
+                 Ctrl+C bzw. Schließen des Terminals beendet nur die Anzeige.
+  --status       Einmaligen Status des Hintergrund-Loggers anzeigen.
+  --stop         Nur den Hintergrund-Logger beenden; phnixIot4G bleibt unberührt.
   --help         Diese Hilfe anzeigen.
 
 Umgebungsvariablen:
@@ -142,14 +158,81 @@ check_dependencies() {
     done
 }
 
-prepare_log_dir() {
+resolve_log_dir() {
     umask 077
     mkdir -p -- "$LOG_DIR" || { error "Logverzeichnis konnte nicht angelegt werden: $LOG_DIR"; return 1; }
     chmod 700 -- "$LOG_DIR" 2>/dev/null || true
     LOG_DIR=$(cd -- "$LOG_DIR" 2>/dev/null && pwd -P) || return 1
+    PID_FILE="$LOG_DIR/phnix_logger.pid"
+    STATUS_FILE="$LOG_DIR/logger_status.log"
+    BACKGROUND_READY_FILE="$LOG_DIR/.phnix_debug_logger.ready"
+}
+
+prepare_log_dir() {
+    resolve_log_dir || return 1
     say "Logverzeichnis: $LOG_DIR"
     warn "PHNIX-Debuglogs können IMEI/ICCID, ProductKey, DeviceSecret und andere Kennungen enthalten."
     warn "Rohlogs vor einer Veröffentlichung immer manuell prüfen."
+}
+
+read_background_pid() {
+    BG_PID=""
+    BG_SCRIPT=""
+    [ -r "$PID_FILE" ] || return 1
+    {
+        IFS= read -r BG_PID || BG_PID=""
+        IFS= read -r BG_SCRIPT || BG_SCRIPT=""
+    } < "$PID_FILE"
+    [[ "$BG_PID" =~ ^[0-9]+$ ]] || return 1
+    return 0
+}
+
+pid_matches_background_daemon() {
+    local pid="$1" expected_script="$2" cmdline=""
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+    [ -n "$cmdline" ] || return 1
+    case "$cmdline" in
+        *"$expected_script"*"--daemon"*) return 0 ;;
+    esac
+    return 1
+}
+
+background_state() {
+    # 0 = valid daemon running, 1 = no/stale daemon, 2 = live PID but not our daemon
+    local BG_PID="" BG_SCRIPT=""
+    if ! read_background_pid; then
+        rm -f -- "$PID_FILE" 2>/dev/null || true
+        return 1
+    fi
+    if ! kill -0 "$BG_PID" 2>/dev/null; then
+        rm -f -- "$PID_FILE" "$BACKGROUND_READY_FILE" 2>/dev/null || true
+        return 1
+    fi
+    if [ -z "$BG_SCRIPT" ] || ! pid_matches_background_daemon "$BG_PID" "$BG_SCRIPT"; then
+        return 2
+    fi
+    return 0
+}
+
+write_daemon_pid_file() {
+    local tmp="$PID_FILE.tmp.$$"
+    printf '%s\n%s\n' "$$" "$SCRIPT_PATH" > "$tmp" || return 1
+    mv -f -- "$tmp" "$PID_FILE" || return 1
+}
+
+remove_own_daemon_pid_file() {
+    local pid="" script=""
+    [ "$DAEMON_MODE" -eq 1 ] || return 0
+    if [ -r "$PID_FILE" ]; then
+        {
+            IFS= read -r pid || pid=""
+            IFS= read -r script || script=""
+        } < "$PID_FILE"
+        if [ "$pid" = "$$" ] && [ "$script" = "$SCRIPT_PATH" ]; then
+            rm -f -- "$PID_FILE"
+        fi
+    fi
 }
 
 adb_run() {
@@ -421,10 +504,11 @@ restart_phnix_service_once() {
 }
 
 status_heartbeat() {
-    local stamp day logfile port lines
+    local stamp day logfile port lines interval="$HEARTBEAT_INTERVAL"
+    [ "$DAEMON_MODE" -eq 0 ] || interval=60
     trap 'exit 0' INT TERM
     while :; do
-        sleep "$HEARTBEAT_INTERVAL" || exit 0
+        sleep "$interval" || exit 0
         stamp=$(date '+%Y-%m-%d %H:%M:%S'); day=${stamp%% *}; logfile="$LOG_DIR/phnix_$day.log"
         port=""; lines=0
         [ ! -s "$READY_FILE" ] || { IFS= read -r port < "$READY_FILE" || port=""; }
@@ -449,29 +533,38 @@ parent_cleanup() {
     if [ -n "$LOGGER_PID" ] && kill -0 "$LOGGER_PID" 2>/dev/null; then
         kill -TERM "$LOGGER_PID" 2>/dev/null || true; wait "$LOGGER_PID" 2>/dev/null || true
     fi
-    rm -f -- "$READY_FILE"
+    [ -z "$READY_FILE" ] || rm -f -- "$READY_FILE"
+    remove_own_daemon_pid_file
 }
 
 handle_stop() {
     say ""
-    say "Beende Logger. Am LTE-Modem wird nichts verändert."
+    if [ "$DAEMON_MODE" -eq 1 ]; then
+        say "Hintergrund-Logger wird beendet. Am LTE-Modem wird nichts verändert."
+    else
+        say "Beende Logger. Am LTE-Modem wird nichts verändert."
+    fi
     parent_cleanup
     exit 0
 }
 
-main() {
-    local arg normalized adb_ok=0
-    for arg in "$@"; do
-        normalized=${arg,,}
-        case "$normalized" in
-            --help|-h) usage; return 0 ;;
-            --no-restart|--norestart) NO_RESTART=1 ;;
-            *) error "Unbekannte Option: $arg"; usage >&2; return 2 ;;
-        esac
-    done
+run_logger_core() {
+    local adb_ok=0
 
     check_dependencies || return 3
     prepare_log_dir || return 4
+
+    if [ "$DAEMON_MODE" -eq 1 ]; then
+        READY_FILE="$BACKGROUND_READY_FILE"
+        rm -f -- "$READY_FILE"
+        write_daemon_pid_file || { error "PID-Datei konnte nicht geschrieben werden: $PID_FILE"; return 7; }
+        say "Hintergrund-Logger PID: $$"
+    else
+        READY_FILE="${TMPDIR:-/tmp}/phnix_debug_logger.$$.${RANDOM}.ready"
+    fi
+
+    trap handle_stop INT TERM
+    trap parent_cleanup EXIT
 
     if select_adb_device; then
         adb_ok=1
@@ -496,11 +589,226 @@ main() {
         restart_phnix_service_once || true
     fi
 
-    say "Dauerlogging aktiv. Lebenszeichen alle 5 Minuten. Beenden mit Ctrl+C."
+    if [ "$DAEMON_MODE" -eq 1 ]; then
+        say "Dauerlogging aktiv. Hintergrundbetrieb ist vom Terminal entkoppelt."
+        say "Live-Status: Ereignisse sofort, Lebenszeichen alle 60 Sekunden."
+    else
+        say "Dauerlogging aktiv. Lebenszeichen alle 5 Minuten. Beenden mit Ctrl+C."
+    fi
     status_heartbeat & HEARTBEAT_PID=$!
     wait "$LOGGER_PID"
 }
 
-trap handle_stop INT TERM
-trap parent_cleanup EXIT
+show_background_status() {
+    local rc pid="" port="" day logfile lines=0 last=""
+    resolve_log_dir || return 4
+
+    background_state
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+        error "PID-Datei zeigt auf einen laufenden fremden Prozess. Aus Sicherheitsgründen keine Aktion."
+        return 8
+    fi
+    if [ "$rc" -ne 0 ]; then
+        say "PHNIX Hintergrund-Logger läuft nicht."
+        [ ! -f "$STATUS_FILE" ] || { last=$(tail -n 1 "$STATUS_FILE" 2>/dev/null || true); [ -z "$last" ] || say "Letzter Status: $last"; }
+        return 1
+    fi
+
+    read_background_pid || return 1
+    pid=$BG_PID
+    [ ! -s "$BACKGROUND_READY_FILE" ] || { IFS= read -r port < "$BACKGROUND_READY_FILE" || port=""; }
+    day=$(date +%F); logfile="$LOG_DIR/phnix_$day.log"
+    if [ -f "$logfile" ]; then
+        lines=$(wc -l < "$logfile" 2>/dev/null || printf '?\n'); lines=${lines//[[:space:]]/}; [ -n "$lines" ] || lines="?"
+    fi
+
+    say "PHNIX Hintergrund-Logger läuft."
+    say "PID: $pid"
+    if [ -n "$port" ]; then say "Debugport: $port"; else say "Debugport: getrennt / noch nicht bereit"; fi
+    say "Logdatei: ${logfile##*/}"
+    say "Zeilen heute: $lines"
+    [ ! -f "$STATUS_FILE" ] || { last=$(tail -n 1 "$STATUS_FILE" 2>/dev/null || true); [ -z "$last" ] || say "Letzter Status: $last"; }
+    return 0
+}
+
+follow_background_status() {
+    local rc viewer_interrupted=0
+    resolve_log_dir || return 4
+
+    background_state
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+        error "PID-Datei zeigt auf einen laufenden fremden Prozess. Live-Anzeige wird nicht gestartet."
+        return 8
+    fi
+    if [ "$rc" -ne 0 ]; then
+        error "Kein laufender PHNIX Hintergrund-Logger gefunden."
+        return 1
+    fi
+
+    touch "$STATUS_FILE" || { error "Statusdatei kann nicht geöffnet werden: $STATUS_FILE"; return 4; }
+    say ""
+    say "Live-Status des PHNIX Loggers (Ctrl+C beendet NUR diese Anzeige)."
+    say "Der Hintergrund-Logger läuft auch nach Schließen dieses Terminals weiter."
+    say ""
+
+    trap 'viewer_interrupted=1' INT TERM
+    tail -n 20 -F "$STATUS_FILE"
+    rc=$?
+    trap - INT TERM
+
+    if [ "$viewer_interrupted" -eq 1 ] || [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then
+        say ""
+        say "Live-Anzeige beendet. Hintergrund-Logger läuft weiter."
+        return 0
+    fi
+    return "$rc"
+}
+
+stop_background_logger() {
+    local rc pid="" i
+    resolve_log_dir || return 4
+
+    background_state
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+        error "PID-Datei zeigt auf einen laufenden fremden Prozess. Es wird NICHTS beendet."
+        return 8
+    fi
+    if [ "$rc" -ne 0 ]; then
+        say "PHNIX Hintergrund-Logger läuft nicht."
+        return 0
+    fi
+
+    read_background_pid || return 1
+    pid=$BG_PID
+    say "Beende PHNIX Hintergrund-Logger PID $pid ..."
+    kill -TERM "$pid" 2>/dev/null || { error "TERM an Logger PID $pid fehlgeschlagen."; return 1; }
+
+    for i in $(seq 1 50); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f -- "$PID_FILE" "$BACKGROUND_READY_FILE" 2>/dev/null || true
+            say "Hintergrund-Logger beendet. phnixIot4G wurde nicht verändert."
+            return 0
+        fi
+        sleep 0.2
+    done
+
+    warn "Logger PID $pid läuft nach 10 Sekunden noch. Kein SIGKILL wird verwendet."
+    return 1
+}
+
+start_background_logger() {
+    local rc launcher_pid="" i
+    local -a daemon_args=("--daemon")
+
+    resolve_log_dir || return 4
+    background_state
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        read_background_pid || true
+        say "PHNIX Hintergrund-Logger läuft bereits (PID: ${BG_PID:-?})."
+        follow_background_status
+        return $?
+    fi
+    if [ "$rc" -eq 2 ]; then
+        error "PID-Datei zeigt auf einen laufenden fremden Prozess. Neuer Logger wird nicht gestartet."
+        return 8
+    fi
+
+    command -v nohup >/dev/null 2>&1 || { error "'nohup' fehlt (Paket coreutils)."; return 3; }
+    command -v tail >/dev/null 2>&1 || { error "'tail' fehlt (Paket coreutils)."; return 3; }
+
+    [ "$NO_RESTART" -eq 0 ] || daemon_args+=("--no-restart")
+    rm -f -- "$PID_FILE" "$BACKGROUND_READY_FILE"
+    : > "$STATUS_FILE" || { error "Statusdatei kann nicht geschrieben werden: $STATUS_FILE"; return 4; }
+
+    if command -v setsid >/dev/null 2>&1; then
+        nohup setsid "$SCRIPT_PATH" "${daemon_args[@]}" >> "$STATUS_FILE" 2>&1 </dev/null &
+    else
+        nohup "$SCRIPT_PATH" "${daemon_args[@]}" >> "$STATUS_FILE" 2>&1 </dev/null &
+    fi
+    launcher_pid=$!
+
+    for i in $(seq 1 50); do
+        if background_state; then
+            read_background_pid || true
+            say "PHNIX Logger wurde im Hintergrund gestartet. PID: ${BG_PID:-$launcher_pid}"
+            say "Statusdatei: $STATUS_FILE"
+            say "Das Terminal darf geschlossen werden; der Logger läuft weiter."
+            follow_background_status
+            return $?
+        fi
+        sleep 0.2
+    done
+
+    error "Hintergrund-Logger hat innerhalb von 10 Sekunden keine gültige PID-Datei angelegt."
+    [ ! -f "$STATUS_FILE" ] || tail -n 30 "$STATUS_FILE" >&2
+    return 1
+}
+
+parse_args() {
+    local arg normalized action_seen=0
+    for arg in "$@"; do
+        normalized=${arg,,}
+        case "$normalized" in
+            --help|-h)
+                RUN_MODE="help"
+                ;;
+            --no-restart|--norestart)
+                NO_RESTART=1
+                ;;
+            --background)
+                [ "$action_seen" -eq 0 ] || { error "Nur eine Aktionsoption gleichzeitig verwenden."; return 2; }
+                RUN_MODE="background"; action_seen=1
+                ;;
+            --follow)
+                [ "$action_seen" -eq 0 ] || { error "Nur eine Aktionsoption gleichzeitig verwenden."; return 2; }
+                RUN_MODE="follow"; action_seen=1
+                ;;
+            --status)
+                [ "$action_seen" -eq 0 ] || { error "Nur eine Aktionsoption gleichzeitig verwenden."; return 2; }
+                RUN_MODE="status"; action_seen=1
+                ;;
+            --stop)
+                [ "$action_seen" -eq 0 ] || { error "Nur eine Aktionsoption gleichzeitig verwenden."; return 2; }
+                RUN_MODE="stop"; action_seen=1
+                ;;
+            --daemon)
+                [ "$action_seen" -eq 0 ] || { error "Nur eine Aktionsoption gleichzeitig verwenden."; return 2; }
+                RUN_MODE="daemon"; DAEMON_MODE=1; action_seen=1
+                ;;
+            *)
+                error "Unbekannte Option: $arg"
+                return 2
+                ;;
+        esac
+    done
+
+    case "$RUN_MODE" in
+        follow|status|stop)
+            if [ "$NO_RESTART" -eq 1 ]; then
+                warn "--no-restart hat bei --$RUN_MODE keine Wirkung und wird ignoriert."
+            fi
+            ;;
+    esac
+    return 0
+}
+
+main() {
+    parse_args "$@" || { usage >&2; return 2; }
+
+    case "$RUN_MODE" in
+        help) usage ;;
+        foreground) run_logger_core ;;
+        daemon) run_logger_core ;;
+        background) start_background_logger ;;
+        follow) follow_background_status ;;
+        status) show_background_status ;;
+        stop) stop_background_logger ;;
+        *) error "Interner Fehler: unbekannter Modus '$RUN_MODE'"; return 2 ;;
+    esac
+}
+
 main "$@"
