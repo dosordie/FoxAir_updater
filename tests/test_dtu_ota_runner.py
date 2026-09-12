@@ -370,6 +370,14 @@ class DtuOtaPackageTests(unittest.TestCase):
             "fileSize": 287598,
             "otaFileDownloadAddr": "http://127.0.0.1:8081/phnixIot_device_OTA",
         })
+        translated = qemu_work_lab_backend._scenario_to_lab_env(
+            "mqtt-debug", "ota-update"
+        )
+        self.assertIsNotNone(translated)
+        environment, label = translated
+        self.assertEqual(environment["MQTT_DEBUG_MODE"], "1")
+        self.assertNotIn("AUTONOMOUS_DTU_RUNNER", environment)
+        self.assertEqual(label, "foxair-adb-mqtt-debug-ota-update")
 
     def test_explicit_vm_reset_removes_autonomous_runner_state(self):
         with tempfile.TemporaryDirectory() as temp:

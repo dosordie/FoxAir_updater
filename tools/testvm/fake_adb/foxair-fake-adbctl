@@ -59,7 +59,8 @@ Diagnose und simulierte Eingaben:
   modem-log on|off|status        TCP 5039 persistent aktivieren/stummschalten
                                  Port bleibt bei off erreichbar; keine spätere Datenwiedergabe
   mqtt-send status-request       während eines OTA einen FC03-Statusread per MQTT senden
-  mqtt-send ota-update           bekanntes V3.3-OTA_GET/0033 mit lokaler URL einmalig senden
+  mqtt-send ota-update           Originaldienst ohne GDB-Stopp starten und nach bestätigter
+                                 OTA_GET-Subscription V3.3/0033 einmalig senden
                                  Port 5039 zeigt nur die echte phnixIot4G-Debugausgabe
   mqtt-send raw HEX              rohe MQTT-/user/get-Nutzdaten einmalig senden (nur Lab)
   logs                           Fake-ADB-Log verfolgen

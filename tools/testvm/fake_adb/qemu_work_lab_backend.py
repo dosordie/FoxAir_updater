@@ -379,6 +379,13 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
             return None
         return env, label
 
+    if kind == "mqtt-debug" and value == "ota-update":
+        # Run the original service normally, without the autonomous OTA
+        # runner's initial QEMU/GDB stop. Readiness is confirmed from its real
+        # OTA_GET subscription before the one-shot is queued.
+        env["MQTT_DEBUG_MODE"] = "1"
+        return env, "foxair-adb-mqtt-debug-ota-update"
+
     return None
 
 
@@ -493,6 +500,22 @@ def _start_runner_impl(
             candidates = list((lab_root() / "logs").glob(f"{label}-*"))
             if candidates:
                 run_dir = max(candidates, key=lambda path: path.stat().st_mtime_ns)
+                if extra_env.get("MQTT_DEBUG_MODE") == "1":
+                    try:
+                        mqtt_text = (run_dir / "mqtt-tls-transcript.jsonl").read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                    except OSError:
+                        mqtt_text = ""
+                    if '"type": "SUBSCRIBE"' in mqtt_text and "/user/OTA_GET" in mqtt_text:
+                        meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
+                        meta["run_dir"] = str(run_dir)
+                        meta["mqtt_debug_ready"] = True
+                        _runner_meta().write_text(
+                            json.dumps(meta, indent=2, sort_keys=True) + "\n",
+                            encoding="utf-8",
+                        )
+                        return True, "Originaldienst läuft und OTA_GET ist abonniert"
                 if extra_env.get("AUTONOMOUS_DTU_RUNNER") == "1":
                     meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
                     meta["run_dir"] = str(run_dir)
@@ -755,6 +778,7 @@ def ota_update_debug_payload() -> bytes:
 
 def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
     """Queue one cloud-to-device MQTT message in the active isolated lab."""
+    preparation = ""
     if kind == "status-request":
         topic = "/a1LABTEST01/LABDEVICE001/user/get"
         payload = DEVICE_STATUS_REQUEST_HEX
@@ -764,6 +788,9 @@ def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
             return False, "mqtt-send ota-update erwartet keine weiteren Argumente"
         if root_path("/data/foxair_ota_runner/active.lock").exists():
             return False, "aktiver autonomer OTA-Run blockiert den MQTT-One-Shot-Test"
+        ok, preparation = _start_runner("mqtt-debug", "ota-update")
+        if not ok:
+            return False, preparation
         if len(service_pids()) != 1:
             return False, "MQTT-One-Shot erfordert genau eine phnixIot4G-Instanz"
         topic = "/a1LABTEST01/LABDEVICE001/user/OTA_GET"
@@ -795,7 +822,8 @@ def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
             reply = client.recv(4096).decode("utf-8", errors="replace").strip()
     except OSError as exc:
         return False, f"MQTT-Nachricht konnte nicht eingereiht werden: {exc}"
-    return True, reply or f"MQTT-Nachricht {label} eingereiht"
+    queued = reply or f"MQTT-Nachricht {label} eingereiht"
+    return True, f"{preparation}; {queued}" if preparation else queued
 
 
 DEVICE_STATUS_REQUEST_HEX = "630307d1005a9cfe"

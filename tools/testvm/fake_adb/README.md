@@ -194,7 +194,9 @@ Der lokale MQTT-Stub liefert dabei den bekannten Mainboard-Code `0033` auf
 `/user/OTA_GET` mit Softwarecode `82400644`, Version `V3.3`, SSID `0063` und
 der rein lokalen URL `http://127.0.0.1:8081/phnixIot_device_OTA`. Es werden
 keine Debugzeilen vorgetäuscht: TCP `5039` enthält ausschließlich die Ausgabe
-des originalen Dienstes in QEMU. Der lokale URL-Endpunkt muss für diesen
+des originalen Dienstes in QEMU. Der Befehl ersetzt den wartenden GDB-Lauf
+durch einen normalen Originaldienst und wartet auf dessen echte
+`OTA_GET`-Subscription, bevor er die Nachricht zustellt. Der lokale URL-Endpunkt muss für diesen
 reinen Sichtbarkeitstest nicht erreichbar sein; ein Firmwaredownload oder
 erfolgreicher OTA-Abschluss wird damit nicht behauptet.
 
