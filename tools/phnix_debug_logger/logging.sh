@@ -89,7 +89,7 @@ Optionen:
 Zusätzliche Dateien:
   phnix_YYYY-MM-DD.log   vollständiger Roh-Debuglog mit Zeitstempeln
   phnix_ota_urls.log     deduplizierte erkannte Firmware-Download-URLs + Metadaten
-  phnix_ota_state        letzter erkannter OTA-Zustand für --status
+  phnix_ota_state       letzter erkannter OTA-Zustand für --status
   logger_status.log      Live-/Heartbeat-Ausgabe für --follow
 
 Umgebungsvariablen:
@@ -193,7 +193,18 @@ resolve_log_dir() {
 
 prepare_log_dir() {
     resolve_log_dir || return 1
+
+    # The OTA URL may only be visible once during a real update. Create and
+    # verify the dedicated file before touching ADB or the serial port so a
+    # permissions/filesystem problem is detected at startup instead of during OTA.
+    if ! : >> "$OTA_URL_LOG"; then
+        error "OTA-URL-Log kann nicht angelegt/beschrieben werden: $OTA_URL_LOG"
+        return 1
+    fi
+    chmod 600 -- "$OTA_URL_LOG" 2>/dev/null || true
+
     say "Logverzeichnis: $LOG_DIR"
+    say "OTA-URL-Log bereit: $OTA_URL_LOG"
     warn "PHNIX-Debuglogs können IMEI/ICCID, ProductKey, DeviceSecret und andere Kennungen enthalten."
     warn "Firmware-Download-URLs können ebenfalls sensible bzw. temporär gültige Parameter enthalten."
     warn "Rohlogs und URL-Log vor einer Veröffentlichung immer manuell prüfen."
@@ -223,6 +234,7 @@ pid_matches_background_daemon() {
 }
 
 background_state() {
+    # 0 = valid daemon running, 1 = no/stale daemon, 2 = live PID but not our daemon
     local BG_PID="" BG_SCRIPT=""
     if ! read_background_pid; then
         rm -f -- "$PID_FILE" 2>/dev/null || true
@@ -383,26 +395,39 @@ print_tty_diagnostics() {
 }
 
 json_string_value() {
-    local text="$1" key="$2" rest
-    case "$text" in
-        *\"$key\":\"*)
-            rest=${text#*\"$key\":\"}
-            printf '%s\n' "${rest%%\"*}"
-            ;;
-    esac
+    local text="$1" key="$2" re
+    # Deliberately tolerant of whitespace: both
+    #   "key":"value" and "key" : "value"
+    # are accepted.
+    re="\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
+    if [[ "$text" =~ $re ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+    fi
 }
 
 json_number_value() {
-    local text="$1" key="$2" rest value
-    case "$text" in
-        *\"$key\":*)
-            rest=${text#*\"$key\":}
-            value=${rest%%,*}
-            value=${value%%\}*}
-            value=${value//[[:space:]]/}
-            [[ "$value" =~ ^[0-9]+$ ]] && printf '%s\n' "$value"
-            ;;
-    esac
+    local text="$1" key="$2" re
+    re="\"${key}\"[[:space:]]*:[[:space:]]*([0-9]+)"
+    if [[ "$text" =~ $re ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+    fi
+}
+
+extract_download_url_candidate() {
+    local text="$1" lower re
+    lower=${text,,}
+
+    # Known PHNIX forms are handled first, but keep a fallback for a changed
+    # field name. Any URI in a CMD_OTA / otaDeviceInfo / clearly firmware-URL
+    # line is considered worth preserving. This intentionally favors capture
+    # over being overly strict because a real OTA URL may only be printed once.
+    re="(https?|ftp)://[^\"[:space:]]+"
+    if [[ "$text" =~ $re ]]; then
+        if [[ "$text" == *CMD_OTA* ]] || [[ "$text" == *otaDeviceInfo* ]] || \
+           { [[ "$lower" == *firmware* || "$lower" == *upgrade* ]] && [[ "$lower" == *url* || "$lower" == *download* ]]; }; then
+            printf '%s\n' "${BASH_REMATCH[0]}"
+        fi
+    fi
 }
 
 ota_write_state() {
@@ -449,14 +474,22 @@ ota_log_url() {
 }
 
 ota_process_line() {
-    local raw="$1" stamp="$2" value="" url="" progress=""
+    local raw="$1" stamp="$2" value="" url="" progress="" cmd="" ota_code="" assign_url_re=""
 
+    # Fast path: most debug lines are unrelated to OTA and need no parsing.
+    # URL schemes are included intentionally so a changed PHNIX field name does
+    # not make us miss the one firmware URL we are trying to preserve.
     case "$raw" in
-        *otaFileDownloadAddr*|*softwareCodeCloud=*|*deviceSoftwareVer=*|*otaDeviceInfo.ssid=*|*otaDeviceInfo.fileMD5=*|*otaDeviceInfo.fileSize=*|*download*%*|*succeed\ downloading\ package*|*固件MD5校验正确*|*传输主板升级文件偏移:0*|*oat\ step:6*|*升级包传输完成*|*主板升级成功\<5\>*|*\"code\":\"0053\"*|*主板升级结束*) ;;
+        *otaFileDownloadAddr*|*CMD_OTA*|*otaDeviceInfo*|*http://*|*https://*|*ftp://*|*softwareCodeCloud=*|*deviceSoftwareVer=*|*download*%*|*succeed\ downloading\ package*|*固件MD5校验正确*|*传输主板升级文件偏移:0*|*oat\ step:6*|*升级包传输完成*|*主板升级成功\<5\>*|*主板升级结束*) ;;
         *) return 0 ;;
     esac
 
-    if [[ "$raw" == *'"cmd":"CMD_OTA","code":"0033"'* && "$raw" == *'otaFileDownloadAddr'* ]]; then
+    cmd=$(json_string_value "$raw" "cmd" || true)
+    ota_code=$(json_string_value "$raw" "code" || true)
+
+    # A new server OTA descriptor starts a new dedupe session. Whitespace in
+    # the JSON does not matter here.
+    if [ "$cmd" = "CMD_OTA" ] && [ "$ota_code" = "0033" ]; then
         OTA_LAST_URL=""
         OTA_LAST_PROGRESS=""
         OTA_PHASE=""
@@ -490,15 +523,26 @@ ota_process_line() {
         *otaDeviceInfo.fileSize=*) value=${raw#*otaDeviceInfo.fileSize=}; value=${value%%[^0-9]*}; [ -z "$value" ] || OTA_FILE_SIZE="$value" ;;
     esac
 
+    # Known JSON field (whitespace tolerant).
     url=$(json_string_value "$raw" "otaFileDownloadAddr" || true)
-    if [ -z "$url" ] && [[ "$raw" == *'otaDeviceInfo.otaFileDownloadAddr='* ]]; then
-        url=${raw#*otaDeviceInfo.otaFileDownloadAddr=}
-        url=${url%%[[:space:]]*}
+
+    # Known parsed PHNIX debug form, also tolerant of whitespace around '='.
+    assign_url_re="otaFileDownloadAddr[[:space:]]*=[[:space:]]*((https?|ftp)://[^\"[:space:]]+)"
+    if [ -z "$url" ] && [[ "$raw" =~ $assign_url_re ]]; then
+        url=${BASH_REMATCH[1]}
+    fi
+
+    # Last-resort capture if PHNIX renames the field but still prints a URL in
+    # the OTA descriptor / otaDeviceInfo / a clearly firmware-related line.
+    if [ -z "$url" ]; then
+        url=$(extract_download_url_candidate "$raw" || true)
     fi
     [ -z "$url" ] || ota_log_url "$stamp" "$url"
 
     if [[ "$raw" =~ download[[:space:]]+([0-9]{1,3})% ]]; then
         progress=${BASH_REMATCH[1]}
+        # PHNIX prints each download percentage more than once. Keep only
+        # actual changes so --follow and the OTA state remain compact.
         [ "$progress" = "$OTA_LAST_PROGRESS" ] && return 0
         if [ "$progress" = "0" ] && [ -z "$OTA_LAST_PROGRESS" ]; then
             ota_emit "$stamp" "Download gestartet" "$progress"
@@ -515,7 +559,7 @@ ota_process_line() {
         *升级包传输完成*) ota_emit "$stamp" "Firmwareübertragung abgeschlossen - Mainboard verarbeitet Update"; return 0 ;;
         *主板升级成功\<5\>*) ota_emit "$stamp" "Firmware Update erfolgreich"; return 0 ;;
         *\"code\":\"0053\"*)
-            if [[ "$raw" == *'"progress":"100"'* ]]; then
+            if [[ "$raw" == *'\"progress\":\"100\"'* ]]; then
                 ota_emit "$stamp" "Firmware Update erfolgreich"
             fi
             return 0
@@ -581,6 +625,8 @@ logger_supervisor() {
             cleaned=1; sleep "$SCAN_INTERVAL"; continue
         fi
 
+        # Intentionally no baud-rate argument here. The real PHNIX/SimTech USB
+        # serial endpoint accepts the other termios flags but can reject 115200.
         if ! stty -F "$port" cs8 -parenb -cstopb -ixon -ixoff -ixany -crtscts \
             -icanon -echo -echoe -echok -echonl -icrnl -inlcr -igncr -istrip min 1 time 0 2>/dev/null; then
             error "$port konnte nicht für USB-Serial 8N1 ohne Flow-Control konfiguriert werden."
@@ -594,6 +640,7 @@ logger_supervisor() {
         fd_open=1
         say "PHNIX-Debugport verbunden: $port (USB-Serial IF $USB_INTERFACE_NUM, 8N1; Baudrate nicht erzwungen)"
         printf '%s\n' "$port" > "$READY_FILE"
+        # Create the daily raw log immediately, even before the first debug line.
         : >> "$LOG_DIR/phnix_$(date +%F).log" || warn "Tages-Logdatei konnte nicht angelegt werden."
 
         while :; do
@@ -793,7 +840,15 @@ run_logger_core() {
 
 show_ota_status() {
     local stamp status progress version code ssid url_detected md5 size
-    [ -r "$OTA_STATE_FILE" ] || { say "OTA-Status: noch kein Firmware-Update erkannt."; return 0; }
+    if [ ! -r "$OTA_STATE_FILE" ]; then
+        say "OTA-Status: noch kein Firmware-Update erkannt."
+        if [ -e "$OTA_URL_LOG" ] && [ -w "$OTA_URL_LOG" ]; then
+            say "OTA-URL-Log: ${OTA_URL_LOG##*/} (bereit, noch leer)"
+        else
+            say "OTA-URL-Log: NICHT schreibbereit"
+        fi
+        return 0
+    fi
 
     stamp=$(ota_state_get timestamp 2>/dev/null || true)
     status=$(ota_state_get status 2>/dev/null || true)
