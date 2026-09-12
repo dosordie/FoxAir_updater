@@ -120,8 +120,6 @@ Hintergrund-Logger beendet. phnixIot4G wurde nicht verändert.
 
 # Empfohlener Betrieb vor einem erwarteten Firmwareupdate
 
-Für einen reinen Funktionstest ist `--background --no-restart` die vorsichtigste Variante.
-
 Wenn der Logger für ein **bevorstehendes reales Firmwareupdate** verwendet wird und im Rohlog keine Debugzeilen erscheinen, sollte der Logger rechtzeitig **vor Beginn des Updates** neu gestartet werden:
 
 ```bash
@@ -129,7 +127,7 @@ Wenn der Logger für ein **bevorstehendes reales Firmwareupdate** verwendet wird
 ./logging.sh --background
 ```
 
-Ohne `--no-restart` öffnet der Logger zuerst den Debugport und startet anschließend `phnixIot4G` einmal kontrolliert neu. Dadurch können auch die Startausgaben des Originaldienstes erfasst werden.
+Ohne `--no-restart` öffnet der Logger zuerst den Debugport und startet anschließend `phnixIot4G` einmal kontrolliert neu. Dadurch können auch die Startausgaben des Originaldienstes erfasst werden. Diese Debug ausgaben brauchen nach einiger zeit im "leerlauf" immer einen neustart von `phnixIot4G`
 
 > [!CAUTION]
 > `phnixIot4G` nicht während eines bereits laufenden Firmwareupdates manuell neu starten. Das Skript besitzt dafür eigene OTA-Sicherheitsprüfungen und blockiert seinen automatischen Neustart, wenn ein aktiver OTA-Zustand erkannt wird oder die Prüfung nicht zuverlässig möglich ist.
@@ -403,4 +401,3 @@ Kurzüberblick:
 
 - [`firmware_backup_lte.md`](firmware_backup_lte.md) – LTE-Modem, ADB und Backup
 - [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md) – Firmware-Updater für Anwender
-- [`../reverse_engineering/`](../reverse_engineering/) – technische Reverse-Engineering-Dokumentation
