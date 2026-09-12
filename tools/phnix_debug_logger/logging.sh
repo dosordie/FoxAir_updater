@@ -421,7 +421,7 @@ extract_download_url_candidate() {
     # field name. Any URI in a CMD_OTA / otaDeviceInfo / clearly firmware-URL
     # line is considered worth preserving. This intentionally favors capture
     # over being overly strict because a real OTA URL may only be printed once.
-    re="(https?|ftp)://[^\"[:space:]]+"
+    re="([Hh][Tt][Tt][Pp][Ss]?|[Ff][Tt][Pp])://[^\"[:space:]]+"
     if [[ "$text" =~ $re ]]; then
         if [[ "$text" == *CMD_OTA* ]] || [[ "$text" == *otaDeviceInfo* ]] || \
            { [[ "$lower" == *firmware* || "$lower" == *upgrade* ]] && [[ "$lower" == *url* || "$lower" == *download* ]]; }; then
@@ -527,7 +527,7 @@ ota_process_line() {
     url=$(json_string_value "$raw" "otaFileDownloadAddr" || true)
 
     # Known parsed PHNIX debug form, also tolerant of whitespace around '='.
-    assign_url_re="otaFileDownloadAddr[[:space:]]*=[[:space:]]*((https?|ftp)://[^\"[:space:]]+)"
+    assign_url_re="otaFileDownloadAddr[[:space:]]*=[[:space:]]*((([Hh][Tt][Tt][Pp][Ss]?)|([Ff][Tt][Pp]))://[^\"[:space:]]+)"
     if [ -z "$url" ] && [[ "$raw" =~ $assign_url_re ]]; then
         url=${BASH_REMATCH[1]}
     fi
@@ -538,6 +538,16 @@ ota_process_line() {
         url=$(extract_download_url_candidate "$raw" || true)
     fi
     [ -z "$url" ] || ota_log_url "$stamp" "$url"
+
+    # Terminal cloud success report. Parse fields rather than matching one
+    # exact JSON serialization so optional whitespace/order changes are harmless.
+    if [ "$cmd" = "CMD_OTA" ] && [ "$ota_code" = "0053" ]; then
+        progress=$(json_string_value "$raw" "progress" || true)
+        if [ "$progress" = "100" ]; then
+            ota_emit "$stamp" "Firmware Update erfolgreich"
+        fi
+        return 0
+    fi
 
     if [[ "$raw" =~ download[[:space:]]+([0-9]{1,3})% ]]; then
         progress=${BASH_REMATCH[1]}
@@ -558,12 +568,6 @@ ota_process_line() {
         *传输主板升级文件偏移:0*|*oat\ step:6*) ota_emit "$stamp" "Firmware Update läuft"; return 0 ;;
         *升级包传输完成*) ota_emit "$stamp" "Firmwareübertragung abgeschlossen - Mainboard verarbeitet Update"; return 0 ;;
         *主板升级成功\<5\>*) ota_emit "$stamp" "Firmware Update erfolgreich"; return 0 ;;
-        *\"code\":\"0053\"*)
-            if [[ "$raw" == *'\"progress\":\"100\"'* ]]; then
-                ota_emit "$stamp" "Firmware Update erfolgreich"
-            fi
-            return 0
-            ;;
         *主板升级结束*) ota_emit "$stamp" "Firmware Update fertig"; return 0 ;;
     esac
 }
