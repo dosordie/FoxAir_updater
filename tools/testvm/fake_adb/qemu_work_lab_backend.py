@@ -799,6 +799,7 @@ def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
 
 
 DEVICE_STATUS_REQUEST_HEX = "630307d1005a9cfe"
+MQTT_INJECTION_KINDS = ("status-request", "ota-update", "raw")
 
 
 def _idle_ota_info() -> bytes:
@@ -1066,7 +1067,7 @@ def main() -> int:
     sub.add_parser("offline")
     sub.add_parser("runner-stop")
     mqtt = sub.add_parser("mqtt-send")
-    mqtt.add_argument("kind", choices=("status-request", "raw"))
+    mqtt.add_argument("kind", choices=MQTT_INJECTION_KINDS)
     mqtt.add_argument("payload_hex", nargs="?")
     reset = sub.add_parser("reset")
     reset.add_argument("scenario", nargs="?", default="success")

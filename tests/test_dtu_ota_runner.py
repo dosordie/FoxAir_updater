@@ -356,6 +356,7 @@ class DtuOtaPackageTests(unittest.TestCase):
             self.assertFalse(hook.exists())
 
     def test_mqtt_ota_debug_offer_matches_known_original_contract(self):
+        self.assertIn("ota-update", qemu_work_lab_backend.MQTT_INJECTION_KINDS)
         payload = qemu_work_lab_backend.ota_update_debug_payload()
         self.assertEqual(len(payload), 231)
         message = json.loads(payload)
