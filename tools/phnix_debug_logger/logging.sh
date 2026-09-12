@@ -19,12 +19,14 @@ USB_INTERFACE_NUM="04"
 SERVICE_NAME="phnixIot4G"
 SCAN_INTERVAL=3
 RESTART_TIMEOUT=25
+HEARTBEAT_INTERVAL=300
 
 DEFAULT_LOG_DIR="${HOME:-.}/FoxAir_Logs"
 LOG_DIR="${LOG_DIR:-$DEFAULT_LOG_DIR}"
 NO_RESTART=0
 ADB_SELECTED_SERIAL=""
 LOGGER_PID=""
+HEARTBEAT_PID=""
 READY_FILE="${TMPDIR:-/tmp}/phnix_debug_logger.$$.${RANDOM}.ready"
 PARENT_CLEANED=0
 
@@ -635,11 +637,48 @@ restart_phnix_service_once() {
     return 1
 }
 
+status_heartbeat() {
+    local stamp day logfile port lines
+
+    trap 'exit 0' INT TERM
+
+    while :; do
+        sleep "$HEARTBEAT_INTERVAL" || exit 0
+
+        stamp=$(date '+%Y-%m-%d %H:%M:%S')
+        day=${stamp%% *}
+        logfile="$LOG_DIR/phnix_$day.log"
+        port=""
+        lines=0
+
+        if [ -s "$READY_FILE" ]; then
+            IFS= read -r port < "$READY_FILE" || port=""
+        fi
+        if [ -f "$logfile" ]; then
+            lines=$(wc -l < "$logfile" 2>/dev/null || printf '?\n')
+            lines=${lines//[[:space:]]/}
+            [ -n "$lines" ] || lines="?"
+        fi
+
+        if [ -n "$port" ]; then
+            printf '[%s] Logger aktiv | Port: %s | Log: %s | Zeilen: %s\n' \
+                "$stamp" "$port" "${logfile##*/}" "$lines"
+        else
+            printf '[%s] Logger aktiv | Debugport getrennt - warte auf USB-Reconnect | Log: %s | Zeilen: %s\n' \
+                "$stamp" "${logfile##*/}" "$lines"
+        fi
+    done
+}
+
 parent_cleanup() {
     [ "$PARENT_CLEANED" -eq 0 ] || return 0
     PARENT_CLEANED=1
     trap - EXIT INT TERM
 
+    if [ -n "$HEARTBEAT_PID" ] && kill -0 "$HEARTBEAT_PID" 2>/dev/null; then
+        kill -TERM "$HEARTBEAT_PID" 2>/dev/null || true
+        wait "$HEARTBEAT_PID" 2>/dev/null || true
+    fi
     if [ -n "$LOGGER_PID" ] && kill -0 "$LOGGER_PID" 2>/dev/null; then
         kill -TERM "$LOGGER_PID" 2>/dev/null || true
         wait "$LOGGER_PID" 2>/dev/null || true
@@ -702,7 +741,9 @@ main() {
         restart_phnix_service_once || true
     fi
 
-    say "Dauerlogging aktiv. Beenden mit Ctrl+C."
+    say "Dauerlogging aktiv. Lebenszeichen alle 5 Minuten. Beenden mit Ctrl+C."
+    status_heartbeat &
+    HEARTBEAT_PID=$!
     wait "$LOGGER_PID"
 }
 
