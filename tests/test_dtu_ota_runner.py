@@ -397,7 +397,33 @@ class DtuOtaPackageTests(unittest.TestCase):
             "mqtt-debug", "ota-update-v34"
         )
         self.assertEqual(environment["MQTT_DEBUG_MODE"], "1")
+        self.assertEqual(environment["FIRMWARE_HTTP_ONLY"], "1")
+        self.assertEqual(environment["FIRMWARE_HTTP_SIZE"], "289806")
+        self.assertEqual(
+            environment["FIRMWARE_HTTP_MD5"],
+            "149A586EDE6F035B385762EA48C71605",
+        )
+        self.assertTrue(environment["FIRMWARE_HTTP_FILE"].endswith(
+            "/fixtures/phnixIot_device_OTA.v3.4"
+        ) or environment["FIRMWARE_HTTP_FILE"].endswith(
+            "\\fixtures\\phnixIot_device_OTA.v3.4"
+        ))
+        self.assertEqual(environment["RS485_USE_DOWNLOADED_CACHE"], "1")
         self.assertEqual(label, "foxair-adb-mqtt-debug-ota-update-v34")
+
+    def test_v34_http_fixture_is_rejected_when_missing_or_wrong(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixtures = root / "fixtures"
+            fixtures.mkdir()
+            with mock.patch.object(qemu_work_lab_backend, "lab_root", return_value=root):
+                ok, message = qemu_work_lab_backend.validate_v34_http_fixture()
+                self.assertFalse(ok)
+                self.assertIn("Firmware fehlt", message)
+                (fixtures / qemu_work_lab_backend.V34_FIXTURE_NAME).write_bytes(b"wrong")
+                ok, message = qemu_work_lab_backend.validate_v34_http_fixture()
+                self.assertFalse(ok)
+                self.assertIn("stimmt nicht", message)
 
     def test_explicit_vm_reset_removes_autonomous_runner_state(self):
         with tempfile.TemporaryDirectory() as temp:

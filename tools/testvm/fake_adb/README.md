@@ -191,6 +191,16 @@ sudo foxair-fake-adbctl mqtt-send ota-update
 sudo foxair-fake-adbctl mqtt-send ota-update-v34
 ```
 
+Für den V3.4-Downloadtest muss die originale Firmwaredatei hier liegen:
+
+```text
+/opt/phnix-lab/fixtures/phnixIot_device_OTA.v3.4
+```
+
+Der Dateiname ist fest. Vor jedem V3.4-Test prüft der Controller zwingend
+Größe `289806` und MD5 `149A586EDE6F035B385762EA48C71605`. Bei fehlender
+oder abweichender Datei startet weder der neue QEMU-Lauf noch das MQTT-Angebot.
+
 Der lokale MQTT-Stub liefert dabei den bekannten Mainboard-Code `0033` auf
 `/user/OTA_GET` mit Softwarecode `82400644`, SSID `0063` und der rein lokalen
 URL `http://127.0.0.1:8081/phnixIot_device_OTA`. `ota-update` bietet V3.3 mit
@@ -200,9 +210,10 @@ keine Debugzeilen vorgetäuscht: TCP `5039` enthält ausschließlich die Ausgabe
 des originalen Dienstes in QEMU. Der Befehl ersetzt den wartenden GDB-Lauf
 durch einen normalen Originaldienst und wartet auf dessen echte
 `OTA_GET`-Subscription, bevor er die Nachricht zustellt. Der lokale URL-Endpunkt muss für diesen
-reinen Sichtbarkeitstest nicht erreichbar sein; der im Work-Lab vorhandene
-Firmware-HTTP-Stub wird durch diese beiden Befehle noch nicht aktiviert. Ein
-Firmwaredownload oder erfolgreicher OTA-Abschluss wird damit nicht behauptet.
+V3.3-Sichtbarkeitstest nicht erreichbar sein. Für `ota-update-v34` wird der
+vorhandene Firmware-HTTP-Stub dagegen auf Port `8081` gestartet. Er liefert die
+oben geprüfte Datei an den unveränderten Originaldienst aus und protokolliert
+den Abruf im jeweiligen Run-Verzeichnis als `firmware-http-transcript.jsonl`.
 
 Für einen V3.4-Neuversionspfad muss das simulierte Board zuvor auf einer
 anderen Version stehen, beispielsweise mit `board-version 0033`. Bei

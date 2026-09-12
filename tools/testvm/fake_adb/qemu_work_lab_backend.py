@@ -19,6 +19,7 @@ executed by blindly substituting absolute paths into a host shell.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 import importlib.util
 import json
@@ -42,6 +43,9 @@ _SERVICE_WATCHDOG_LOCK = threading.Lock()
 _SERVICE_WATCHDOG_THREAD: threading.Thread | None = None
 DEFAULT_RUN_SECONDS = int(os.environ.get("FOXAIR_QEMU_RUN_SECONDS", str(MAX_RUN_SECONDS)))
 INTENTIONAL_STOP_TTL_SECONDS = 240
+V34_FIXTURE_NAME = "phnixIot_device_OTA.v3.4"
+V34_SIZE = 289806
+V34_MD5 = "149A586EDE6F035B385762EA48C71605"
 
 
 def _load_base() -> ModuleType:
@@ -384,6 +388,14 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
         # runner's initial QEMU/GDB stop. Readiness is confirmed from its real
         # OTA_GET subscription before the one-shot is queued.
         env["MQTT_DEBUG_MODE"] = "1"
+        if value == "ota-update-v34":
+            fixture = lab_root() / "fixtures" / V34_FIXTURE_NAME
+            env["FIRMWARE_HTTP_ONLY"] = "1"
+            env["FIRMWARE_HTTP_FILE"] = str(fixture)
+            env["FIRMWARE_HTTP_SIZE"] = str(V34_SIZE)
+            env["FIRMWARE_HTTP_MD5"] = V34_MD5
+            # The original cloud path downloads here before it emits C357.
+            env["RS485_USE_DOWNLOADED_CACHE"] = "1"
         return env, f"foxair-adb-mqtt-debug-{value}"
 
     return None
@@ -789,6 +801,23 @@ def ota_update_debug_payload(version: str = "V3.3") -> bytes:
     return payload
 
 
+def validate_v34_http_fixture() -> tuple[bool, str]:
+    """Pin the local HTTP payload to the known V3.4 release identity."""
+    fixture = lab_root() / "fixtures" / V34_FIXTURE_NAME
+    try:
+        payload = fixture.read_bytes()
+    except OSError as exc:
+        return False, f"V3.4-Firmware fehlt: {fixture} ({exc})"
+    actual_md5 = hashlib.md5(payload).hexdigest().upper()
+    if len(payload) != V34_SIZE or actual_md5 != V34_MD5:
+        return (
+            False,
+            "V3.4-Firmware stimmt nicht mit den bekannten Metadaten überein: "
+            f"size={len(payload)}/{V34_SIZE}, md5={actual_md5}/{V34_MD5}",
+        )
+    return True, f"V3.4-Firmware geprüft: {fixture}"
+
+
 def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
     """Queue one cloud-to-device MQTT message in the active isolated lab."""
     preparation = ""
@@ -801,9 +830,15 @@ def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
             return False, f"mqtt-send {kind} erwartet keine weiteren Argumente"
         if root_path("/data/foxair_ota_runner/active.lock").exists():
             return False, "aktiver autonomer OTA-Run blockiert den MQTT-One-Shot-Test"
-        ok, preparation = _start_runner("mqtt-debug", kind)
+        fixture_status = ""
+        if kind == "ota-update-v34":
+            ok, fixture_status = validate_v34_http_fixture()
+            if not ok:
+                return False, fixture_status
+        ok, runner_status = _start_runner("mqtt-debug", kind)
         if not ok:
-            return False, preparation
+            return False, runner_status
+        preparation = "; ".join(filter(None, (fixture_status, runner_status)))
         if len(service_pids()) != 1:
             return False, "MQTT-One-Shot erfordert genau eine phnixIot4G-Instanz"
         topic = "/a1LABTEST01/LABDEVICE001/user/OTA_GET"

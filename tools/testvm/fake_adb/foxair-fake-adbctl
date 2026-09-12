@@ -62,8 +62,8 @@ Diagnose und simulierte Eingaben:
   mqtt-send ota-update           Originaldienst ohne GDB-Stopp starten und nach bestätigter
                                  OTA_GET-Subscription V3.3/0033 einmalig senden
                                  Port 5039 zeigt nur die echte phnixIot4G-Debugausgabe
-  mqtt-send ota-update-v34       gleicher Sichtbarkeitstest mit V3.4/0034 und den
-                                 bekannten originalen V3.4-Dateimetadaten
+  mqtt-send ota-update-v34       V3.4/0034 mit bekannten Originalmetadaten anbieten;
+                                 geprüfte Firmware über lokalen HTTP-Stub laden
   mqtt-send raw HEX              rohe MQTT-/user/get-Nutzdaten einmalig senden (nur Lab)
   logs                           Fake-ADB-Log verfolgen
   debug-logs                     TCP-Debugstream-Service-Log verfolgen

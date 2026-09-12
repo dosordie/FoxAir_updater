@@ -76,6 +76,10 @@ if [[ "${LOCAL_OTA_HANDLER:-0}" == 1 ]]; then
   fi
   command -v gdb-multiarch >/dev/null || fail "missing command: gdb-multiarch"
 fi
+if [[ "${FIRMWARE_HTTP_ONLY:-0}" == 1 ]]; then
+  [[ -f "$TOOLS/firmware_http_stub.py" ]] || fail "missing firmware HTTP stub"
+  [[ -f "${FIRMWARE_HTTP_FILE:-}" ]] || fail "missing firmware HTTP fixture: ${FIRMWARE_HTTP_FILE:-unset}"
+fi
 if [[ "${V33_FULL_TRANSFER:-0}" == 1 ]]; then
   [[ -f "$TOOLS/gdb_v33_full_transfer.gdb" ]] || fail "missing full-transfer GDB guard"
 fi
@@ -159,11 +163,15 @@ unshare --net --mount --fork bash -c '
     mqtt_pid=$!
   fi
 
-  if [[ "${V33_DOWNLOAD_PROBE:-0}" == 1 || "${LOCAL_OTA_HANDLER:-0}" == 1 ]]; then
+  if [[ "${V33_DOWNLOAD_PROBE:-0}" == 1 || "${LOCAL_OTA_HANDLER:-0}" == 1 || "${FIRMWARE_HTTP_ONLY:-0}" == 1 ]]; then
     firmware_file="$v33_fixture"
     firmware_size=287598
     firmware_md5=CEB6A4BF386FF644E23E410023E74673
-    if [[ "${DYNAMIC_LOCAL_OTA:-0}" == 1 ]]; then
+    if [[ "${FIRMWARE_HTTP_ONLY:-0}" == 1 ]]; then
+      firmware_file="$FIRMWARE_HTTP_FILE"
+      firmware_size="$FIRMWARE_HTTP_SIZE"
+      firmware_md5="$FIRMWARE_HTTP_MD5"
+    elif [[ "${DYNAMIC_LOCAL_OTA:-0}" == 1 ]]; then
       firmware_file="$rootfs/data/phnix_local_ota/phnixIot_device_OTA.bin"
       [[ -f "$firmware_file" ]] || {
         echo "staged local OTA firmware missing: $firmware_file" >&2
@@ -214,9 +222,13 @@ unshare --net --mount --fork bash -c '
       --transcript "$run_dir/ttyHSL2-transcript.txt"
     )
     if [[ "${V33_FULL_TRANSFER:-0}" == 1 || "${LOCAL_OTA_FULL_TRANSFER:-0}" == 1 ]]; then
+      rs485_firmware="$rootfs/data/phnix_local_ota/phnixIot_device_OTA.bin"
+      if [[ "${RS485_USE_DOWNLOADED_CACHE:-0}" == 1 ]]; then
+        rs485_firmware="$rootfs/cache/phnixIot_device_OTA"
+      fi
       rs485_args+=(
         --v33-full-transfer
-        --firmware "$rootfs/data/phnix_local_ota/phnixIot_device_OTA.bin"
+        --firmware "$rs485_firmware"
         --board-version "${BOARD_VERSION:-0033}"
         --timing-profile "${OTA_TIMING_PROFILE:-fast}"
       )
