@@ -59,6 +59,8 @@ Diagnose und simulierte Eingaben:
   modem-log on|off|status        TCP 5039 persistent aktivieren/stummschalten
                                  Port bleibt bei off erreichbar; keine spätere Datenwiedergabe
   mqtt-send status-request       während eines OTA einen FC03-Statusread per MQTT senden
+  mqtt-send ota-update           bekanntes V3.3-OTA_GET/0033 mit lokaler URL einmalig senden
+                                 Port 5039 zeigt nur die echte phnixIot4G-Debugausgabe
   mqtt-send raw HEX              rohe MQTT-/user/get-Nutzdaten einmalig senden (nur Lab)
   logs                           Fake-ADB-Log verfolgen
   debug-logs                     TCP-Debugstream-Service-Log verfolgen
@@ -90,6 +92,7 @@ Beispiele:
   sudo foxair-fake-adbctl scenario success-real-timing
   sudo foxair-fake-adbctl modem-log off
   sudo foxair-fake-adbctl mqtt-send status-request
+  sudo foxair-fake-adbctl mqtt-send ota-update
 
 Nicht direkt durch rs485_fault_emulator.py unterstützte alte Python-Simulator-
 Szenarien werden absichtlich mit Exit 3 abgelehnt statt nur ungefähr emuliert.

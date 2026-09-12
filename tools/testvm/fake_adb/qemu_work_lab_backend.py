@@ -733,12 +733,42 @@ def ensure_service_watchdog() -> None:
         _SERVICE_WATCHDOG_THREAD.start()
 
 
+def ota_update_debug_payload() -> bytes:
+    """Known valid V3.3 cloud offer, kept below the original 232-byte buffer."""
+    message = {
+        "cmd": "CMD_OTA",
+        "code": "0033",
+        "param": {
+            "softwareCode": "82400644",
+            "softwareVer": "V3.3",
+            "ssid": "0063",
+            "fileMD5": "CEB6A4BF386FF644E23E410023E74673",
+            "fileSize": 287598,
+            "otaFileDownloadAddr": "http://127.0.0.1:8081/phnixIot_device_OTA",
+        },
+    }
+    payload = json.dumps(message, separators=(",", ":")).encode("ascii")
+    if len(payload) >= 232:
+        raise RuntimeError("synthetic OTA_GET payload exceeds original parser buffer")
+    return payload
+
+
 def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
     """Queue one cloud-to-device MQTT message in the active isolated lab."""
     if kind == "status-request":
         topic = "/a1LABTEST01/LABDEVICE001/user/get"
         payload = DEVICE_STATUS_REQUEST_HEX
         label = "mainboard-status-request-07d1"
+    elif kind == "ota-update":
+        if payload_hex:
+            return False, "mqtt-send ota-update erwartet keine weiteren Argumente"
+        if root_path("/data/foxair_ota_runner/active.lock").exists():
+            return False, "aktiver autonomer OTA-Run blockiert den MQTT-One-Shot-Test"
+        if len(service_pids()) != 1:
+            return False, "MQTT-One-Shot erfordert genau eine phnixIot4G-Instanz"
+        topic = "/a1LABTEST01/LABDEVICE001/user/OTA_GET"
+        payload = ota_update_debug_payload().hex()
+        label = "known-v33-ota-download-offer"
     elif kind == "raw":
         topic = "/a1LABTEST01/LABDEVICE001/user/get"
         payload = (payload_hex or "").replace(" ", "")

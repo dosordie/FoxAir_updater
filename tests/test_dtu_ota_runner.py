@@ -355,6 +355,21 @@ class DtuOtaPackageTests(unittest.TestCase):
                 qemu_work_lab_backend.reset_ota_runtime()
             self.assertFalse(hook.exists())
 
+    def test_mqtt_ota_debug_offer_matches_known_original_contract(self):
+        payload = qemu_work_lab_backend.ota_update_debug_payload()
+        self.assertEqual(len(payload), 231)
+        message = json.loads(payload)
+        self.assertEqual(message["cmd"], "CMD_OTA")
+        self.assertEqual(message["code"], "0033")
+        self.assertEqual(message["param"], {
+            "softwareCode": "82400644",
+            "softwareVer": "V3.3",
+            "ssid": "0063",
+            "fileMD5": "CEB6A4BF386FF644E23E410023E74673",
+            "fileSize": 287598,
+            "otaFileDownloadAddr": "http://127.0.0.1:8081/phnixIot_device_OTA",
+        })
+
     def test_explicit_vm_reset_removes_autonomous_runner_state(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

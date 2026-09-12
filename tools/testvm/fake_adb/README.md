@@ -182,6 +182,22 @@ sudo foxair-fake-adbctl debug-logs
 sudo foxair-fake-adbctl modem-log status
 ```
 
+Zum manuellen Prüfen der echten `phnixIot4G`-Debugausgabe eines eingehenden
+Cloud-OTA-Angebots zuerst den TCP-Debugstream auf Port `5039` verbinden und
+anschließend genau einmal senden:
+
+```bash
+sudo foxair-fake-adbctl mqtt-send ota-update
+```
+
+Der lokale MQTT-Stub liefert dabei den bekannten Mainboard-Code `0033` auf
+`/user/OTA_GET` mit Softwarecode `82400644`, Version `V3.3`, SSID `0063` und
+der rein lokalen URL `http://127.0.0.1:8081/phnixIot_device_OTA`. Es werden
+keine Debugzeilen vorgetäuscht: TCP `5039` enthält ausschließlich die Ausgabe
+des originalen Dienstes in QEMU. Der lokale URL-Endpunkt muss für diesen
+reinen Sichtbarkeitstest nicht erreichbar sein; ein Firmwaredownload oder
+erfolgreicher OTA-Abschluss wird damit nicht behauptet.
+
 ## Konfiguration
 
 `/etc/default/foxair-fake-adb` enthält typischerweise:
