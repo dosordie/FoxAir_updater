@@ -8,6 +8,7 @@
 #   serial driver may reject a baud-rate change although the endpoint works.
 # - A service restart is blocked while PHNIX OTA safety markers are present or
 #   cannot be checked reliably.
+# - OTA download/update markers are recognized passively from the debug stream.
 #
 # The script never modifies the phnixIot4G binary or the modem filesystem.
 
@@ -35,7 +36,21 @@ READY_FILE=""
 BACKGROUND_READY_FILE=""
 PID_FILE=""
 STATUS_FILE=""
+OTA_STATE_FILE=""
+OTA_URL_LOG=""
 PARENT_CLEANED=0
+
+# These variables live in the serial logger worker. They are intentionally
+# process-local and only serve to suppress duplicate PHNIX debug messages.
+OTA_PHASE=""
+OTA_LAST_URL=""
+OTA_LAST_PROGRESS=""
+OTA_SOFTWARE_CODE=""
+OTA_VERSION=""
+OTA_SSID=""
+OTA_MD5=""
+OTA_FILE_SIZE=""
+OTA_URL_DETECTED=0
 
 OTA_MARKERS=(
     "/tmp/phnix_ota_hook/run.active"
@@ -67,9 +82,15 @@ Optionen:
                  anschließend die Live-Statusausgabe anzeigen.
   --follow       Live-Status eines bereits laufenden Hintergrund-Loggers anzeigen.
                  Ctrl+C bzw. Schließen des Terminals beendet nur die Anzeige.
-  --status       Einmaligen Status des Hintergrund-Loggers anzeigen.
+  --status       Einmaligen Status des Hintergrund-Loggers inkl. letztem OTA-Status anzeigen.
   --stop         Nur den Hintergrund-Logger beenden; phnixIot4G bleibt unberührt.
   --help         Diese Hilfe anzeigen.
+
+Zusätzliche Dateien:
+  phnix_YYYY-MM-DD.log   vollständiger Roh-Debuglog mit Zeitstempeln
+  phnix_ota_urls.log     deduplizierte erkannte Firmware-Download-URLs + Metadaten
+  phnix_ota_state        letzter erkannter OTA-Zustand für --status
+  logger_status.log      Live-/Heartbeat-Ausgabe für --follow
 
 Umgebungsvariablen:
   LOG_DIR        Zielverzeichnis der Logs (Standard: ~/FoxAir_Logs)
@@ -166,13 +187,16 @@ resolve_log_dir() {
     PID_FILE="$LOG_DIR/phnix_logger.pid"
     STATUS_FILE="$LOG_DIR/logger_status.log"
     BACKGROUND_READY_FILE="$LOG_DIR/.phnix_debug_logger.ready"
+    OTA_STATE_FILE="$LOG_DIR/phnix_ota_state"
+    OTA_URL_LOG="$LOG_DIR/phnix_ota_urls.log"
 }
 
 prepare_log_dir() {
     resolve_log_dir || return 1
     say "Logverzeichnis: $LOG_DIR"
     warn "PHNIX-Debuglogs können IMEI/ICCID, ProductKey, DeviceSecret und andere Kennungen enthalten."
-    warn "Rohlogs vor einer Veröffentlichung immer manuell prüfen."
+    warn "Firmware-Download-URLs können ebenfalls sensible bzw. temporär gültige Parameter enthalten."
+    warn "Rohlogs und URL-Log vor einer Veröffentlichung immer manuell prüfen."
 }
 
 read_background_pid() {
@@ -199,7 +223,6 @@ pid_matches_background_daemon() {
 }
 
 background_state() {
-    # 0 = valid daemon running, 1 = no/stale daemon, 2 = live PID but not our daemon
     local BG_PID="" BG_SCRIPT=""
     if ! read_background_pid; then
         rm -f -- "$PID_FILE" 2>/dev/null || true
@@ -359,6 +382,159 @@ print_tty_diagnostics() {
     [ "$found" -eq 1 ] || warn "Keine ttyUSB/ttyACM-Kandidaten sichtbar."
 }
 
+json_string_value() {
+    local text="$1" key="$2" rest
+    case "$text" in
+        *\"$key\":\"*)
+            rest=${text#*\"$key\":\"}
+            printf '%s\n' "${rest%%\"*}"
+            ;;
+    esac
+}
+
+json_number_value() {
+    local text="$1" key="$2" rest value
+    case "$text" in
+        *\"$key\":*)
+            rest=${text#*\"$key\":}
+            value=${rest%%,*}
+            value=${value%%\}*}
+            value=${value//[[:space:]]/}
+            [[ "$value" =~ ^[0-9]+$ ]] && printf '%s\n' "$value"
+            ;;
+    esac
+}
+
+ota_write_state() {
+    local stamp="$1" status="$2" progress="${3:-}" tmp
+    tmp="$OTA_STATE_FILE.tmp.$$"
+    {
+        printf 'timestamp=%s\n' "$stamp"
+        printf 'status=%s\n' "$status"
+        printf 'progress=%s\n' "$progress"
+        printf 'version=%s\n' "$OTA_VERSION"
+        printf 'software_code=%s\n' "$OTA_SOFTWARE_CODE"
+        printf 'ssid=%s\n' "$OTA_SSID"
+        printf 'url_detected=%s\n' "$OTA_URL_DETECTED"
+        printf 'url=%s\n' "$OTA_LAST_URL"
+        printf 'md5=%s\n' "$OTA_MD5"
+        printf 'file_size=%s\n' "$OTA_FILE_SIZE"
+    } > "$tmp" || return 1
+    mv -f -- "$tmp" "$OTA_STATE_FILE" || return 1
+}
+
+ota_emit() {
+    local stamp="$1" status="$2" progress="${3:-}" display
+    display="$status"
+    if [ "$OTA_PHASE" = "$status" ] && { [ -z "$progress" ] || [ "$OTA_LAST_PROGRESS" = "$progress" ]; }; then
+        return 0
+    fi
+    OTA_PHASE="$status"
+    [ -z "$progress" ] || OTA_LAST_PROGRESS="$progress"
+    ota_write_state "$stamp" "$status" "$progress" || true
+    [ -z "$progress" ] || display="$status - $progress %"
+    printf '[%s] OTA | %s\n' "$stamp" "$display"
+}
+
+ota_log_url() {
+    local stamp="$1" url="$2"
+    [ -n "$url" ] || return 0
+    [ "$url" != "$OTA_LAST_URL" ] || return 0
+    OTA_LAST_URL="$url"
+    OTA_URL_DETECTED=1
+    printf '[%s] URL=%s | SoftwareCode=%s | Version=%s | SSID=%s | MD5=%s | Size=%s\n' \
+        "$stamp" "$url" "${OTA_SOFTWARE_CODE:-?}" "${OTA_VERSION:-?}" "${OTA_SSID:-?}" \
+        "${OTA_MD5:-?}" "${OTA_FILE_SIZE:-?}" >> "$OTA_URL_LOG" || warn "OTA-URL-Log kann nicht geschrieben werden: $OTA_URL_LOG"
+    ota_emit "$stamp" "Download-URL erkannt"
+}
+
+ota_process_line() {
+    local raw="$1" stamp="$2" value="" url="" progress=""
+
+    case "$raw" in
+        *otaFileDownloadAddr*|*softwareCodeCloud=*|*deviceSoftwareVer=*|*otaDeviceInfo.ssid=*|*otaDeviceInfo.fileMD5=*|*otaDeviceInfo.fileSize=*|*download*%*|*succeed\ downloading\ package*|*固件MD5校验正确*|*传输主板升级文件偏移:0*|*oat\ step:6*|*升级包传输完成*|*主板升级成功\<5\>*|*\"code\":\"0053\"*|*主板升级结束*) ;;
+        *) return 0 ;;
+    esac
+
+    if [[ "$raw" == *'"cmd":"CMD_OTA","code":"0033"'* && "$raw" == *'otaFileDownloadAddr'* ]]; then
+        OTA_LAST_URL=""
+        OTA_LAST_PROGRESS=""
+        OTA_PHASE=""
+        OTA_URL_DETECTED=0
+        OTA_SOFTWARE_CODE=""
+        OTA_VERSION=""
+        OTA_SSID=""
+        OTA_MD5=""
+        OTA_FILE_SIZE=""
+    fi
+
+    value=$(json_string_value "$raw" "softwareCode" || true); [ -z "$value" ] || OTA_SOFTWARE_CODE="$value"
+    value=$(json_string_value "$raw" "softwareVer" || true); [ -z "$value" ] || OTA_VERSION="$value"
+    value=$(json_string_value "$raw" "ssid" || true); [ -z "$value" ] || OTA_SSID="$value"
+    value=$(json_string_value "$raw" "fileMD5" || true); [ -z "$value" ] || OTA_MD5="$value"
+    value=$(json_number_value "$raw" "fileSize" || true); [ -z "$value" ] || OTA_FILE_SIZE="$value"
+
+    case "$raw" in
+        *softwareCodeCloud=*) value=${raw#*softwareCodeCloud=}; value=${value%%[^[:alnum:]._-]*}; [ -z "$value" ] || OTA_SOFTWARE_CODE="$value" ;;
+    esac
+    case "$raw" in
+        *deviceSoftwareVer=*) value=${raw#*deviceSoftwareVer=}; value=${value%%[^[:alnum:]._-]*}; [ -z "$value" ] || OTA_VERSION="$value" ;;
+    esac
+    case "$raw" in
+        *otaDeviceInfo.ssid=*) value=${raw#*otaDeviceInfo.ssid=}; value=${value%%[^[:alnum:]._-]*}; [ -z "$value" ] || OTA_SSID="$value" ;;
+    esac
+    case "$raw" in
+        *otaDeviceInfo.fileMD5=*) value=${raw#*otaDeviceInfo.fileMD5=}; value=${value%%[^[:alnum:]]*}; [ -z "$value" ] || OTA_MD5="$value" ;;
+    esac
+    case "$raw" in
+        *otaDeviceInfo.fileSize=*) value=${raw#*otaDeviceInfo.fileSize=}; value=${value%%[^0-9]*}; [ -z "$value" ] || OTA_FILE_SIZE="$value" ;;
+    esac
+
+    url=$(json_string_value "$raw" "otaFileDownloadAddr" || true)
+    if [ -z "$url" ] && [[ "$raw" == *'otaDeviceInfo.otaFileDownloadAddr='* ]]; then
+        url=${raw#*otaDeviceInfo.otaFileDownloadAddr=}
+        url=${url%%[[:space:]]*}
+    fi
+    [ -z "$url" ] || ota_log_url "$stamp" "$url"
+
+    if [[ "$raw" =~ download[[:space:]]+([0-9]{1,3})% ]]; then
+        progress=${BASH_REMATCH[1]}
+        [ "$progress" = "$OTA_LAST_PROGRESS" ] && return 0
+        if [ "$progress" = "0" ] && [ -z "$OTA_LAST_PROGRESS" ]; then
+            ota_emit "$stamp" "Download gestartet" "$progress"
+        else
+            ota_emit "$stamp" "Download läuft" "$progress"
+        fi
+        return 0
+    fi
+
+    case "$raw" in
+        *succeed\ downloading\ package*) ota_emit "$stamp" "Download abgeschlossen"; return 0 ;;
+        *固件MD5校验正确*) ota_emit "$stamp" "MD5-Prüfung erfolgreich"; return 0 ;;
+        *传输主板升级文件偏移:0*|*oat\ step:6*) ota_emit "$stamp" "Firmware Update läuft"; return 0 ;;
+        *升级包传输完成*) ota_emit "$stamp" "Firmwareübertragung abgeschlossen - Mainboard verarbeitet Update"; return 0 ;;
+        *主板升级成功\<5\>*) ota_emit "$stamp" "Firmware Update erfolgreich"; return 0 ;;
+        *\"code\":\"0053\"*)
+            if [[ "$raw" == *'"progress":"100"'* ]]; then
+                ota_emit "$stamp" "Firmware Update erfolgreich"
+            fi
+            return 0
+            ;;
+        *主板升级结束*) ota_emit "$stamp" "Firmware Update fertig"; return 0 ;;
+    esac
+}
+
+ota_state_get() {
+    local key="$1" line
+    [ -r "$OTA_STATE_FILE" ] || return 1
+    while IFS= read -r line; do
+        case "$line" in
+            "$key"=*) printf '%s\n' "${line#*=}"; return 0 ;;
+        esac
+    done < "$OTA_STATE_FILE"
+    return 1
+}
+
 write_log_line() {
     local raw="$1" stamp day logfile
     raw=${raw%$'\r'}
@@ -366,6 +542,7 @@ write_log_line() {
     day=${stamp%% *}
     logfile="$LOG_DIR/phnix_$day.log"
     printf '[%s] %s\n' "$stamp" "$raw" >> "$logfile" || { error "Logdatei kann nicht geschrieben werden: $logfile"; return 1; }
+    ota_process_line "$raw" "$stamp"
 }
 
 logger_supervisor() {
@@ -404,8 +581,6 @@ logger_supervisor() {
             cleaned=1; sleep "$SCAN_INTERVAL"; continue
         fi
 
-        # Intentionally no baud-rate argument here. The real PHNIX/SimTech USB
-        # serial endpoint accepts the other termios flags but can reject 115200.
         if ! stty -F "$port" cs8 -parenb -cstopb -ixon -ixoff -ixany -crtscts \
             -icanon -echo -echoe -echok -echonl -icrnl -inlcr -igncr -istrip min 1 time 0 2>/dev/null; then
             error "$port konnte nicht für USB-Serial 8N1 ohne Flow-Control konfiguriert werden."
@@ -419,6 +594,7 @@ logger_supervisor() {
         fd_open=1
         say "PHNIX-Debugport verbunden: $port (USB-Serial IF $USB_INTERFACE_NUM, 8N1; Baudrate nicht erzwungen)"
         printf '%s\n' "$port" > "$READY_FILE"
+        : >> "$LOG_DIR/phnix_$(date +%F).log" || warn "Tages-Logdatei konnte nicht angelegt werden."
 
         while :; do
             line=""
@@ -504,7 +680,7 @@ restart_phnix_service_once() {
 }
 
 status_heartbeat() {
-    local stamp day logfile port lines interval="$HEARTBEAT_INTERVAL" sleep_pid=""
+    local stamp day logfile port lines interval="$HEARTBEAT_INTERVAL" sleep_pid="" ota_status=""
     [ "$DAEMON_MODE" -eq 0 ] || interval=60
 
     heartbeat_stop() {
@@ -523,16 +699,19 @@ status_heartbeat() {
         sleep_pid=""
 
         stamp=$(date '+%Y-%m-%d %H:%M:%S'); day=${stamp%% *}; logfile="$LOG_DIR/phnix_$day.log"
-        port=""; lines=0
+        port=""; lines=0; ota_status=""
         [ ! -s "$READY_FILE" ] || { IFS= read -r port < "$READY_FILE" || port=""; }
         if [ -f "$logfile" ]; then
             lines=$(wc -l < "$logfile" 2>/dev/null || printf '?\n'); lines=${lines//[[:space:]]/}; [ -n "$lines" ] || lines="?"
         fi
+        ota_status=$(ota_state_get status 2>/dev/null || true)
         if [ -n "$port" ]; then
-            printf '[%s] Logger aktiv | Port: %s | Log: %s | Zeilen: %s\n' "$stamp" "$port" "${logfile##*/}" "$lines"
+            printf '[%s] Logger aktiv | Port: %s | Log: %s | Zeilen: %s' "$stamp" "$port" "${logfile##*/}" "$lines"
         else
-            printf '[%s] Logger aktiv | Debugport getrennt - warte auf USB-Reconnect | Log: %s | Zeilen: %s\n' "$stamp" "${logfile##*/}" "$lines"
+            printf '[%s] Logger aktiv | Debugport getrennt - warte auf USB-Reconnect | Log: %s | Zeilen: %s' "$stamp" "${logfile##*/}" "$lines"
         fi
+        [ -z "$ota_status" ] || printf ' | OTA: %s' "$ota_status"
+        printf '\n'
     done
 }
 
@@ -612,6 +791,34 @@ run_logger_core() {
     wait "$LOGGER_PID"
 }
 
+show_ota_status() {
+    local stamp status progress version code ssid url_detected md5 size
+    [ -r "$OTA_STATE_FILE" ] || { say "OTA-Status: noch kein Firmware-Update erkannt."; return 0; }
+
+    stamp=$(ota_state_get timestamp 2>/dev/null || true)
+    status=$(ota_state_get status 2>/dev/null || true)
+    progress=$(ota_state_get progress 2>/dev/null || true)
+    version=$(ota_state_get version 2>/dev/null || true)
+    code=$(ota_state_get software_code 2>/dev/null || true)
+    ssid=$(ota_state_get ssid 2>/dev/null || true)
+    url_detected=$(ota_state_get url_detected 2>/dev/null || true)
+    md5=$(ota_state_get md5 2>/dev/null || true)
+    size=$(ota_state_get file_size 2>/dev/null || true)
+
+    say "OTA-Status: ${status:-unbekannt}"
+    [ -z "$stamp" ] || say "OTA-Zeit: $stamp"
+    [ -z "$progress" ] || say "OTA-Fortschritt: $progress %"
+    [ -z "$version" ] || say "OTA-Version: $version"
+    [ -z "$code" ] || say "OTA-SoftwareCode: $code"
+    [ -z "$ssid" ] || say "OTA-SSID: $ssid"
+    if [ "$url_detected" = "1" ]; then
+        say "OTA-Download-URL erkannt: ja"
+        say "OTA-URL-Log: ${OTA_URL_LOG##*/}"
+    fi
+    [ -z "$md5" ] || say "OTA-MD5: $md5"
+    [ -z "$size" ] || say "OTA-Dateigröße: $size Byte"
+}
+
 show_background_status() {
     local rc pid="" port="" day logfile lines=0 last=""
     resolve_log_dir || return 4
@@ -625,6 +832,7 @@ show_background_status() {
     if [ "$rc" -ne 0 ]; then
         say "PHNIX Hintergrund-Logger läuft nicht."
         [ ! -f "$STATUS_FILE" ] || { last=$(tail -n 1 "$STATUS_FILE" 2>/dev/null || true); [ -z "$last" ] || say "Letzter Status: $last"; }
+        show_ota_status
         return 1
     fi
 
@@ -641,6 +849,7 @@ show_background_status() {
     if [ -n "$port" ]; then say "Debugport: $port"; else say "Debugport: getrennt / noch nicht bereit"; fi
     say "Logdatei: ${logfile##*/}"
     say "Zeilen heute: $lines"
+    show_ota_status
     [ ! -f "$STATUS_FILE" ] || { last=$(tail -n 1 "$STATUS_FILE" 2>/dev/null || true); [ -z "$last" ] || say "Letzter Status: $last"; }
     return 0
 }
@@ -664,6 +873,7 @@ follow_background_status() {
     say ""
     say "Live-Status des PHNIX Loggers (Ctrl+C beendet NUR diese Anzeige)."
     say "Der Hintergrund-Logger läuft auch nach Schließen dieses Terminals weiter."
+    say "OTA-Ereignisse werden sofort, Lebenszeichen alle 60 Sekunden angezeigt."
     say ""
 
     trap 'viewer_interrupted=1' INT TERM
@@ -824,4 +1034,6 @@ main() {
     esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
