@@ -504,11 +504,24 @@ restart_phnix_service_once() {
 }
 
 status_heartbeat() {
-    local stamp day logfile port lines interval="$HEARTBEAT_INTERVAL"
+    local stamp day logfile port lines interval="$HEARTBEAT_INTERVAL" sleep_pid=""
     [ "$DAEMON_MODE" -eq 0 ] || interval=60
-    trap 'exit 0' INT TERM
+
+    heartbeat_stop() {
+        if [ -n "$sleep_pid" ] && kill -0 "$sleep_pid" 2>/dev/null; then
+            kill -TERM "$sleep_pid" 2>/dev/null || true
+            wait "$sleep_pid" 2>/dev/null || true
+        fi
+        exit 0
+    }
+
+    trap heartbeat_stop INT TERM
     while :; do
-        sleep "$interval" || exit 0
+        sleep "$interval" &
+        sleep_pid=$!
+        wait "$sleep_pid" || exit 0
+        sleep_pid=""
+
         stamp=$(date '+%Y-%m-%d %H:%M:%S'); day=${stamp%% *}; logfile="$LOG_DIR/phnix_$day.log"
         port=""; lines=0
         [ ! -s "$READY_FILE" ] || { IFS= read -r port < "$READY_FILE" || port=""; }
