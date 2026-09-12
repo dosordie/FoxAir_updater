@@ -12,7 +12,20 @@ Diese Anleitung beschreibt den PHNIX-Debuglogger für Raspberry Pi OS / Debian. 
 
 # Schnellstart
 
-## 1. Skript herunterladen
+## 1. Voraussetzungen einmalig installieren
+
+Der Raspberry Pi muss per USB mit dem LTE-Modem verbunden sein. `adb devices` sollte das Modem als `device` anzeigen. Die USB-/ADB-Grundinstallation ist ausführlicher in [`firmware_backup_lte.md`](firmware_backup_lte.md) beschrieben.
+
+Für den Logger werden auf Raspberry Pi OS / Debian insbesondere `adb`, `udevadm` und `stty` benötigt. Am einfachsten einmalig installieren bzw. sicherstellen:
+
+```bash
+sudo apt update
+sudo apt install -y adb udev coreutils
+```
+
+Das Skript erkennt fehlende Programme ebenfalls. Im interaktiven Vordergrund kann es die Installation nach Rückfrage anbieten. Für den späteren Hintergrundbetrieb ist es jedoch zuverlässiger, die Pakete vorher einmalig zu installieren.
+
+## 2. Skript herunterladen
 
 Auf dem Raspberry Pi per SSH anmelden und das Skript z. B. im Home-Verzeichnis herunterladen:
 
@@ -23,9 +36,7 @@ wget -O logging.sh \
 chmod +x logging.sh
 ```
 
-Falls benötigte Programme wie `adb` fehlen, weist das Skript darauf hin und kann unter Raspberry Pi OS / Debian die passenden Pakete nach Bestätigung installieren.
-
-## 2. Erst einmal sicher testen – ohne Dienstneustart
+## 3. Erst einmal sicher testen – ohne Dienstneustart
 
 ```bash
 ./logging.sh --background --no-restart
@@ -52,7 +63,7 @@ Dauerlogging aktiv. Hintergrundbetrieb ist vom Terminal entkoppelt.
 
 `/dev/ttyUSB4` ist nur ein Beispiel. Das Skript sucht den richtigen USB-Port selbst anhand von VID/PID und USB-Interface; die Nummer kann nach einem Neustart anders sein.
 
-## 3. Live-Anzeige verlassen
+## 4. Live-Anzeige verlassen
 
 Nach `--background` wird automatisch eine Live-Anzeige geöffnet.
 
@@ -66,7 +77,7 @@ wird **nur diese Anzeige beendet**. Der eigentliche Logger läuft im Hintergrund
 
 Auch wenn das SSH-/Terminalfenster geschlossen wird, läuft der Hintergrund-Logger weiter.
 
-## 4. Status prüfen
+## 5. Status prüfen
 
 ```bash
 ./logging.sh --status
@@ -86,7 +97,7 @@ OTA-URL-Log: phnix_ota_urls.log (bereit, noch leer)
 
 Eine Rohlogdatei mit `0` Zeilen ist normal, solange noch keine Debugdaten empfangen wurden.
 
-## 5. Live-Anzeige später wieder öffnen
+## 6. Live-Anzeige später wieder öffnen
 
 ```bash
 ./logging.sh --follow
@@ -94,7 +105,7 @@ Eine Rohlogdatei mit `0` Zeilen ist normal, solange noch keine Debugdaten empfan
 
 `Ctrl+C` beendet wieder nur die Anzeige, nicht den Logger.
 
-## 6. Logger beenden
+## 7. Logger beenden
 
 ```bash
 ./logging.sh --stop
