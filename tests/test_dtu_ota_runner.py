@@ -379,6 +379,26 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertNotIn("AUTONOMOUS_DTU_RUNNER", environment)
         self.assertEqual(label, "foxair-adb-mqtt-debug-ota-update")
 
+    def test_mqtt_ota_v34_debug_offer_uses_known_release_metadata(self):
+        self.assertIn("ota-update-v34", qemu_work_lab_backend.MQTT_INJECTION_KINDS)
+        payload = qemu_work_lab_backend.ota_update_debug_payload("V3.4")
+        self.assertEqual(len(payload), 231)
+        message = json.loads(payload)
+        self.assertEqual(message["code"], "0033")
+        self.assertEqual(message["param"], {
+            "softwareCode": "82400644",
+            "softwareVer": "V3.4",
+            "ssid": "0063",
+            "fileMD5": "149A586EDE6F035B385762EA48C71605",
+            "fileSize": 289806,
+            "otaFileDownloadAddr": "http://127.0.0.1:8081/phnixIot_device_OTA",
+        })
+        environment, label = qemu_work_lab_backend._scenario_to_lab_env(
+            "mqtt-debug", "ota-update-v34"
+        )
+        self.assertEqual(environment["MQTT_DEBUG_MODE"], "1")
+        self.assertEqual(label, "foxair-adb-mqtt-debug-ota-update-v34")
+
     def test_explicit_vm_reset_removes_autonomous_runner_state(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

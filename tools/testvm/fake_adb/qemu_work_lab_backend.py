@@ -379,12 +379,12 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
             return None
         return env, label
 
-    if kind == "mqtt-debug" and value == "ota-update":
+    if kind == "mqtt-debug" and value in ("ota-update", "ota-update-v34"):
         # Run the original service normally, without the autonomous OTA
         # runner's initial QEMU/GDB stop. Readiness is confirmed from its real
         # OTA_GET subscription before the one-shot is queued.
         env["MQTT_DEBUG_MODE"] = "1"
-        return env, "foxair-adb-mqtt-debug-ota-update"
+        return env, f"foxair-adb-mqtt-debug-{value}"
 
     return None
 
@@ -756,17 +756,30 @@ def ensure_service_watchdog() -> None:
         _SERVICE_WATCHDOG_THREAD.start()
 
 
-def ota_update_debug_payload() -> bytes:
-    """Known valid V3.3 cloud offer, kept below the original 232-byte buffer."""
+def ota_update_debug_payload(version: str = "V3.3") -> bytes:
+    """Known cloud offer, kept below the original 232-byte parser buffer."""
+    releases = {
+        "V3.3": {
+            "fileMD5": "CEB6A4BF386FF644E23E410023E74673",
+            "fileSize": 287598,
+        },
+        "V3.4": {
+            "fileMD5": "149A586EDE6F035B385762EA48C71605",
+            "fileSize": 289806,
+        },
+    }
+    try:
+        release = releases[version]
+    except KeyError as exc:
+        raise ValueError(f"unsupported OTA debug version: {version}") from exc
     message = {
         "cmd": "CMD_OTA",
         "code": "0033",
         "param": {
             "softwareCode": "82400644",
-            "softwareVer": "V3.3",
+            "softwareVer": version,
             "ssid": "0063",
-            "fileMD5": "CEB6A4BF386FF644E23E410023E74673",
-            "fileSize": 287598,
+            **release,
             "otaFileDownloadAddr": "http://127.0.0.1:8081/phnixIot_device_OTA",
         },
     }
@@ -783,19 +796,20 @@ def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
         topic = "/a1LABTEST01/LABDEVICE001/user/get"
         payload = DEVICE_STATUS_REQUEST_HEX
         label = "mainboard-status-request-07d1"
-    elif kind == "ota-update":
+    elif kind in ("ota-update", "ota-update-v34"):
         if payload_hex:
-            return False, "mqtt-send ota-update erwartet keine weiteren Argumente"
+            return False, f"mqtt-send {kind} erwartet keine weiteren Argumente"
         if root_path("/data/foxair_ota_runner/active.lock").exists():
             return False, "aktiver autonomer OTA-Run blockiert den MQTT-One-Shot-Test"
-        ok, preparation = _start_runner("mqtt-debug", "ota-update")
+        ok, preparation = _start_runner("mqtt-debug", kind)
         if not ok:
             return False, preparation
         if len(service_pids()) != 1:
             return False, "MQTT-One-Shot erfordert genau eine phnixIot4G-Instanz"
         topic = "/a1LABTEST01/LABDEVICE001/user/OTA_GET"
-        payload = ota_update_debug_payload().hex()
-        label = "known-v33-ota-download-offer"
+        version = "V3.4" if kind == "ota-update-v34" else "V3.3"
+        payload = ota_update_debug_payload(version).hex()
+        label = f"known-{version.lower().replace('.', '')}-ota-download-offer"
     elif kind == "raw":
         topic = "/a1LABTEST01/LABDEVICE001/user/get"
         payload = (payload_hex or "").replace(" ", "")
@@ -827,7 +841,7 @@ def inject_mqtt(kind: str, payload_hex: str | None = None) -> tuple[bool, str]:
 
 
 DEVICE_STATUS_REQUEST_HEX = "630307d1005a9cfe"
-MQTT_INJECTION_KINDS = ("status-request", "ota-update", "raw")
+MQTT_INJECTION_KINDS = ("status-request", "ota-update", "ota-update-v34", "raw")
 
 
 def _idle_ota_info() -> bytes:

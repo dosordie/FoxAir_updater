@@ -188,17 +188,25 @@ anschließend genau einmal senden:
 
 ```bash
 sudo foxair-fake-adbctl mqtt-send ota-update
+sudo foxair-fake-adbctl mqtt-send ota-update-v34
 ```
 
 Der lokale MQTT-Stub liefert dabei den bekannten Mainboard-Code `0033` auf
-`/user/OTA_GET` mit Softwarecode `82400644`, Version `V3.3`, SSID `0063` und
-der rein lokalen URL `http://127.0.0.1:8081/phnixIot_device_OTA`. Es werden
+`/user/OTA_GET` mit Softwarecode `82400644`, SSID `0063` und der rein lokalen
+URL `http://127.0.0.1:8081/phnixIot_device_OTA`. `ota-update` bietet V3.3 mit
+den bekannten V3.3-Dateimetadaten an; `ota-update-v34` verwendet V3.4 sowie
+Größe und MD5 der bekannten V3.4-Datei. Es werden
 keine Debugzeilen vorgetäuscht: TCP `5039` enthält ausschließlich die Ausgabe
 des originalen Dienstes in QEMU. Der Befehl ersetzt den wartenden GDB-Lauf
 durch einen normalen Originaldienst und wartet auf dessen echte
 `OTA_GET`-Subscription, bevor er die Nachricht zustellt. Der lokale URL-Endpunkt muss für diesen
-reinen Sichtbarkeitstest nicht erreichbar sein; ein Firmwaredownload oder
-erfolgreicher OTA-Abschluss wird damit nicht behauptet.
+reinen Sichtbarkeitstest nicht erreichbar sein; der im Work-Lab vorhandene
+Firmware-HTTP-Stub wird durch diese beiden Befehle noch nicht aktiviert. Ein
+Firmwaredownload oder erfolgreicher OTA-Abschluss wird damit nicht behauptet.
+
+Für einen V3.4-Neuversionspfad muss das simulierte Board zuvor auf einer
+anderen Version stehen, beispielsweise mit `board-version 0033`. Bei
+`board-version 0034` ist stattdessen die Gleichversionsablehnung zu erwarten.
 
 ## Konfiguration
 
