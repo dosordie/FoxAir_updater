@@ -39,10 +39,18 @@ Bewertung:
 - `E19` = **±E19 %**, keine Halbierung.
 - `MAIN:2065` = **Verdampfungstemperatur** aus dem Niederdruck-/Kältemittelpfad; DWIN/PHNIX bestätigt die Bezeichnung.
 - `MAIN:2066` = **Abgasüberhitzung**, `MAIN:2067` = **Rückgas-/Saugüberhitzung**; die DWIN-Texte bestätigen damit die zuvor nur funktional abgeleiteten Namen.
-- `MAIN:1351/E20` und `MAIN:1352/E21` sind die beiden öffentlichen Gain-/Zeitparameter des Feedbackreglers. Der Regler ist **PI-artig**, besitzt eine Totzone von ungefähr `±0,5 K`, eine proportionale Begrenzung von etwa `±60` Schritten und eine Ausgangs-Slew-Rate von höchstens etwa `±5` Sollwertschritten pro Regleraufruf.
+- `MAIN:1351/E20` und `MAIN:1352/E21` sind die beiden öffentlichen Gain-/Zeitparameter des Feedbackreglers. Der Regler ist **PI-artig**, besitzt eine Totzone von ungefähr `±0,5 K`, eine proportionale Begrenzung von etwa `±60` Schritten und eine Ausgangs-Slew-Rate von höchstens etwa `±5` Sollwertschritten pro tatsächlicher Korrektur.
+- Bei kleiner Regelabweichung `-2 K < Fehler < +2 K` verarbeitet der PI-Helper nur **jeden vierten Aufruf**. Damit beträgt das effektive Korrekturintervall nahe am Sollwert ungefähr **3,11 s** statt 0,778 s.
+- Die 20 Auto-Matrixzustände sind vollständig rekonstruiert. Die Randzustände berücksichtigen zusätzlich den **Trend von T12/Heißgas** gegenüber dem vorherigen T12-Sample.
+- `E20/E21` werden vom Mainboard ohne Wertebereichsprüfung als signed 8-bit übernommen. Auch die DWIN-Kommunikationsroutine führt keine Min/Max-Prüfung durch. Insbesondere `E21=0` ist wegen der direkten Berechnung `1/E21` **nicht zulässig/sicher**.
 - Der Haupt-EEV-Regler wird ungefähr alle **0,778 s** aufgerufen; die 5-Sample-Überhitzungsmittelung umfasst damit ungefähr **3,89 s**.
 - Der Stepper kann ungefähr **20,1 Schritte/s** nachfahren.
-- `E17` wird in einem Defrost-State direkt als Haupt-EEV-Zielposition benutzt.
+- `E17` wird im öffentlich erkennbaren **Abtaubetrieb `MAIN:2012 = 2`** in einem Defrost-Unterzustand direkt als Haupt-EEV-Zielposition benutzt.
+- `MAIN:2011` ist der öffentliche **Gerät-EIN/AUS-/Betriebsstatus** (`1=Ein`, `0=Aus`). Der bisher anonyme interne Schalter `0x2001660C+0x1F Bit0` gehört zu diesem Status.
+- `0x20016AA4+0x02` ist kein Startzähler, sondern ein **180-Takt-Stabilisierungs-/Ausschaltcountdown**. Im OFF-Pfad ergibt sich daraus eine harte EEV-Sequenz **480 → 0 Schritte**.
+- `0x20016FD7` ist nur ein **Latch 'E07-Gate war aktiv'**; beim Abfallen des Gates startet es den 180er Countdown einmalig neu.
+- Der bisher unbekannte Overrideblock `0x20016C10` gehört zum **Werkstest / Automatic Commercial Inspection**. `MAIN:1378` ist dort die direkte Haupt-EEV-Vorgabe; dieser Pfad ist für den normalen GL9-Betrieb irrelevant.
+- Der frühe feste `350`-Schritt-Pfad ist als **T04-Sensorfehler-/Ungültigkeitsfallback** geschlossen (`0x08088134` liest das T04-Statusfeld `0x20015FA8+0x16`).
 - `185 × 0,9 ≈ 166` ist **nicht** der direkte Firmwarepfad; `0,9` skaliert den Smart-Kennfeldwert nach T01.
 
 ---
@@ -70,6 +78,8 @@ Bewertung:
 | 1211 | E07-3 | **EEV Mindestöffnung ≥61 Hz, T04 −4,9…0,0 °C** | dito |
 | 1215 | E07-4 | **EEV Mindestöffnung ≥61 Hz, T04 −9,9…−5,0 °C** | dito |
 | 1216 | E07-5 | **EEV Mindestöffnung ≥61 Hz, T04 ≤ −10,0 °C** | dito |
+| 2011 | – | **Gerät-EIN/AUS-/Betriebsstatus** | `1=Ein`, `0=Aus`; aus `0x2001660C+0x1F Bit0` aufgebaut |
+| 2012 | – | **Betriebsmodusstatus** | `2=Abtauen`; öffentlicher Defroststatus des E17-Pfads |
 | 2020 | – | **Haupt-EEV Istposition / Schritte** | intern nachgeführte Stepperposition |
 | 2053 | T12 | **Verdichter-Austritts-/Heißgastemperatur** | 5-stufige Auto-Matrixachse |
 | 2065 | – | **Verdampfungstemperatur** | aus Niederdruck + A26/Kältemittel berechnete Sättigungsreferenz, `0,1 °C` |
@@ -192,7 +202,33 @@ Bei ca. **29 Hz** ist daher – sofern das Gate aktiv ist – **globales E07** r
 
 E07/E07-x sind softwareseitige Mindestöffnungen, **keine mechanischen Minima**.
 
-Das Gate-Bit `0x20016E18+3 Bit1` ist inzwischen funktional als **übergeordnete Stabil-/Normalbetriebsfreigabe** einzuordnen: Es wird von mehreren Betriebs-, Laufzeit- und Schutzbedingungen gesetzt bzw. gelöscht und ist kein eigener EEV-Timer. Der exakte PHNIX-Klartextname bzw. ein direkter öffentlicher Statusspiegel ist noch nicht geschlossen.
+Das Gate-Bit `0x20016E18+3 Bit1` ist funktional als **übergeordnete Stabil-/Normalbetriebsfreigabe** einzuordnen. Die zentrale Setz-/Löschfunktion liegt in V3.4 bei ungefähr `0x0805E3A4`.
+
+Direkt rekonstruierte Bedingungen sind unter anderem:
+
+```text
+0x20016E18+3 Bit0 == 0
+    → Gate Bit1 löschen
+
+öffentlicher Abtaubetrieb MAIN:2012 == 2
+(zugehöriger interner Defroststatus 0x2001660C+0x20 Bits2..3 != 0)
+    → Gate Bit1 sofort setzen
+
+Stabilisierungs-/Ausschaltcountdown 0x20016AA4+0x02 != 0
+    → Gate Bit1 löschen
+
+sonst u. a. Mindest-/Stabilitätsbedingungen:
+    0x20016BC8+0x02 >= 120
+    UND (0x20016FA0+0x00 >= 50
+         ODER 0x20016214+0x01 Bits1..2 >= 2)
+    UND 0x20016E8C+0x01 >= 20
+    UND weitere Mode-/Statusbedingungen
+    → Gate Bit1 setzen
+```
+
+`0x20016AA4+0x02` ist **nicht** `MAIN:2071`. `MAIN:2071 / Kompressor-Sollfrequenz` liegt im selben Block bei `+0x08`. Das Feld `+0x02` ist inzwischen funktional als **180-Takt-Stabilisierungs-/Ausschaltcountdown** geschlossen: bei laufendem Verdichter und noch nicht freigegebenem Gate wird es auf `180` zurückgesetzt; bei stehendem Verdichter läuft es herunter. Zusätzlich merkt `0x20016FD7`, dass Gate Bit1 zuvor aktiv war. Fällt das Gate ab, startet dieses Latch den 180er Countdown einmalig neu und wird anschließend gelöscht.
+
+Damit ist die **Funktion** des Gates weitgehend geschlossen: Es verhindert die normale E07-Mindestöffnungslogik während nicht stabilisierten Start-/Ausschalt-/Sonderphasen und erlaubt sie erst nach erfüllten Betriebs-/Zeitbedingungen. Während Abtauung wird es dagegen bewusst sofort gesetzt. Ein 1:1-Spiegel dieses Bits im öffentlichen Statusbereich wurde trotz Xref-Suche nicht gefunden. Offen bleibt damit im Wesentlichen nur der offizielle PHNIX-Klartextname des internen Gate-Bits.
 
 ---
 
@@ -351,7 +387,7 @@ Rückschaltung ca. `2 K` tiefer:
 
 Damit ist die ehemals offene zweite Matrixachse als **Verdichter-Austritts-/Heißgastemperatur T12** geschlossen.
 
-## 7.3 Matrixwirkung
+## 7.3 Matrixwirkung – alle 20 Zustände
 
 Dispatcherzustände:
 
@@ -362,21 +398,33 @@ Dispatcherzustände:
 30 31 32 33 34
 ```
 
-Direkt sichtbare Randaktionen:
+Zusätzlich zur aktuellen T12-Klasse speichert die Firmware das vorherige T12-Sample bei:
 
 ```text
-00 → stark schließen, etwa -8/-4 Schritte
-01 → schließen, etwa -6/-2 Schritte
-02 → bis -4
-03 → bis -2
-04 → neutraler Randfall
-...
-34 → stark öffnen, bis +8
+0x20016F20 = vorheriges T12 / Heißgas
 ```
 
-Die inneren Zustände verwenden überwiegend den Feedback-Helper `0x08054868`; teils wird E02/E18 vorher um `-1` oder `-2 K` verschoben.
+Nach der Matrixauswertung wird das aktuelle T12 dorthin übernommen. Die Randzustände verwenden damit nicht nur die absolute Heißgastemperatur, sondern auch deren **Trend**.
 
-Auto ist daher eine **zustandsabhängige nichtlineare Überhitzungsregelung mit Heißgas-/Differenzklassifikation**.
+Vollständig rekonstruierte Wirkung:
+
+| 2066-State \ T12-State | 0 | 1 | 2 | 3 | 4 |
+|---:|---|---|---|---|---|
+| **0** | T12 nicht steigend: `−8`; steigend: `−4` | nicht steigend: `−6`; steigend: `−2` | nicht steigend: `−4`; steigend: keine direkte Schrittänderung | nicht steigend: `−2`; steigend: keine direkte Schrittänderung | neutral / keine direkte Korrektur |
+| **1** | PI mit E02/E18 | PI mit E02/E18 | PI mit E02/E18 | PI mit E02/E18 | PI mit **E02/E18 −1 K** |
+| **2** | PI mit **E02/E18 −1 K** | PI mit −1 K | PI mit −1 K | PI mit −1 K | PI mit **E02/E18 −2 K** |
+| **3** | PI mit **E02/E18 −1 K** | PI mit **E02/E18 −2 K** | PI mit −2 K | PI mit −2 K | bei T12 nicht fallend/steigend: **`+8` Schritte**, bei fallendem T12 keine direkte +8-Korrektur |
+
+Die direkten `±N`-Aktionen setzen/rebasieren zusätzlich interne Reglerzustände, damit der PI-Anteil nicht gegen die harte Randkorrektur weiterintegriert.
+
+Interpretation des Codes:
+
+- **niedrige Abgasüberhitzung + niedrige T12-Klasse:** Ventil wird aktiv geschlossen; stärker, wenn T12 nicht ansteigt;
+- **mittlere Bereiche:** normale PI-Regelung gegen E02/E18;
+- **hohe thermische Zustände:** wirksamer Soll-SH wird um `1…2 K` abgesenkt, wodurch der PI-Regler tendenziell weiter öffnet;
+- **State 34:** solange T12 noch nicht fällt, erfolgt zusätzlich eine direkte `+8`-Schritt-Öffnung.
+
+Auto ist damit eine **zustandsabhängige nichtlineare Überhitzungsregelung mit zusätzlicher Heißgas-Trendlogik**.
 
 ---
 
@@ -417,26 +465,61 @@ E21 geht in den zeitabhängigen/integralen Anteil über einen Divisor ein:
 ... × (1 / E21)
 ```
 
-Damit verhält sich E21 funktional wie ein **I-/Zeitfaktor bzw. Integralskalierungs-Divisor**. Im Mainboardpfad wurde bislang **keine Schutzvalidierung gegen E21=0** gefunden. Daher ist `E21=0` nicht als sinnvoller Einstellwert zu dokumentieren oder zu testen, solange kein vorgeschalteter HMI-Minimalwert nachgewiesen ist.
+Damit verhält sich E21 funktional wie ein **I-/Zeitfaktor bzw. Integralskalierungs-Divisor**.
+
+Die Parameter-Synchronisation ist direkt:
+
+```text
+MAIN:1351 → low byte → E20 / 0x20016C9C+8
+MAIN:1352 → low byte → E21 / 0x20016C9C+9
+```
+
+Das Mainboard führt dabei **keine Wertebereichs- oder Nullprüfung** durch. Im DWIN-Referenzcode werden E20 (`0547H/2547H`) und E21 (`0548H/2548H`) ebenfalls nur über die generische `Four_Variable_Communication` synchronisiert; diese Routine prüft Änderungen, aber keine Min-/Max-Werte.
+
+Unmittelbar danach berechnet der Regler:
+
+```text
+I_factor = 1.0 / E21
+```
+
+Daher gilt für die Firmwareanalyse eindeutig:
+
+> **E21=0 darf nicht verwendet werden.** Das Mainboard selbst verhindert den Wert nicht. Ob ein bestimmtes DGUS-Seitenwidget die Eingabe zusätzlich begrenzt, ist davon unabhängig und im ASM-Kommunikationspfad nicht belegt.
 
 ## 8.3 Reglercharakteristik
 
-Der Helper ist zustandsbehaftet und besitzt mindestens folgende rekonstruierte Eigenschaften:
+Der Helper ist zustandsbehaftet und besitzt folgende rekonstruierte Eigenschaften:
 
 ```text
-Totzone um den Sollwert: ungefähr ±0,5 K
-mehrere nichtlineare Fehlerzonen: u. a. um ±2 / ±3 / ±5 K
-P-Korrektur begrenzt: ungefähr ±60 Schritte
-Ausgangsänderung pro Regleraufruf: maximal ungefähr ±5 Schritte
+Fehler = MAIN2067 - wirksamer Soll-SH
+Totzone: ungefähr ±0,5 K
+Fehlerzonen: um ±0,5 / ±2 / ±3 / ±5 K
+P-Korrektur: E20 × Fehler, zonenabhängig skaliert, begrenzt etwa ±60 Schritte
+I-Korrektur: (1/E21) × Fehler × zonenabhängigen Faktor
+Ausgangsänderung je tatsächlich verarbeiteter Korrektur: max. etwa ±5 Schritte
 ```
 
-Ein expliziter D-Anteil wurde nicht gefunden. Die Struktur ist daher am treffendsten als **nichtlinearer PI-artiger Überhitzungsregler** zu bezeichnen.
-
-Bei einem Regleraufruf ungefähr alle `0,778 s` entspricht die ±5-Schritt-Slew-Begrenzung einer maximalen Sollwertänderung von ungefähr:
+Zusätzlich existiert eine **zeitliche Beruhigung nahe am Sollwert**:
 
 ```text
-5 / 0,778 ≈ 6,4 Schritte/s
+wenn -2 K < Fehler < +2 K:
+    interner Zähler ++
+    Aufruf 1..3 → bisheriges Ziel unverändert zurückgeben
+    Aufruf 4    → Korrektur berechnen, Zähler zurücksetzen
+sonst:
+    Zähler zurücksetzen und sofort korrigieren
 ```
+
+Bei einem Scheduleraufruf etwa alle `0,778 s` ergibt das:
+
+```text
+|Fehler| >= 2 K → mögliche Korrektur etwa alle 0,778 s
+|Fehler| <  2 K → mögliche Korrektur etwa alle 3,11 s
+```
+
+Die nominelle ±5-Schritt-Slew-Begrenzung entspricht außerhalb der kleinen Fehlerzone maximal ungefähr `6,4 Schritte/s`. Innerhalb `±2 K` ist die effektive Sollwertänderung durch die 4-Aufruf-Beruhigung entsprechend langsamer.
+
+Ein expliziter D-Anteil wurde nicht gefunden. Die Struktur ist daher am treffendsten als **nichtlinearer PI-artiger Überhitzungsregler mit Totzone, Fehlerzonen, Debounce und Slew-Begrenzung** zu bezeichnen.
 
 Der Steppermotor selbst kann schneller nachfahren; siehe Zeitbasis weiter unten.
 
@@ -569,16 +652,34 @@ Der Messpunkt muss deshalb mit `2048/T04`, `2045/T01`, `2071`, `2067` und `2020`
 
 # 12. E17 – direkter Abtaupfad
 
-`E17 / MAIN:1147` ist nicht nur ein unbenutzter Reservewert. In einem eindeutig zum Defrost-/Abtaubetrieb gehörenden internen State wird E17 **direkt als Haupt-EEV-Zielposition** übernommen.
+`E17 / MAIN:1147` ist vollständig als **Haupt-EEV Abtau-Zielöffnung** geschlossen.
+
+Der öffentliche Betriebsmodusstatus ist:
+
+```text
+MAIN:2012 = 2  → Abtauen / Defrost
+```
+
+Derselbe interne Defrostzustand, aus dem der Statusbuilder `MAIN:2012 = 2` erzeugt, lässt den Abtau-Unterzustandsautomaten laufen. In dessen State `2` schreibt V3.4 den Parameter E17 direkt in die Haupt-EEV-Zielposition:
+
+```text
+öffentlicher Betrieb: MAIN:2012 == 2
+    ↓
+interner Defrost-Unterzustand 0x200168F0[0] == 2
+    ↓
+0x200169E4+0x12 = E17 / MAIN:1147
+    ↓
+0x20016AC4+0x02 = Haupt-EEV-Zielposition
+```
 
 Vereinfacht:
 
 ```text
-if defrost_EEV_state_active:
+if MAIN2012 == DEFROST and defrost_substate == 2:
     main_EEV_target = E17
 ```
 
-Damit ist für GL9 die technische Bezeichnung **„Haupt-EEV Abtau-Zielöffnung“** belastbar. Noch offen ist nur die vollständige Rückführung des auslösenden internen Defrost-States auf den offiziellen öffentlichen Statusnamen bzw. ein einzelnes Modbus-Bit.
+Damit ist E17 nicht nur über Defaultwert oder Kontext interpretiert, sondern **binär bis zum öffentlichen Abtaustatus nachgewiesen**. Während desselben Defrostbetriebs wird außerdem das E07-Gate sofort gesetzt.
 
 ---
 
@@ -640,17 +741,154 @@ Wichtig für Logauswertungen: `2020` kann deshalb einer Sollwertänderung sichtb
 
 ---
 
-# 14. Unbekannter Haupt-EEV-Sonderoverride
+# 14. Sonderpfade: Werkstest, Start/Homing und Sensorfallback
 
-Neben Auto/Smart, E07-Clamp und E17-Abtaupfad existiert noch ein separater interner Overrideblock bei:
+## 14.1 `0x20016C10` = Werkstest / Automatic Commercial Inspection
+
+Der zuvor unbekannte Overrideblock ist geschlossen. Die Parameter-Synchronisation ordnet den Block dem öffentlichen Factory-Test-Bereich zu:
 
 ```text
-0x20016C10
+MAIN:1371 → 0x20016C10+0x04  Factory test mode
+MAIN:1372 → +0x06            Automatic commercial inspection on/off
+MAIN:1373 → +0x07            Commercial inspection mode
+MAIN:1374 → +0x0A            Target temperature
+MAIN:1375 → +0x09            Compressor frequency
+MAIN:1376 → +0x0C            Fan 1 speed
+MAIN:1377 → +0x0E            Fan 2 speed
+MAIN:1378 → +0x10            Main EEV
+MAIN:1380 → +0x08            Water-pump speed
 ```
 
-Wenn dessen interner State `+5 == 3` aktiv ist, kann ein Feld bei `+0x10` die normale Haupt-EEV-Zielposition direkt ersetzen. Funktional ist damit ein **Sonderbetriebs-/Overridepfad für das Haupt-EEV** nachgewiesen.
+Der DWIN-Referenzcode bezeichnet `MAIN:1378` ausdrücklich als:
 
-Die offizielle Bedeutung dieses States ist noch nicht geschlossen. Mögliche Klassen sind Service/Test, Start/Recovery oder ein anderer Sonderbetriebszustand; ohne weiteren Xref-Beleg wird keine davon als Name übernommen.
+> **自动商检主路电子膨胀阀 – Automatic commercial inspection main electronic expansion valve**
+
+Im Haupt-EEV-Code gilt sinngemäß:
+
+```text
+if factory_internal_state(+5) == 3:
+    if MAIN1378 / block+0x10 != 0:
+        target = MAIN1378
+    else:
+        target = normal_base
+```
+
+Damit ist `0x20016C10` **kein unbekannter Recovery-Regler**, sondern ein Werkstest-/Produktionsprüfpfad. Für den normalen GL9-Betrieb ist er nicht relevant.
+
+## 14.2 Ausschalt-/Druckausgleich-/Homingpfad vor der normalen Regelung
+
+Der bisher als anonymer globaler Schalter geführte Wert ist öffentlich benennbar:
+
+```text
+0x2001660C+0x1F Bit0
+→ MAIN:2011
+
+MAIN:2011 = 1  → Gerät/Betrieb EIN
+MAIN:2011 = 0  → Gerät/Betrieb AUS
+```
+
+Damit ist dieser Zweig kein unbekannter Start-State, sondern der **Gerät-EIN/AUS-Pfad** der EEV-Logik.
+
+Der zweite wichtige Wert:
+
+```text
+0x20016AA4+0x02
+```
+
+ist ebenfalls **kein Startzähler**. Er wird auf `180` gesetzt und bei stehendem Verdichter pro EEV-Regler-/Schedulerumlauf heruntergezählt. Bei einer EEV-Reglerperiode von ungefähr `0,778 s` entspricht das insgesamt rund:
+
+```text
+180 × 0,778 s ≈ 140 s
+```
+
+Im OFF-/Stabilisierungszweig gilt:
+
+```text
+E07-Gate aktiv
+    → Haupt-EEV-Ziel = 480 Schritte
+
+E07-Gate inaktiv:
+    Countdown >= 61
+        → Haupt-EEV-Ziel = 480 Schritte
+
+    Countdown < 61
+        → Haupt-EEV-Ziel = 0 Schritte
+```
+
+Nach einem Neustart des Countdowns bei `180` ergibt sich damit ungefähr:
+
+```text
+180 … 61  → ca. 93 s bei 480 Schritten
+60 … 0    → ca. 47 s bei 0 Schritten
+```
+
+Die reale Reihenfolge ist also ausdrücklich:
+
+```text
+480 Schritte  →  0 Schritte
+```
+
+und **nicht** `0 → 480`.
+
+Funktional passt das zu einer **Ausschalt-/Druckausgleich-/anschließenden Schließ-/Homingsequenz**. Die Firmware hält das Ventil zunächst vollständig offen und fährt es erst im letzten Teil des Countdownfensters auf 0.
+
+Zusätzlich existiert das Byte:
+
+```text
+0x20016FD7
+```
+
+Dieses ist kein eigener Schutz- oder Recoveryzustand, sondern lediglich ein **Latch „E07-Gate war zuvor aktiv“**:
+
+```text
+Gate Bit1 aktiv
+    → latch = 1
+
+Gate fällt später ab und latch == 1
+    → Countdown 0x20016AA4+2 einmalig wieder auf 180 setzen
+    → latch löschen
+```
+
+Damit ist auch der früher unbekannte zusätzliche Resettrigger des 180er Countdowns funktional geschlossen.
+
+Danach existiert ein weiterer Starttabellenpfad, der abhängig von Maschinen-/Mode-/Statewerten direkt eine vorberechnete EEV-Anfangsöffnung auswählt. Sind dessen Bedingungen nicht erfüllt, läuft vor der vollständig normalen Matrixregelung ein weiterer Verzögerungszähler.
+
+## 14.3 T04-Sensorfehlerfallback
+
+Der frühe feste Zielwert `350` ist jetzt physikalisch zugeordnet. Die Funktion:
+
+```text
+0x08088134
+```
+
+liest direkt:
+
+```text
+0x20015FA8+0x16 = Status-/Gültigkeitsfeld des T04-Sensoreintrags
+```
+
+Im frühen Regel-/Startfenster gilt sinngemäß:
+
+```text
+T04 gültig   → normale Basisöffnung verwenden
+T04 ungültig → 350 Schritte
+```
+
+Damit ist der 350-Schritt-Wert ein **T04-Sensorfehler-/Ungültigkeitsfallback** und kein unbekannter Recovery-Sollwert.
+
+## 14.4 Weitere Start-/Sonderlogik
+
+Die wesentlichen zuvor anonymen Sonderpfade sind inzwischen zugeordnet:
+
+- `MAIN:2011` trennt Gerät EIN/AUS,
+- `MAIN:2012=2` kennzeichnet Defrost,
+- E17 ist daran als direkte Abtau-Zielöffnung angebunden,
+- `0x20016AA4+2` ist der 180-Takt-Stabilisierungs-/Ausschaltcountdown,
+- `0x20016FD7` ist nur dessen Gate-Abfall-Latch,
+- `MAIN:1378` gehört zum Factory-/Commercial-Inspection-Override,
+- der feste 350-Schritt-Pfad ist der T04-Sensorfehlerfallback.
+
+Einzelne interne Mode-/Statebytes besitzen weiterhin keinen Hersteller-Klartextnamen. Für die normale Auto-/Smart-Regelung verändern diese fehlenden Symbolnamen das rekonstruierte Regelmodell jedoch nicht mehr.
 
 ---
 
@@ -700,16 +938,25 @@ target = min(target, 480)
 
 # 16. Noch offene Punkte
 
-Für die **GL9-Haupt-EEV-Regelung** bleiben nach dem aktuellen Stand im Wesentlichen noch diese Punkte:
+Für die **praktische GL9-Haupt-EEV-Regelung** sind die relevanten Funktionsblöcke inzwischen nahezu vollständig geschlossen. Übrig bleiben im Wesentlichen nur noch Benennungs-/HMI-Details:
 
-1. `0x20016E18+3 Bit1`: exakter PHNIX-Klartextname und möglichst ein öffentlicher Statusspiegel der bereits funktional als Stabil-/Normalbetriebsfreigabe eingeordneten E07-Mindestöffnungslogik.
-2. Die vollständigen Setz-/Löschbedingungen dieses Gates auf offizielle Betriebs-, Laufzeit- und Schutzstatus abbilden.
-3. Start-/Recovery-/Sensorfehler-Sonderpfade vollständig auf öffentliche Flags mappen; der E17-Abtaupfad selbst ist bereits geschlossen.
-4. Den Sonderoverride `0x20016C10` fachlich identifizieren und auf einen offiziellen Betriebs-/Servicezustand zurückführen.
-5. Für `E20/E21` den vom HMI tatsächlich erlaubten Einstellbereich bzw. die Eingabevalidierung schließen. Besonders `E21=0` darf wegen des Mainboard-Rechenpfads nicht als sicher angenommen werden.
-6. Für die 20 Zustände der Auto-4×5-Matrix die inneren Einzelaktionen/Offsets vollständig tabellieren. Die Achsen und Randaktionen sind geschlossen, einige innere zustandsabhängige E02/E18-Verschiebungen sind noch nicht als vollständige 20-Zellen-Tabelle dokumentiert.
+1. **E07-Gate `0x20016E18+3 Bit1`:** Funktion, Defrost-Sofortsetzung, Countdown-Sperre und wesentliche Normalbetriebsbedingungen sind rekonstruiert. Offen ist nur der offizielle PHNIX-Klartextname; ein direkter 1:1-Statusspiegel im öffentlichen Bereich 2001–2180 wurde nicht nachgewiesen.
+2. **DGUS-Widgetgrenzen für E20/E21:** Mainboard und DWIN-Kommunikationscode begrenzen E20/E21 nicht. Falls die konkrete DGUS-Seite per Widget-Metadaten Min/Max erzwingt, wäre dies nur noch eine HMI-Eigenschaft. Für die Firmware gilt unabhängig davon: `E21=0` vermeiden.
+3. **Einzelne interne State-Symbolnamen:** Einige Start-/Tabellen-/Modebytes besitzen keinen bekannten PHNIX-Klartextnamen. Ihre Wirkung im Haupt-EEV-Pfad ist jedoch bereits nachvollziehbar.
 
-Der EVI-/Economizer-Regler wird **nicht** weiter verfolgt, da die GL9 kein EVI-Ventil besitzt.
+Nicht mehr offen sind:
+
+- die 20 Einzelaktionen der Auto-Matrix einschließlich T12-Trend,
+- `0x20016C10` / `MAIN:1378` als Factory-Test-/Commercial-Inspection-Override,
+- der feste 350-Schritt-Pfad als T04-Sensorfehlerfallback,
+- E20/E21-Datenfluss und fehlende Mainboard-Nullprüfung,
+- E17 als bis `MAIN:2012=2` rückverfolgte Abtau-Zielöffnung,
+- `MAIN:2011` als Gerät-EIN/AUS-/Betriebsstatus,
+- `0x20016AA4+2` als 180-Takt-Stabilisierungs-/Ausschaltcountdown,
+- die OFF-Sequenz **480 → 0 Schritte**,
+- `0x20016FD7` als einmaliges E07-Gate-Abfall-Latch.
+
+Damit ist das **normale GL9-Haupt-EEV-Verhalten in Auto und Smart einschließlich Mindestöffnung, Ausschalt-/Druckausgleich-/Homingpfad, Abtauung, Werkstest und Sensorfallback praktisch vollständig rekonstruierbar**. Die verbleibenden Punkte betreffen überwiegend Herstellerbezeichnungen bzw. HMI-Metadaten, nicht mehr die Regelwirkung.
 
 ---
 
@@ -722,6 +969,8 @@ MAIN:1147 E17
 MAIN:1149 E19
 MAIN:1351 E20
 MAIN:1352 E21
+MAIN:2011 Gerät-EIN/AUS-/Betriebsstatus
+MAIN:2012 Betriebsmodusstatus / 2=Abtauen
 MAIN:2020 EEV-Istposition
 MAIN:2045 T01 Einlasswasser
 MAIN:2048 T04 wirksame Außentemperatur
