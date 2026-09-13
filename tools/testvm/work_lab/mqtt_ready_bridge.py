@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep one host-visible MQTT connection for the paused-QEMU preflight.
+"""Keep one namespace-visible MQTT connection for paused-QEMU preflight.
 
 The production supervisor checks the modem's own network namespace before it
 attaches its runtime hook. In the Work VM, qemu-user is intentionally stopped
@@ -59,7 +59,16 @@ def main() -> int:
     signal.signal(signal.SIGINT, request_stop)
     client_id = f"foxair-vm-preflight-{os.getpid()}"
     try:
-        with socket.create_connection((args.host, args.port), timeout=5.0) as client:
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                client = socket.create_connection((args.host, args.port), timeout=1.0)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
+        with client:
             client.settimeout(5.0)
             client.sendall(connect_packet(client_id))
             response = client.recv(4)
