@@ -15,6 +15,7 @@ import json
 import os
 import signal
 import socket
+import ssl
 import time
 from pathlib import Path
 
@@ -51,6 +52,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=1883)
+    parser.add_argument("--ca", type=Path)
+    parser.add_argument("--server-hostname")
     parser.add_argument("--ready-file", type=Path, required=True)
     parser.add_argument("--transcript", type=Path, required=True)
     args = parser.parse_args()
@@ -68,6 +71,11 @@ def main() -> int:
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.1)
+        if args.ca:
+            context = ssl.create_default_context(cafile=str(args.ca))
+            client = context.wrap_socket(
+                client, server_hostname=args.server_hostname or args.host
+            )
         with client:
             client.settimeout(5.0)
             client.sendall(connect_packet(client_id))

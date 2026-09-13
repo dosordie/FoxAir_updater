@@ -177,6 +177,8 @@ unshare --net --mount --fork bash -c '
         exit 96
       }
       python3 "$tools/mqtt_ready_bridge.py" \
+        --ca "$tls_dir/ca.pem" \
+        --server-hostname "$mqtt_host" \
         --ready-file "$run_dir/host-mqtt-ready" \
         --transcript "$run_dir/host-mqtt-ready.jsonl" &
       mqtt_ready_pid=$!
