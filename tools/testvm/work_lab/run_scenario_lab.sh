@@ -27,6 +27,9 @@ done
 for command in unshare socat timeout xxd python3 ip; do
   command -v "$command" >/dev/null || fail "missing command: $command"
 done
+if [[ "${HOST_MQTT_READY_BRIDGE:-0}" == 1 ]]; then
+  [[ -x "$TOOLS/mqtt_ready_bridge.py" ]] || fail "missing host MQTT readiness bridge"
+fi
 
 if [[ "${MQTT_TLS_STUB:-0}" == 1 ]]; then
   for path in "$TOOLS/mqtt_scenario_stub.py" "$TOOLS/prepare_tls_lab.py"; do
@@ -90,6 +93,28 @@ for device in ttyGS0 smd8 ttyHSL2; do
     fail "$ROOTFS/dev/$device already exists"
 done
 cp "$TOOLS/at_rules.json" "$RUN_DIR/at_rules.json"
+
+host_mqtt_ready_pid=""
+cleanup_host_mqtt_ready() {
+  if [[ -n "$host_mqtt_ready_pid" ]]; then
+    kill "$host_mqtt_ready_pid" 2>/dev/null || true
+    wait "$host_mqtt_ready_pid" 2>/dev/null || true
+  fi
+  rm -f "$RUN_DIR/host-mqtt-ready"
+}
+trap cleanup_host_mqtt_ready EXIT INT TERM
+if [[ "${HOST_MQTT_READY_BRIDGE:-0}" == 1 ]]; then
+  python3 "$TOOLS/mqtt_ready_bridge.py" \
+    --ready-file "$RUN_DIR/host-mqtt-ready" \
+    --transcript "$RUN_DIR/host-mqtt-ready.jsonl" &
+  host_mqtt_ready_pid=$!
+  for _ in $(seq 1 50); do
+    [[ -f "$RUN_DIR/host-mqtt-ready" ]] && break
+    kill -0 "$host_mqtt_ready_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  [[ -f "$RUN_DIR/host-mqtt-ready" ]] || fail "host MQTT readiness bridge did not connect"
+fi
 
 set +e
 unshare --net --mount --fork bash -c '
@@ -430,4 +455,8 @@ fi
 if [[ -f "$RUN_DIR/firmware-http-transcript.jsonl" ]]; then
   printf '\n=== V3.3 loopback HTTP transcript ===\n'
   cat "$RUN_DIR/firmware-http-transcript.jsonl"
+fi
+if [[ -f "$RUN_DIR/host-mqtt-ready.jsonl" ]]; then
+  printf '\n=== Host MQTT readiness bridge ===\n'
+  cat "$RUN_DIR/host-mqtt-ready.jsonl"
 fi

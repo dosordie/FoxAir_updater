@@ -101,6 +101,14 @@ OTA-freien Leerlauf löst wie der Modem-Supervisor einen Neustart desselben
 Szenarios mit neuer PID und neuem ttyGS0-Strom aus. Während eines aktiven OTA
 wird diese Supervisor-Automatik nicht verwendet.
 
+Der produktive Supervisor prüft vor dem Runtime-Hook auf eine stabile
+MQTT-Verbindung. Weil QEMU im autonomen Testszenario bis zu diesem Hook am
+Remote-GDB-Einstieg angehalten ist, hält das Work-Lab dafür ausschließlich im
+Debian-Hostnetz eine lokale MQTT-Bereitschaftsverbindung. Diese VM-Brücke
+ändert weder den produktiven Supervisor noch den Runtime-Hook und wird mit dem
+Szenario wieder beendet. Nach dem Fortsetzen nutzt `phnixIot4G` weiterhin
+seine eigene isolierte MQTT-Verbindung für alle realen Protokollabläufe.
+
 ## ADB-Protokoll
 
 Unterstützt werden unter anderem:

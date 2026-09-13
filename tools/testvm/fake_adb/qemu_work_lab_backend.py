@@ -436,6 +436,11 @@ def _start_runner_impl(
         # remote stub is not reliable after detach/re-attach, unlike gdbserver
         # on the physical DTU.
         extra_env["AUTONOMOUS_DTU_RUNNER"] = "1"
+        # qemu-user is stopped at its GDB entry point, so it cannot establish
+        # MQTT before the production supervisor performs its new pre-hook
+        # readiness check. Expose an established localhost MQTT session only
+        # in the Debian host namespace used by that VM-side check.
+        extra_env["HOST_MQTT_READY_BRIDGE"] = "1"
     runner = lab_root() / "tools/run_scenario_lab.sh"
     if not runner.is_file() or not os.access(runner, os.X_OK):
         return False, f"Work-Lab Runner fehlt oder ist nicht ausführbar: {runner}"

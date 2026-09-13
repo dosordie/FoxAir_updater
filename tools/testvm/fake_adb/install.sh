@@ -130,6 +130,7 @@ fetch tools/testvm/fake_adb/gdb_original_ota_1fe40.gdb "$INSTALL_DIR/gdb_origina
 fetch tools/testvm/work_lab/run_scenario_lab.sh "$LAB_ROOT/tools/run_scenario_lab.sh"
 fetch tools/testvm/work_lab/rs485_fault_emulator.py "$LAB_ROOT/tools/rs485_fault_emulator.py"
 fetch tools/testvm/work_lab/mqtt_scenario_stub.py "$LAB_ROOT/tools/mqtt_scenario_stub.py"
+fetch tools/testvm/work_lab/mqtt_ready_bridge.py "$LAB_ROOT/tools/mqtt_ready_bridge.py"
 fetch tools/testvm/work_lab/qmux_stub.py "$LAB_ROOT/tools/qmux_stub.py"
 fetch tools/testvm/work_lab/credential_http_stub.py "$LAB_ROOT/tools/credential_http_stub.py"
 fetch tools/testvm/work_lab/prepare_tls_lab.py "$LAB_ROOT/tools/prepare_tls_lab.py"
@@ -155,7 +156,8 @@ python3 -m py_compile \
     "$INSTALL_DIR/qemu_lab_adapter.py" \
     "$INSTALL_DIR/qemu_work_lab_backend.py" \
     "$INSTALL_DIR/qemu_permissive_backend.py" \
-    "$INSTALL_DIR/phnix_ota_simulator.py"
+    "$INSTALL_DIR/phnix_ota_simulator.py" \
+    "$LAB_ROOT/tools/mqtt_ready_bridge.py"
 sh -n "$LAB_ROOT/tools/run_scenario_lab.sh"
 
 chmod 0755 \
@@ -168,7 +170,8 @@ chmod 0755 \
     "$INSTALL_DIR/foxair-fake-adbctl"
 chmod 0755 "$LAB_ROOT/tools/run_scenario_lab.sh" "$LAB_ROOT/tools/rs485_fault_emulator.py" \
     "$LAB_ROOT/tools/mqtt_scenario_stub.py" "$LAB_ROOT/tools/qmux_stub.py" \
-    "$LAB_ROOT/tools/credential_http_stub.py" "$LAB_ROOT/tools/prepare_tls_lab.py"
+    "$LAB_ROOT/tools/mqtt_ready_bridge.py" "$LAB_ROOT/tools/credential_http_stub.py" \
+    "$LAB_ROOT/tools/prepare_tls_lab.py"
 ln -sf "$INSTALL_DIR/foxair-fake-adbctl" /usr/local/bin/foxair-fake-adbctl
 
 if [ -d "$STATE_DIR/simulator" ] && [ ! -e "$STATE_DIR/legacy-python-simulator" ]; then
