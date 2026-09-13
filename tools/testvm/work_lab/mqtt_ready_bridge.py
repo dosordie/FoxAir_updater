@@ -72,7 +72,12 @@ def main() -> int:
                     raise
                 time.sleep(0.1)
         if args.ca:
-            context = ssl.create_default_context(cafile=str(args.ca))
+            # Loopback-only lab socket: the real client validates the generated
+            # CA separately.  This readiness connection merely keeps netstat
+            # truthful while QEMU is paused at its GDB entry point.
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
             client = context.wrap_socket(
                 client, server_hostname=args.server_hostname or args.host
             )
