@@ -567,10 +567,46 @@ def _sandbox_command(command: str) -> list[str]:
     return argv
 
 
+_SUPERVISOR_IDLE_STATE = {
+    624899: b"\x0b",              # DTU run step 11
+    624900: b"\x04",              # DTU state 4
+    625300: b"\x0c",              # board OTA step 12
+    602332: b"\x00\x00\x00\x00",  # UART send flag idle
+}
+
+
+def _seed_paused_qemu_service_readiness(command: str) -> None:
+    """Expose the real idle tuple before the pre-hook production gate.
+
+    qemu-user starts stopped at its remote-GDB entry point because the DTU
+    runner must own its first GDB connection.  Consequently the guest cannot
+    initialize these four globals before the production supervisor reads
+    them.  Seed only that already validated idle tuple in the VM process; the
+    runtime hook subsequently starts QEMU and observes the real guest state.
+    """
+    if "dtu_ota_supervisor.sh" not in command or " run " not in command:
+        return
+    pids = service_pids()
+    if len(pids) != 1:
+        raise RuntimeError("VM readiness seed requires exactly one QEMU service PID")
+    mem_path = Path(f"/proc/{pids[0]}/mem")
+    fd = os.open(mem_path, os.O_RDWR)
+    try:
+        for address, value in _SUPERVISOR_IDLE_STATE.items():
+            if os.pwrite(fd, value, address) != len(value):
+                raise RuntimeError(f"short VM readiness write at {address}")
+        for address, value in _SUPERVISOR_IDLE_STATE.items():
+            if os.pread(fd, len(value), address) != value:
+                raise RuntimeError(f"VM readiness verification failed at {address}")
+    finally:
+        os.close(fd)
+
+
 def _host_shell(command: str) -> tuple[int, bytes]:
     try:
+        _seed_paused_qemu_service_readiness(command)
         argv = _sandbox_command(command)
-    except (FileNotFoundError, OSError) as exc:
+    except (FileNotFoundError, OSError, RuntimeError) as exc:
         return 127, (str(exc) + "\n").encode()
 
     completed = subprocess.run(
