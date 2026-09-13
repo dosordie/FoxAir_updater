@@ -27,7 +27,7 @@ Imagebasis ungefähr 0x08080000
 1. Die fünf `E03-x`-Werte sind **temperatursegmentierte Heiz-Start-/Basisöffnungen**. Sie werden über **T04 / Außentemperatur** mit Grenzen bei ungefähr `+7 / 0 / -5 / -10 °C` ausgewählt.
 2. `E03=1133` ist **nicht Legacy**. Ein ungleich 0 gesetztes globales E03 kann im Heiz-Basispfad die segmentierten E03-x-Werte übersteuern. Die Segmentwerte werden insbesondere als temperaturabhängiger Fallback/Basiswert verwendet, wenn der globale Heiz-Basiswert 0 ist.
 3. Die fünf `E07-x`-Werte sind **temperatursegmentierte Mindestöffnungen** des Haupt-EEV. Auch sie werden über T04 mit denselben fünf Temperaturbändern ausgewählt.
-4. `E07=1137` bleibt aktiv und bildet eine **globale Mindestöffnung** in einem vorgelagerten/allgemeinen Clamp-Pfad. Die segmentierten E07-x werden in einem späteren/gesteuerten Zustand verwendet.
+4. `E07=1137` bleibt aktiv. Bei gesetztem Schutzflag wird bei **Kompressor-Istfrequenz < 61 Hz** gegen das globale E07 geklemmt; ab **61 Hz** wird stattdessen die temperatursegmentierte E07-x-Mindestöffnung verwendet. Die Frequenzquelle ist `0x200168C4+0x06` = **Register 2072 Kompressor-Istfrequenz**.
 5. `E01=2 Smart` ersetzt die normale Superheat-Regelung **nicht**. E02 bleibt im Smart-Modus aktiv. Smart berechnet zusätzlich einen Vorsteuer-Arbeitspunkt und begrenzt das Ergebnis der Feedbackregelung mit E19 um diesen Arbeitspunkt.
 6. `E19` wird exakt als **±E19 %** interpretiert. Es gibt keine Halbierung auf ±E19/2.
 7. Die frühere Vermutung `E03-2 185 × 0,9 = 166` ist **nicht der tatsächliche Codepfad**. Der Faktor `0,9` gehört zur Skalierung des Smart-Kennfelds nach T01/Einlasswassertemperatur.
@@ -53,20 +53,47 @@ Die folgenden Namen sind für eine Registerliste bzw. FoxAir-Control aussagekrä
 | 1131 | E01 | **Haupt-EEV Regelmodus** | `0=Manuell, 1=Auto, 2=Smart` |
 | 1132 | E02 | **Haupt-EEV Soll-Saugüberhitzung Heizen** | Feedback-Sollwert; auch in Smart aktiv |
 | 1133 | E03 | **Haupt-EEV Heiz-Basis-/Startöffnung global** | globale Heiz-Basis; kann E03-x übersteuern |
-| 1137 | E07 | **Haupt-EEV Mindestöffnung global** | allgemeine/frühe Mindestgrenze |
+| 1137 | E07 | **Haupt-EEV Mindestöffnung <61 Hz** | globale Mindestgrenze im aktiven Schutzpfad bei Verdichter-Istfrequenz <61 Hz |
 | 1149 | E19 | **Smart-EEV Korrekturfenster ± %** | `SmartCenter × (1 ± E19/100)` |
 | 1200 | E03-1 | **EEV Heiz-Basisöffnung AT-Band 1 (warm)** | T04 >= ca. +7 °C |
 | 1142 | E03-2 | **EEV Heiz-Basisöffnung AT-Band 2** | ca. 0…+7 °C |
 | 1206 | E03-3 | **EEV Heiz-Basisöffnung AT-Band 3** | ca. -5…0 °C |
 | 1207 | E03-4 | **EEV Heiz-Basisöffnung AT-Band 4** | ca. -10…-5 °C |
 | 1208 | E03-5 | **EEV Heiz-Basisöffnung AT-Band 5 (kalt)** | T04 < ca. -10 °C |
-| 1209 | E07-1 | **EEV Mindestöffnung AT-Band 1 (warm)** | T04 >= ca. +7 °C |
-| 1210 | E07-2 | **EEV Mindestöffnung AT-Band 2** | ca. 0…+7 °C |
-| 1211 | E07-3 | **EEV Mindestöffnung AT-Band 3** | ca. -5…0 °C |
-| 1215 | E07-4 | **EEV Mindestöffnung AT-Band 4** | ca. -10…-5 °C |
-| 1216 | E07-5 | **EEV Mindestöffnung AT-Band 5 (kalt)** | T04 < ca. -10 °C |
-| 2020 | – | **Haupt-EEV Position / Schritte** | öffentliche EEV-Schrittposition; V3.3 bereits nahezu bis zur intern nachgeführten Motorposition geschlossen |
-| 2067 | – | **Haupt-EEV Saugüberhitzung Istwert** | maßgebliche gemessene Saugüberhitzung für die EEV-Regelung |
+| 1209 | E07-1 | **EEV Mindestöffnung ab 61 Hz, AT-Band 1 (warm)** | Verdichter-Istfrequenz >=61 Hz; T04 >= ca. +7 °C |
+| 1210 | E07-2 | **EEV Mindestöffnung ab 61 Hz, AT-Band 2** | Verdichter-Istfrequenz >=61 Hz; ca. 0…+7 °C |
+| 1211 | E07-3 | **EEV Mindestöffnung ab 61 Hz, AT-Band 3** | Verdichter-Istfrequenz >=61 Hz; ca. -5…0 °C |
+| 1215 | E07-4 | **EEV Mindestöffnung ab 61 Hz, AT-Band 4** | Verdichter-Istfrequenz >=61 Hz; ca. -10…-5 °C |
+| 1216 | E07-5 | **EEV Mindestöffnung ab 61 Hz, AT-Band 5 (kalt)** | Verdichter-Istfrequenz >=61 Hz; T04 < ca. -10 °C |
+| 2020 | – | **Haupt-EEV Istposition / Schritte** | in V3.4 formal bis `0x20016AC4+0x04` = intern nachgeführte Stepper-Istposition geschlossen |
+| 2067 | – | **EEV Differenz-/Überhitzungswert Kanal 2** | V3.4: `0x20016AC4+0x14 × 10`; physikalische Bezeichnung noch zu schließen. Nicht vorschnell nur „Saugüberhitzung“ nennen |
+
+## 2.1 Öffentliche Statusregister 2020 und 2066/2067
+
+Der V3.4-Statusbuilder schließt zwei bisher offene Spiegelpfade:
+
+```text
+0x20016AC4+0x04  interne nachgeführte Haupt-EEV-Stepperposition
+      ↓
+0x200164B8+0x0C
+      ↓
+MAIN:2020
+```
+
+Damit ist **Register 2020 die intern nachgeführte EEV-Istposition in Schritten**, nicht nur der Regler-Sollwert. Für das EVI-Ventil existiert derselbe Pfad über `0x20016B04+0x04`.
+
+Für die beiden bislang reservierten Differenz-/Überhitzungsregister gilt direkt:
+
+```text
+MAIN:2066 = trunc((0x20016AC4+0x10) × 10)
+MAIN:2067 = trunc((0x20016AC4+0x14) × 10)
+```
+
+Beide internen Werte werden als 5-Sample-Mittel temperaturbasierter Differenzen gebildet. Welcher davon herstellerseitig exakt als Saugüberhitzung, Austrittsüberhitzung bzw. zweiter Kältekreis-/EVI-Differenzwert bezeichnet wird, wird weiter verfolgt. Daher ist für `2067` die neutrale Bezeichnung **„EEV Differenz-/Überhitzungswert Kanal 2“** derzeit belastbarer als nur „Saugüberhitzung“.
+
+**2020: bestätigt. 2066/2067 Datenquelle und Skalierung: bestätigt; physikalische Benennung: offen.**
+
+---
 
 ### Hinweis zu Register 1141
 
@@ -197,32 +224,43 @@ Das bestätigt:
 
 > **E07-1…5 sind segmentabhängige softwareseitige Mindestöffnungen, keine mechanischen Mindestpositionen.**
 
-## 5.1 Rolle des globalen E07
+## 5.1 Rolle des globalen E07 und die 61-Hz-Umschaltung
 
-Vor dem segmentierten Clamp existiert weiterhin ein Pfad mit:
-
-```text
-Target = max(Target, E07_global)
-```
-
-Der spätere Wechsel auf die E07-x-Profilgrenze hängt von einem internen Zustands-/Messwert bei:
+Der entscheidende V3.4-Vergleich liest:
 
 ```text
 0x200168C4 + 0x06
 ```
 
-und einem Flag in einem Betriebszustandsblock ab. Im Code ist die Schwelle `61` sichtbar.
-
-Wichtig: Der Wert `+0x06` wird aus einer anderen Laufzeit-/Kommunikationsstruktur übernommen. Seine physikalische bzw. zeitliche Bedeutung ist **noch nicht belastbar bewiesen**. Deshalb wird die Schwelle derzeit ausdrücklich **nicht** als „61 Sekunden“ bezeichnet.
-
-Das sichere Ergebnis lautet nur:
+Dieser Wert ist aus der bereits geschlossenen Inverter-Telemetrie eindeutig:
 
 ```text
-früher/allgemeiner Pfad → E07 global
-später/gesteuerter Pfad → E07-x abhängig von T04
+Unit-1 FC03 Remote-Reg. 2102
+→ 0x200168C4 + 0x06
+→ MAIN Register 2072
+= Kompressor-Istfrequenz
 ```
 
-**Clamp-Funktion: bestätigt. Bedeutung des 61er-Zustandswerts: offen.**
+Im EEV-Schutzpfad wird bei gesetztem `0x20016E18+3 Bit1` unterschieden:
+
+```text
+wenn Kompressor-Istfrequenz < 61 Hz:
+    wenn Target < E07_global:
+        Target = E07_global
+
+wenn Kompressor-Istfrequenz >= 61 Hz:
+    min_value = E07_segment[T04]
+    wenn Target < min_value:
+        Target = min_value
+```
+
+Damit ist die vorher vermeintliche „Start-/Zeitumschaltung“ korrigiert: **61 ist eine Frequenzschwelle in Hz, keine Zeitangabe.**
+
+Bei den beobachteten ca. 29 Hz liegt dieser Schutzpfad – sofern das zugehörige Schutzflag aktiv ist – auf der **globalen E07-Grenze**, nicht auf E07-x.
+
+Die genaue offizielle Bedeutung des Gate-Flags `0x20016E18+3 Bit1` ist noch offen; die Frequenz- und Clamp-Funktion selbst ist bestätigt.
+
+**Bewertung: bestätigt.**
 
 ---
 
@@ -561,11 +599,11 @@ else:
     target = auto_target
 
 # gemeinsame Schutz-/Mindestgrenzen
-if global_E07_path_active:
-    target = max(target, E07)
-
-if segmented_E07_path_active:
-    target = max(target, E07_by_ambient_band(T04))
+if E07_protection_flag:
+    if compressor_actual_hz < 61:
+        target = max(target, E07)
+    else:
+        target = max(target, E07_by_ambient_band(T04))
 
 target = min(target, 480)
 
@@ -603,11 +641,11 @@ Zusätzlich ist jetzt die Fehlbezeichnung von Register 1141 als angebliches `E03
 
 # 13. Noch offene Punkte für weitere Analyse
 
-1. **Interner Wert `0x200168C4+0x06`**: Die Schwelle 61 steuert den Wechsel/Teilpfad der globalen zu segmentierten Mindestöffnung. Herkunft ist bis in eine Kommunikations-/Laufzeitstruktur zurückverfolgt, die konkrete physikalische Bedeutung ist noch offen.
+1. **E07-Gate-Flag `0x20016E18+3 Bit1`**: offizielle Bedeutung des Flags benennen. Die daran gekoppelte 61-Hz-Umschaltung ist bereits bestätigt.
 2. **FA8-Achse des normalen 4×5-Superheat-Reglers**: Sensor-/Schutzgröße weiterhin physikalisch eindeutig benennen.
 3. **Dynamischer Feedback-Helper**: exakte Hersteller-Terminologie und Parameter/Gains vollständig entschlüsseln.
 4. **Sonderzustände**: Start-/Recovery-/Sensorfehlerflags bis zu ihren offiziellen Status-/Fehlerbezeichnungen zurückführen.
-5. **Register 2020/2022**: der Datenfluss zur intern nachgeführten Motorposition ist bereits sehr stark, die letzte formale Spiegelkopie kann noch geschlossen werden.
+5. **2066/2067-Semantik**: die öffentlichen Quellen `+0x10/+0x14` und Skalierung ×10 sind geschlossen; die exakten physikalischen Herstellernamen der beiden Differenz-/Überhitzungskanäle sind noch zu benennen.
 6. **Absolute Stepper-Zeitbasis**: Schedulerperiode bestimmen, um Step-Cadence und Richtungswechselpause in Millisekunden anzugeben.
 
 Diese offenen Punkte ändern den zentralen Smart-Algorithmus und die jetzt geschlossene E03-/E07-Segmentzuordnung nicht.
