@@ -12,6 +12,8 @@ SERVICE=/data/phnixIot4G
 HOOK_RUNTIME=/tmp/phnix_ota_hook
 EXPECTED_BUILD_FIXED=af4dcae12639bedce833ee5efa5da009777b6319
 EXPECTED_SERVICE_FIXED=7C573431F0A67620D473419644A83A4F4DC04B8A91BDE5923C74A63BA1EAEDB7
+MQTT_READY_TIMEOUT=120
+MQTT_READY_CONFIRM_DELAY=3
 SHELL_BIN=/system/bin/sh
 test -x "$SHELL_BIN" || SHELL_BIN=/bin/sh
 
@@ -190,6 +192,38 @@ boot_fingerprint() {
 mqtt_guard_active() {
     iptables -S OUTPUT 2>/dev/null | grep -q -- '-o rmnet_data0 .*--dport 1883 .*DROP' || return 1
     iptables -S INPUT 2>/dev/null | grep -q -- '-i rmnet_data0 .*--sport 1883 .*DROP'
+}
+
+mqtt_established() {
+    netstat -nt 2>/dev/null | awk '
+        ($4 ~ /:1883$/ || $5 ~ /:1883$/) && $0 ~ /ESTABLISHED/ { found=1 }
+        END { exit found ? 0 : 1 }
+    '
+}
+
+wait_for_mqtt_ready() {
+    timeout=${1:-$MQTT_READY_TIMEOUT}
+    confirm_delay=${2:-$MQTT_READY_CONFIRM_DELAY}
+    elapsed=0
+    stable=0
+    while test "$elapsed" -lt "$timeout"; do
+        current=$(single_service_pid) || return 2
+        test "$current" = "$SERVICE_PID" || return 2
+        test "$(awk '/^TracerPid:/ {print $2}' /proc/$current/status 2>/dev/null)" = 0 || return 2
+        if mqtt_established; then
+            stable=$((stable + 1))
+            if test "$stable" -ge 2; then
+                return 0
+            fi
+            sleep "$confirm_delay"
+            elapsed=$((elapsed + confirm_delay))
+        else
+            stable=0
+            sleep 2
+            elapsed=$((elapsed + 2))
+        fi
+    done
+    return 1
 }
 
 restore_original_confirmed() {
@@ -443,6 +477,19 @@ run_action() {
         SERVICE_RESTART_VERIFIED=true
         must_write_status running service-restart-verified false "" "Exactly one new stable original-service PID was verified after restart."
     fi
+    must_write_status running service-cloud-wait false "" "Waiting for the original service to establish a stable MQTT/TCP 1883 connection before any runtime hook or OTA action."
+    wait_for_mqtt_ready "$MQTT_READY_TIMEOUT" "$MQTT_READY_CONFIRM_DELAY"; mqtt_rc=$?
+    case "$mqtt_rc" in
+        0)
+            must_write_status running service-cloud-ready false "" "Original-service MQTT/TCP 1883 was confirmed twice consecutively before hook start."
+            ;;
+        2)
+            terminal_result failed failed service-cloud-wait 83 service_unstable_before_hook "Original service PID changed, became ambiguous or was traced while waiting for cloud readiness; no hook or OTA action was started."
+            ;;
+        *)
+            terminal_result failed failed service-cloud-wait 83 cloud_not_ready_before_hook "Cloud/MQTT did not become stably connected within 120 seconds; no hook or OTA action was started."
+            ;;
+    esac
     start_http || terminal_result failed failed staging 82 local_http_failed "Local firmware HTTP staging verification failed."
     rm -f "$HOOK_STATUS" "$ABORT"
     args="run --build-id $EXPECTED_BUILD --command $COMMAND --status $HOOK_STATUS --allow-publish 0023,0053,0083"
