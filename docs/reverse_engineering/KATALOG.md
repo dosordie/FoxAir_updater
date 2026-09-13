@@ -1,6 +1,6 @@
 # FoxAir / PHNIX Reverse-Engineering-Katalog
 
-Stand: 11. September 2026
+Stand: 13. September 2026
 
 Dieser Katalog gilt **ausschließlich für Dateien in `docs/reverse_engineering/`**.
 
@@ -125,6 +125,7 @@ known_corrections:
 | **Umwälzpumpe, Wasserpumpe, PWM, Pumpendrehzahl, Durchfluss, UPM4L, P08, A40, D22** | [`FW3.3-PUMPEN-PWM-REGELUNG.md`](FW3.3-PUMPEN-PWM-REGELUNG.md) | `DURCHFLUSS-VERWENDUNG`, `100-PROZENT`, `UPM4L`, `P08` |
 | **externer Durchfluss, H30=3, HYD61, Unit 0x61, 2047/2048** | [`FW3.3-PUMPEN-EXTERNER-DURCHFLUSS.md`](FW3.3-PUMPEN-EXTERNER-DURCHFLUSS.md) | Pumpen-PWM / interne Boardarchitektur |
 | **Verdichter, Kompressor, Inverter, Hz, Soll-/Istfrequenz, Unit 0x01, 1999/2000, 2071/2072** | [`FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md`](FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md) | [`FW3.3-UNIT1-INVERTER-PROTOKOLL.md`](FW3.3-UNIT1-INVERTER-PROTOKOLL.md), Frequenzlimits |
+| **Heizen, R04, R05, Register 1161, Heiz-Soll, Auslasstemperatur, Abschalthysterese, Abschaltverzögerung, Takten** | [`FW3.4-HEIZUNG-R04-R05-HYSTERESE-ABSCHALTVERZOEGERUNG.md`](FW3.4-HEIZUNG-R04-R05-HYSTERESE-ABSCHALTVERZOEGERUNG.md) | V3.4 WW/Heizen-Umschaltung; V3.3 Inverteransteuerung |
 | **WW ↔ Heizen, Warmwasserumschaltung, Verdichterstopp, 3-Wege-Ventil, H32, FA7/FA8** | [`FW3.4-WW-HEIZEN-UMSCHALTUNG-VERDICHTER.md`](FW3.4-WW-HEIZEN-UMSCHALTUNG-VERDICHTER.md) | V3.3 Inverter-/Boardarchitektur |
 | **Ölrückführung / Oil Return** | [`FW3.3-OELRUECKFUEHRUNG.md`](FW3.3-OELRUECKFUEHRUNG.md) | Kompressor-/Inverteransteuerung |
 | **EEV / EVV / elektronisches Expansionsventil / Überhitzung** | [`FW3.3-EEV-SMART-REGELUNG.md`](FW3.3-EEV-SMART-REGELUNG.md) | Gesamt-Erkenntnisse |
@@ -173,6 +174,7 @@ known_corrections:
 
 - [`FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md`](FW3.3-KOMPRESSOR-INVERTER-ANSTEUERUNG.md) — **VERSIONIERT**, V3.3. End-to-End-Pfad Mainboard → Sollfrequenz → Unit `0x01` → Inverter → Rückmeldung.
 - [`FW3.3-UNIT1-INVERTER-PROTOKOLL.md`](FW3.3-UNIT1-INVERTER-PROTOKOLL.md) — **VERSIONIERT**, V3.3. FC10 `1999ff` / FC03 `2099ff`, Remote-Register des Leistungsboards.
+- [`FW3.4-HEIZUNG-R04-R05-HYSTERESE-ABSCHALTVERZOEGERUNG.md`](FW3.4-HEIZUNG-R04-R05-HYSTERESE-ABSCHALTVERZOEGERUNG.md) — **VERSIONIERT**, V3.4. Heizungs-Thermostat R04/R05, Register 1161, feste Persistenzqualifizierung und ca. 17–18 s bis zur qualifizierten Abschaltung; Live-Zeitmessung noch offen.
 - [`FW3.4-WW-HEIZEN-UMSCHALTUNG-VERDICHTER.md`](FW3.4-WW-HEIZEN-UMSCHALTUNG-VERDICHTER.md) — **VERSIONIERT**, V3.4. WW↔Heizen-State-Machine, FA7/FA8, Verdichter-Stop, Soft-Stop, H32-Abgrenzung.
 
 ## Ergänzende Dokumente
@@ -187,6 +189,7 @@ known_corrections:
 Verdichter Kompressor compressor inverter Unit1 Unit 0x01
 1999 2000 2071 2072 Hz Frequenz frequency target actual
 Soft-Stop FA7 FA8 Warmwasser WW DHW Heizen heating H32
+R04 R05 1161 Hysterese Heiz-Soll Auslasstemperatur Abschaltverzögerung Takten
 ```
 
 ---
@@ -418,6 +421,7 @@ FW3.3-SG-READY-MODBUS-8801.md                      # SUPERSEDED
 FW3.3-UNIT1-INVERTER-PROTOKOLL.md
 FW3.3-WARMLINK-0x63-MODBUS-DISPATCHER.md
 FW3.4-C350-ALLOW-SOFTWARECODE-VERSION.md
+FW3.4-HEIZUNG-R04-R05-HYSTERESE-ABSCHALTVERZOEGERUNG.md
 FW3.4-SG-READY-MODBUS-8801.md
 FW3.4-WW-HEIZEN-UMSCHALTUNG-VERDICHTER.md
 ```
