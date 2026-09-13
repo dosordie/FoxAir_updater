@@ -168,11 +168,11 @@ unshare --net --mount --fork bash -c '
       # The bridge must not race the freshly spawned MQTT stub.  Waiting for
       # the stub LISTEN event also makes this deterministic on slow VMs.
       for _ in $(seq 1 50); do
-        grep -q '"type": "LISTEN"' "$run_dir/mqtt-tls-transcript.jsonl" 2>/dev/null && break
+        grep -q "\"type\": \"LISTEN\"" "$run_dir/mqtt-tls-transcript.jsonl" 2>/dev/null && break
         kill -0 "$mqtt_pid" 2>/dev/null || break
         sleep 0.1
       done
-      grep -q '"type": "LISTEN"' "$run_dir/mqtt-tls-transcript.jsonl" 2>/dev/null || {
+      grep -q "\"type\": \"LISTEN\"" "$run_dir/mqtt-tls-transcript.jsonl" 2>/dev/null || {
         echo "MQTT scenario stub did not become ready inside QEMU network namespace" >&2
         exit 96
       }
