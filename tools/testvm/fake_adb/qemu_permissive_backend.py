@@ -579,7 +579,11 @@ def _host_shell(command: str) -> tuple[int, bytes]:
         stderr=subprocess.STDOUT,
         check=False,
         timeout=120,
-        env={**os.environ, "TMPDIR": "/tmp"},
+        # Android/BusyBox reports TCP states in the invariant English form.
+        # Debian localizes net-tools (for example ESTABLISHED -> VERBUNDEN),
+        # which would make the unmodified production supervisor reject a
+        # healthy simulator connection.
+        env={**os.environ, "TMPDIR": "/tmp", "LC_ALL": "C", "LANG": "C"},
     )
     return completed.returncode, completed.stdout
 

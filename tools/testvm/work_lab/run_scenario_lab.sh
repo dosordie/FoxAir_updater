@@ -94,35 +94,13 @@ for device in ttyGS0 smd8 ttyHSL2; do
 done
 cp "$TOOLS/at_rules.json" "$RUN_DIR/at_rules.json"
 
-host_mqtt_ready_pid=""
-cleanup_host_mqtt_ready() {
-  if [[ -n "$host_mqtt_ready_pid" ]]; then
-    kill "$host_mqtt_ready_pid" 2>/dev/null || true
-    wait "$host_mqtt_ready_pid" 2>/dev/null || true
-  fi
-  rm -f "$RUN_DIR/host-mqtt-ready"
-}
-trap cleanup_host_mqtt_ready EXIT INT TERM
-if [[ "${HOST_MQTT_READY_BRIDGE:-0}" == 1 ]]; then
-  python3 "$TOOLS/mqtt_ready_bridge.py" \
-    --ready-file "$RUN_DIR/host-mqtt-ready" \
-    --transcript "$RUN_DIR/host-mqtt-ready.jsonl" &
-  host_mqtt_ready_pid=$!
-  for _ in $(seq 1 50); do
-    [[ -f "$RUN_DIR/host-mqtt-ready" ]] && break
-    kill -0 "$host_mqtt_ready_pid" 2>/dev/null || break
-    sleep 0.1
-  done
-  [[ -f "$RUN_DIR/host-mqtt-ready" ]] || fail "host MQTT readiness bridge did not connect"
-fi
-
 set +e
 unshare --net --mount --fork bash -c '
   set -Eeuo pipefail
   rootfs="$1"; tools="$2"; run_dir="$3"; run_secs="$4"; tls_dir="$5"; mqtt_host="$6"; v33_fixture="$7"
   cleanup() {
     set +e
-    for pid in "${firmware_pid:-}" "${mqtt_pid:-}" "${credential_pid:-}" "${qmux_pid:-}" "${rs485_pid:-}" \
+    for pid in "${firmware_pid:-}" "${mqtt_ready_pid:-}" "${mqtt_pid:-}" "${credential_pid:-}" "${qmux_pid:-}" "${rs485_pid:-}" \
                "${emu_pid:-}" "${cat_gs0:-}" \
                "${soc_gs0:-}" "${soc_smd8:-}" "${soc_hsl2:-}"; do
       [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
@@ -186,6 +164,21 @@ unshare --net --mount --fork bash -c '
     python3 "$tools/mqtt_scenario_stub.py" \
       "${mqtt_args[@]}" &
     mqtt_pid=$!
+    if [[ "${HOST_MQTT_READY_BRIDGE:-0}" == 1 ]]; then
+      python3 "$tools/mqtt_ready_bridge.py" \
+        --ready-file "$run_dir/host-mqtt-ready" \
+        --transcript "$run_dir/host-mqtt-ready.jsonl" &
+      mqtt_ready_pid=$!
+      for _ in $(seq 1 50); do
+        [[ -f "$run_dir/host-mqtt-ready" ]] && break
+        kill -0 "$mqtt_ready_pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      [[ -f "$run_dir/host-mqtt-ready" ]] || {
+        echo "MQTT readiness bridge did not connect inside QEMU network namespace" >&2
+        exit 97
+      }
+    fi
   fi
 
   if [[ "${V33_DOWNLOAD_PROBE:-0}" == 1 || "${LOCAL_OTA_HANDLER:-0}" == 1 || "${FIRMWARE_HTTP_ONLY:-0}" == 1 ]]; then
