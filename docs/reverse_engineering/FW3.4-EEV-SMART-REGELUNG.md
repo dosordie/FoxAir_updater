@@ -2,7 +2,7 @@
 
 Stand: 13. September 2026
 
-Gezielte Reverse-Engineering-Analyse der FoxAir/PHNIX GL9 Mainboard-Firmware `82400644 / V3.4` mit Schwerpunkt Haupt-EEV, Auto/Smart, `E03-1…5` und `E07-1…5`.
+Gezielte Reverse-Engineering-Analyse der FoxAir/PHNIX GL9 Mainboard-Firmware `82400644 / V3.4` mit Schwerpunkt **Haupt-EEV**, Auto/Smart, `E03-1…5` und `E07-1…5`. Die GL9 besitzt kein EVI-/Economizer-Ventil; dessen Regelung wird in diesem Dokument bewusst nicht weiter verfolgt.
 
 Ergänzt [`FW3.3-EEV-SMART-REGELUNG.md`](FW3.3-EEV-SMART-REGELUNG.md).
 
@@ -37,6 +37,12 @@ Bewertung:
 - Auto verwendet zusätzlich eine **4×5-Zustandsmatrix** aus `MAIN:2066` und `MAIN:2053/T12`.
 - Die Auto-Matrix-Schwellen unterscheiden sich zwischen R32- und R290-Profilen (`A26 % 2`).
 - `E19` = **±E19 %**, keine Halbierung.
+- `MAIN:2065` = **Verdampfungstemperatur** aus dem Niederdruck-/Kältemittelpfad; DWIN/PHNIX bestätigt die Bezeichnung.
+- `MAIN:2066` = **Abgasüberhitzung**, `MAIN:2067` = **Rückgas-/Saugüberhitzung**; die DWIN-Texte bestätigen damit die zuvor nur funktional abgeleiteten Namen.
+- `MAIN:1351/E20` und `MAIN:1352/E21` sind die beiden öffentlichen Gain-/Zeitparameter des Feedbackreglers. Der Regler ist **PI-artig**, besitzt eine Totzone von ungefähr `±0,5 K`, eine proportionale Begrenzung von etwa `±60` Schritten und eine Ausgangs-Slew-Rate von höchstens etwa `±5` Sollwertschritten pro Regleraufruf.
+- Der Haupt-EEV-Regler wird ungefähr alle **0,778 s** aufgerufen; die 5-Sample-Überhitzungsmittelung umfasst damit ungefähr **3,89 s**.
+- Der Stepper kann ungefähr **20,1 Schritte/s** nachfahren.
+- `E17` wird in einem Defrost-State direkt als Haupt-EEV-Zielposition benutzt.
 - `185 × 0,9 ≈ 166` ist **nicht** der direkte Firmwarepfad; `0,9` skaliert den Smart-Kennfeldwert nach T01.
 
 ---
@@ -49,8 +55,11 @@ Bewertung:
 | 1132 | E02 | **Haupt-EEV Ziel-Regelüberhitzung Heizen** | Sollwert; Istwert `MAIN:2067` |
 | 1133 | E03 | **Haupt-EEV Heiz-Basis-/Startöffnung global** | kann E03-x im untersuchten Basispfad übersteuern |
 | 1137 | E07 | **Haupt-EEV Mindestöffnung <61 Hz** | im aktiven E07-Schutzpfad bei `MAIN:2072 <61 Hz` |
+| 1147 | E17 | **Haupt-EEV Abtau-Zielöffnung** | wird in einem Defrost-State direkt als EEV-Zielposition gesetzt |
 | 1148 | E18 | **Haupt-EEV Ziel-Regelüberhitzung Kühlen** | Sollwert derselben Feedbackregelung |
 | 1149 | E19 | **Smart-EEV Korrekturfenster ± %** | `SmartCenter × (1 ± E19/100)` |
+| 1351 | E20 | **Haupt-EEV P-/Fehlerverstärkung** | signed 8-bit; proportionaler Skalierungsparameter, Default `1` |
+| 1352 | E21 | **Haupt-EEV I-/Zeitfaktor (Divisor)** | signed 8-bit; geht als `1/E21` in den zeitabhängigen Anteil ein, Default `1` |
 | 1200 | E03-1 | **EEV Heiz-Basisöffnung T04 ≥ +7,1 °C** | direktes T04-Band |
 | 1142 | E03-2 | **EEV Heiz-Basisöffnung T04 +0,1…+7,0 °C** | direktes T04-Band |
 | 1206 | E03-3 | **EEV Heiz-Basisöffnung T04 −4,9…0,0 °C** | direktes T04-Band |
@@ -63,8 +72,9 @@ Bewertung:
 | 1216 | E07-5 | **EEV Mindestöffnung ≥61 Hz, T04 ≤ −10,0 °C** | dito |
 | 2020 | – | **Haupt-EEV Istposition / Schritte** | intern nachgeführte Stepperposition |
 | 2053 | T12 | **Verdichter-Austritts-/Heißgastemperatur** | 5-stufige Auto-Matrixachse |
-| 2066 | – | **EEV Abgas-/Referenztemperaturdifferenz, 5-Sample-Mittel** | 4-stufige Auto-Matrixachse, `0,1 K` |
-| 2067 | – | **Haupt-EEV Regelüberhitzung / Saugüberhitzung, 5-Sample-Mittel** | Feedback-Istwert, `0,1 K` |
+| 2065 | – | **Verdampfungstemperatur** | aus Niederdruck + A26/Kältemittel berechnete Sättigungsreferenz, `0,1 °C` |
+| 2066 | – | **Abgasüberhitzung, 5-Sample-Mittel** | DWIN/PHNIX-Klartext bestätigt; 4-stufige Auto-Matrixachse, `0,1 K` |
+| 2067 | – | **Rückgas-/Saugüberhitzung, 5-Sample-Mittel** | DWIN/PHNIX-Klartext bestätigt; Haupt-EEV-Feedback-Istwert, `0,1 K` |
 | 2071 | – | **Kompressor-Sollfrequenz** | Smart-Frequenzachse |
 | 2072 | – | **Kompressor-Istfrequenz** | E07-Umschaltung bei 61 Hz |
 
@@ -80,13 +90,11 @@ Bewertung:
 1133 E03   → 0x200169E4+0x04
 1137 E07   → 0x200169E4+0x06
 1138 E08   → 0x200169E4+0x08
-1139 E09   → 0x200169E4+0x0A
-1140 E10   → 0x200169E4+0x0C
-1143 E13   → 0x200169E4+0x0E
-1144 E14   → 0x200169E4+0x10
 1147 E17   → 0x200169E4+0x12
 1148 E18   → 0x200169E4+0x14
 1149 E19   → 0x200169E4+0x16
+1351 E20   → 0x20016C9C+0x08 (signed byte)
+1352 E21   → 0x20016C9C+0x09 (signed byte)
 
 1200 E03-1 → 0x200169E4+0x18
 1142 E03-2 → 0x200169E4+0x1A
@@ -184,11 +192,11 @@ Bei ca. **29 Hz** ist daher – sofern das Gate aktiv ist – **globales E07** r
 
 E07/E07-x sind softwareseitige Mindestöffnungen, **keine mechanischen Minima**.
 
-**Offen:** offizieller Herstellername des Gate-Bits `0x20016E18+3 Bit1`.
+Das Gate-Bit `0x20016E18+3 Bit1` ist inzwischen funktional als **übergeordnete Stabil-/Normalbetriebsfreigabe** einzuordnen: Es wird von mehreren Betriebs-, Laufzeit- und Schutzbedingungen gesetzt bzw. gelöscht und ist kein eigener EEV-Timer. Der exakte PHNIX-Klartextname bzw. ein direkter öffentlicher Statusspiegel ist noch nicht geschlossen.
 
 ---
 
-# 6. MAIN:2020 / 2066 / 2067
+# 6. MAIN:2020 / 2065 / 2066 / 2067
 
 ## 6.1 MAIN:2020
 
@@ -200,7 +208,25 @@ E07/E07-x sind softwareseitige Mindestöffnungen, **keine mechanischen Minima**.
 
 Damit ist `2020` die intern nachgeführte **EEV-Istposition**.
 
-## 6.2 Gemeinsame 5-Sample-Aufbereitung
+## 6.2 MAIN:2065 = Verdampfungstemperatur
+
+Der bislang nur als wahrscheinliche Sättigungsreferenz geführte Wert ist jetzt geschlossen:
+
+```text
+0x20016D5C+0x0A
+→ Statusbuilder
+→ MAIN:2065
+```
+
+Der Wert wird aus dem **Niederdruckpfad** unter Berücksichtigung des über `A26` gewählten Kältemittels berechnet. Der DWIN-/PHNIX-Referenzcode führt denselben öffentlichen Wert unter der Bezeichnung **„Verdampfungstemperatur“** (`蒸发温度`).
+
+Damit gilt:
+
+> **MAIN:2065 = aus Niederdruck berechnete Verdampfungs-/Sättigungstemperatur, 0,1 °C.**
+
+Das schließt zugleich die wichtigste Referenzgröße der Saugüberhitzungsbildung.
+
+## 6.3 Gemeinsame 5-Sample-Aufbereitung
 
 ```text
 0x20016AC4+0x10 = Mittelwert Kanal 1 → MAIN:2066/10
@@ -212,7 +238,7 @@ Damit ist `2020` die intern nachgeführte **EEV-Istposition**.
 
 Nach fünf Samples wird jeweils durch `5.0` geteilt und der Akkumulator gelöscht.
 
-## 6.3 MAIN:2067 = Regelüberhitzung
+## 6.4 MAIN:2067 = Rückgas-/Saugüberhitzung
 
 Der Auto-Regler ruft den Feedback-Helper direkt mit:
 
@@ -231,7 +257,9 @@ V3.4-Beispiel:
 
 Damit ist funktional bestätigt:
 
-> **MAIN:2067 = Haupt-EEV Regelüberhitzung / Saugüberhitzung, 5-Sample-Mittel.**
+> **MAIN:2067 = Rückgas-/Saugüberhitzung des Haupt-EEV, 5-Sample-Mittel.**
+
+Der DWIN-/PHNIX-Referenzcode bestätigt für diesen Kanal die Rückgas-/Saugüberhitzungs-Semantik; die funktionale Zuordnung als Feedback-Istwert ist zusätzlich direkt im Mainboardcode geschlossen.
 
 Primärer physikalischer Pfad:
 
@@ -241,11 +269,11 @@ T05 Saugtemperatur
 Verdampfungs-/Sättigungsreferenz aus Niederdruckpfad
 ```
 
-Die Referenz `0x20016D5C+0x0A` ist sehr wahrscheinlich die aus Niederdruck berechnete Verdampfungs-/Sättigungstemperatur: derselbe Block enthält bei `+0x08` `MAIN:2069 / T15 Niederdruck` und wird A26-/kältemittelspezifisch berechnet.
+Die Referenz `0x20016D5C+0x0A` ist **MAIN:2065 / Verdampfungstemperatur** und wird aus dem Niederdruckpfad A26-/kältemittelspezifisch berechnet. Derselbe Block enthält bei `+0x08` `MAIN:2069 / T15 Niederdruck`.
 
 Fallbacks verwenden je nach Zustand T06 bzw. T03 als Referenz.
 
-## 6.4 MAIN:2066 = Abgas-/Referenzdifferenz
+## 6.5 MAIN:2066 = Abgasüberhitzung
 
 Kanal 1 ist die 4-stufige Auto-Matrixachse.
 
@@ -259,9 +287,9 @@ T03 Verdampfer-/Coil-Temperatur
 
 In bestimmten Sonder-/Betriebszweigen wird T02 Auslasswasser als Referenz benutzt.
 
-Daher derzeit beste technische Bezeichnung:
+Der DWIN-/PHNIX-Referenzcode bezeichnet diesen Kanal als **Abgasüberhitzung**. Damit ist die bisher vorsichtigere Bezeichnung „Abgas-/Referenztemperaturdifferenz“ nicht mehr nötig.
 
-> **MAIN:2066 = EEV Abgas-/Referenztemperaturdifferenz, 5-Sample-Mittel.**
+> **MAIN:2066 = Abgasüberhitzung, 5-Sample-Mittel.**
 
 ---
 
@@ -352,32 +380,65 @@ Auto ist daher eine **zustandsabhängige nichtlineare Überhitzungsregelung mit 
 
 ---
 
-# 8. Feedback-Helper 0x08054868
+# 8. Feedback-Helper 0x08054868 – PI-artiger Haupt-EEV-Regler
 
 Eingänge:
 
 ```text
 s0 = Überhitzungs-Sollwert E02/E18 (zustandsabhängig ggf. verschoben)
-s1 = MAIN:2067/10
+s1 = MAIN:2067/10 = Rückgas-/Saugüberhitzung
 error = actual - target
 ```
 
-Im Code liegen mehrere nichtlineare Fehlerzonen um ungefähr:
+Die beiden bislang anonymen Konfigurationsbytes sind öffentliche Parameter:
 
 ```text
--5, -3, -2, ... +2, +3, +5 K
+MAIN:1351 / E20 → 0x20016C9C+0x08  signed8
+MAIN:1352 / E21 → 0x20016C9C+0x09  signed8
 ```
 
-Zusätzlich werden signed Konfigurationsbytes aus:
+Beide stehen im untersuchten Defaultdatensatz auf `1`.
+
+## 8.1 E20
+
+E20 wirkt als **proportionaler Fehler-/Gainfaktor** des Haupt-EEV-Feedbackreglers. Die proportionale Korrektur ist nicht linear über den gesamten Fehlerbereich, sondern wird über mehrere Fehlerzonen gestuft und schließlich begrenzt.
+
+Im rekonstruierten Pfad liegt die maximale proportionale Einzelkorrektur bei ungefähr:
 
 ```text
-0x20016C9C+0x08
-0x20016C9C+0x09
+±60 Schritte
 ```
 
-verwendet (Defaults `1/1`). Sie wirken als Gain-/Skalierungsparameter; offizielle Namen/öffentliche Register sind noch nicht geschlossen.
+## 8.2 E21
 
-Der Helper ist zustandsbehaftet und begrenzt seine Korrektur. Ohne Herstellerbeleg sollte er nicht „PID“ genannt werden; passend ist **nichtlinearer, zustandsbehafteter Überhitzungs-Korrekturregler**.
+E21 geht in den zeitabhängigen/integralen Anteil über einen Divisor ein:
+
+```text
+... × (1 / E21)
+```
+
+Damit verhält sich E21 funktional wie ein **I-/Zeitfaktor bzw. Integralskalierungs-Divisor**. Im Mainboardpfad wurde bislang **keine Schutzvalidierung gegen E21=0** gefunden. Daher ist `E21=0` nicht als sinnvoller Einstellwert zu dokumentieren oder zu testen, solange kein vorgeschalteter HMI-Minimalwert nachgewiesen ist.
+
+## 8.3 Reglercharakteristik
+
+Der Helper ist zustandsbehaftet und besitzt mindestens folgende rekonstruierte Eigenschaften:
+
+```text
+Totzone um den Sollwert: ungefähr ±0,5 K
+mehrere nichtlineare Fehlerzonen: u. a. um ±2 / ±3 / ±5 K
+P-Korrektur begrenzt: ungefähr ±60 Schritte
+Ausgangsänderung pro Regleraufruf: maximal ungefähr ±5 Schritte
+```
+
+Ein expliziter D-Anteil wurde nicht gefunden. Die Struktur ist daher am treffendsten als **nichtlinearer PI-artiger Überhitzungsregler** zu bezeichnen.
+
+Bei einem Regleraufruf ungefähr alle `0,778 s` entspricht die ±5-Schritt-Slew-Begrenzung einer maximalen Sollwertänderung von ungefähr:
+
+```text
+5 / 0,778 ≈ 6,4 Schritte/s
+```
+
+Der Steppermotor selbst kann schneller nachfahren; siehe Zeitbasis weiter unten.
 
 ---
 
@@ -506,22 +567,109 @@ Der Messpunkt muss deshalb mit `2048/T04`, `2045/T01`, `2071`, `2067` und `2020`
 
 ---
 
-# 12. Kompakter Pseudocode
+# 12. E17 – direkter Abtaupfad
+
+`E17 / MAIN:1147` ist nicht nur ein unbenutzter Reservewert. In einem eindeutig zum Defrost-/Abtaubetrieb gehörenden internen State wird E17 **direkt als Haupt-EEV-Zielposition** übernommen.
+
+Vereinfacht:
+
+```text
+if defrost_EEV_state_active:
+    main_EEV_target = E17
+```
+
+Damit ist für GL9 die technische Bezeichnung **„Haupt-EEV Abtau-Zielöffnung“** belastbar. Noch offen ist nur die vollständige Rückführung des auslösenden internen Defrost-States auf den offiziellen öffentlichen Statusnamen bzw. ein einzelnes Modbus-Bit.
+
+---
+
+# 13. Scheduler- und Stepper-Zeitbasis
+
+Die V3.4 schaltet auf **72 MHz Systemtakt**. APB1 läuft mit `/2`; für den TIM6-Pfad ergibt sich durch die STM32-Timerverdopplung wieder ein Timerclock von **72 MHz**.
+
+TIM6 wird mit:
+
+```text
+PSC = 111
+ARR = 499
+```
+
+konfiguriert. Daraus folgt:
+
+```text
+72 MHz / (112 × 500) ≈ 1285,714 Hz
+Timerinterrupt ≈ 0,7778 ms
+```
+
+Jeder vierte Timerinterrupt gibt den Stepper-/Basistask frei:
+
+```text
+4 × 0,7778 ms ≈ 3,111 ms
+```
+
+Der Haupt-EEV-Steppertreiber führt erst bei jedem 16. solchen Taskaufruf einen Motorstep aus:
+
+```text
+16 × 3,111 ms ≈ 49,78 ms pro Schritt
+≈ 20,1 Schritte/s
+```
+
+Beispiele:
+
+```text
+100 Schritte ≈ 4,98 s
+200 Schritte ≈ 9,96 s
+480 Schritte ≈ 23,9 s
+```
+
+Der große Reglerscheduler besitzt **50 Slots**; ein Slot wird nach fünf 3,111-ms-Basistakten weitergeschaltet:
+
+```text
+5 × 3,111 ms ≈ 15,56 ms pro Slot
+50 × 15,56 ms ≈ 0,778 s pro vollständigem Schedulerumlauf
+```
+
+Der Haupt-EEV-Regler sitzt in diesem 50-Slot-Zyklus und wird damit ungefähr alle **0,778 s** aufgerufen.
+
+Da 2066/2067 über fünf Regler-/Messsamples gemittelt werden, entspricht die Mittelungszeit ungefähr:
+
+```text
+5 × 0,778 s ≈ 3,89 s
+```
+
+Wichtig für Logauswertungen: `2020` kann deshalb einer Sollwertänderung sichtbar hinterherlaufen. Die Regelung darf nicht so interpretiert werden, als könne das Ventil einen neuen Zielwert sprunghaft erreichen.
+
+---
+
+# 14. Unbekannter Haupt-EEV-Sonderoverride
+
+Neben Auto/Smart, E07-Clamp und E17-Abtaupfad existiert noch ein separater interner Overrideblock bei:
+
+```text
+0x20016C10
+```
+
+Wenn dessen interner State `+5 == 3` aktiv ist, kann ein Feld bei `+0x10` die normale Haupt-EEV-Zielposition direkt ersetzen. Funktional ist damit ein **Sonderbetriebs-/Overridepfad für das Haupt-EEV** nachgewiesen.
+
+Die offizielle Bedeutung dieses States ist noch nicht geschlossen. Mögliche Klassen sind Service/Test, Start/Recovery oder ein anderer Sonderbetriebszustand; ohne weiteren Xref-Beleg wird keine davon als Name übernommen.
+
+---
+
+# 15. Kompakter Pseudocode
 
 ```text
 # Heizbasis
 base = E03 if E03 != 0 else E03_segment_direct(T04)
 
 # Regelgrößen (5-Sample-Mittel)
-aux = MAIN2066/10
-sh  = MAIN2067/10
+discharge_sh = MAIN2066/10
+suction_sh   = MAIN2067/10
 
 # Auto-Matrix
-aux_state = hysteresis(aux, A26_refrigerant_thresholds)
+aux_state = hysteresis(discharge_sh, A26_refrigerant_thresholds)
 hotgas_state = hysteresis(T12, A26_refrigerant_thresholds)
 state = (aux_state << 4) | hotgas_state
 
-auto_target = nonlinear_feedback(state, E02_or_E18, sh)
+auto_target = nonlinear_PI_feedback(state, E02_or_E18, suction_sh, E20, E21)
 
 # Smart
 if E01 == 2:
@@ -550,33 +698,40 @@ target = min(target, 480)
 
 ---
 
-# 13. Noch offene Punkte
+# 16. Noch offene Punkte
 
-1. `0x20016E18+3 Bit1`: offizieller Name des E07-Mindestöffnungs-Gates.
-2. `0x20016C9C+8/+9`: öffentliche/Engineering-Zuordnung und Herstellername der Feedback-Gain-/Skalierungsbytes.
-3. offizieller PHNIX-Klartextname für `MAIN:2066`.
-4. öffentliche/Herstellerbezeichnung der sehr wahrscheinlich niederdruckabgeleiteten Verdampfungs-/Sättigungstemperatur `0x20016D5C+0x0A`.
-5. Start-/Recovery-/Sensorfehler-/Abtau-Bypässe vollständig auf offizielle Flags mappen.
-6. absolute Scheduler-/Stepper-Zeitbasis bestimmen.
-7. EVI-/Economizer-EEV-Regler in derselben Detailtiefe schließen.
+Für die **GL9-Haupt-EEV-Regelung** bleiben nach dem aktuellen Stand im Wesentlichen noch diese Punkte:
+
+1. `0x20016E18+3 Bit1`: exakter PHNIX-Klartextname und möglichst ein öffentlicher Statusspiegel der bereits funktional als Stabil-/Normalbetriebsfreigabe eingeordneten E07-Mindestöffnungslogik.
+2. Die vollständigen Setz-/Löschbedingungen dieses Gates auf offizielle Betriebs-, Laufzeit- und Schutzstatus abbilden.
+3. Start-/Recovery-/Sensorfehler-Sonderpfade vollständig auf öffentliche Flags mappen; der E17-Abtaupfad selbst ist bereits geschlossen.
+4. Den Sonderoverride `0x20016C10` fachlich identifizieren und auf einen offiziellen Betriebs-/Servicezustand zurückführen.
+5. Für `E20/E21` den vom HMI tatsächlich erlaubten Einstellbereich bzw. die Eingabevalidierung schließen. Besonders `E21=0` darf wegen des Mainboard-Rechenpfads nicht als sicher angenommen werden.
+6. Für die 20 Zustände der Auto-4×5-Matrix die inneren Einzelaktionen/Offsets vollständig tabellieren. Die Achsen und Randaktionen sind geschlossen, einige innere zustandsabhängige E02/E18-Verschiebungen sind noch nicht als vollständige 20-Zellen-Tabelle dokumentiert.
+
+Der EVI-/Economizer-Regler wird **nicht** weiter verfolgt, da die GL9 kein EVI-Ventil besitzt.
 
 ---
 
-# 14. Empfohlenes Logging
+# 17. Empfohlenes Logging
 
 ```text
 MAIN:1131 E01
 MAIN:1132 E02
+MAIN:1147 E17
 MAIN:1149 E19
+MAIN:1351 E20
+MAIN:1352 E21
 MAIN:2020 EEV-Istposition
 MAIN:2045 T01 Einlasswasser
 MAIN:2048 T04 wirksame Außentemperatur
 MAIN:2053 T12 Heißgastemperatur
-MAIN:2066 Abgas-/Referenztemperaturdifferenz
-MAIN:2067 Haupt-EEV Regelüberhitzung
+MAIN:2065 Verdampfungstemperatur
+MAIN:2066 Abgasüberhitzung
+MAIN:2067 Rückgas-/Saugüberhitzung
 MAIN:2071 Kompressor-Sollfrequenz
 MAIN:2072 Kompressor-Istfrequenz
 Betriebsmodus / Abtauzustand
 ```
 
-Damit lassen sich die Auto-Matrixstates, die drei Smart-Achsen und das E19-Fenster offline rekonstruieren.
+Damit lassen sich die Auto-Matrixstates, die drei Smart-Achsen, das E19-Fenster und die zeitliche Reaktion des PI-artigen Haupt-EEV-Reglers offline rekonstruieren.
