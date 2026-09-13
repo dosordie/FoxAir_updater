@@ -165,6 +165,17 @@ unshare --net --mount --fork bash -c '
       "${mqtt_args[@]}" &
     mqtt_pid=$!
     if [[ "${HOST_MQTT_READY_BRIDGE:-0}" == 1 ]]; then
+      # The bridge must not race the freshly spawned MQTT stub.  Waiting for
+      # the stub LISTEN event also makes this deterministic on slow VMs.
+      for _ in $(seq 1 50); do
+        grep -q '"type": "LISTEN"' "$run_dir/mqtt-tls-transcript.jsonl" 2>/dev/null && break
+        kill -0 "$mqtt_pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      grep -q '"type": "LISTEN"' "$run_dir/mqtt-tls-transcript.jsonl" 2>/dev/null || {
+        echo "MQTT scenario stub did not become ready inside QEMU network namespace" >&2
+        exit 96
+      }
       python3 "$tools/mqtt_ready_bridge.py" \
         --ready-file "$run_dir/host-mqtt-ready" \
         --transcript "$run_dir/host-mqtt-ready.jsonl" &
