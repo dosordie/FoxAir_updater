@@ -12,8 +12,12 @@ SERVICE=/data/phnixIot4G
 HOOK_RUNTIME=/tmp/phnix_ota_hook
 EXPECTED_BUILD_FIXED=af4dcae12639bedce833ee5efa5da009777b6319
 EXPECTED_SERVICE_FIXED=7C573431F0A67620D473419644A83A4F4DC04B8A91BDE5923C74A63BA1EAEDB7
-MQTT_READY_TIMEOUT=120
-MQTT_READY_CONFIRM_DELAY=3
+SERVICE_READY_TIMEOUT=120
+SERVICE_READY_CONFIRM_DELAY=3
+DTU_RUN_STEP_ADDR=624899
+DTU_STA_ADDR=624900
+BOARD_OTA_STEP_ADDR=625300
+UART_SEND_FLAG_ADDR=602332
 SHELL_BIN=/system/bin/sh
 test -x "$SHELL_BIN" || SHELL_BIN=/bin/sh
 
@@ -194,23 +198,45 @@ mqtt_guard_active() {
     iptables -S INPUT 2>/dev/null | grep -q -- '-i rmnet_data0 .*--sport 1883 .*DROP'
 }
 
-mqtt_established() {
-    netstat -nt 2>/dev/null | awk '
-        ($4 ~ /:1883$/ || $5 ~ /:1883$/) && $0 ~ /ESTABLISHED/ { found=1 }
-        END { exit found ? 0 : 1 }
-    '
+read_process_u8() {
+    pid=$1 addr=$2
+    value=$(dd if="/proc/$pid/mem" bs=1 skip="$addr" count=1 2>/dev/null | od -An -tu1 2>/dev/null | tr -d ' \r\n')
+    case "$value" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$value"
 }
 
-wait_for_mqtt_ready() {
-    timeout=${1:-$MQTT_READY_TIMEOUT}
-    confirm_delay=${2:-$MQTT_READY_CONFIRM_DELAY}
+read_process_u32() {
+    pid=$1 addr=$2
+    value=$(dd if="/proc/$pid/mem" bs=1 skip="$addr" count=4 2>/dev/null | od -An -tu4 2>/dev/null | tr -d ' \r\n')
+    case "$value" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$value"
+}
+
+service_local_state() {
+    pid=$1
+    run_step=$(read_process_u8 "$pid" "$DTU_RUN_STEP_ADDR") || return 1
+    dtu_sta=$(read_process_u8 "$pid" "$DTU_STA_ADDR") || return 1
+    board_step=$(read_process_u8 "$pid" "$BOARD_OTA_STEP_ADDR") || return 1
+    uart_flag=$(read_process_u32 "$pid" "$UART_SEND_FLAG_ADDR") || return 1
+    printf '%s %s %s %s\n' "$run_step" "$dtu_sta" "$board_step" "$uart_flag"
+}
+
+wait_for_service_ready() {
+    timeout=${1:-$SERVICE_READY_TIMEOUT}
+    confirm_delay=${2:-$SERVICE_READY_CONFIRM_DELAY}
     elapsed=0
     stable=0
     while test "$elapsed" -lt "$timeout"; do
         current=$(single_service_pid) || return 2
         test "$current" = "$SERVICE_PID" || return 2
         test "$(awk '/^TracerPid:/ {print $2}' /proc/$current/status 2>/dev/null)" = 0 || return 2
-        if mqtt_established; then
+        state=$(service_local_state "$current") || return 3
+        set -- $state
+        run_step=$1
+        dtu_sta=$2
+        board_step=$3
+        uart_flag=$4
+        if test "$run_step" = 11 && test "$dtu_sta" = 4 && test "$board_step" = 12 && test "$uart_flag" = 0; then
             stable=$((stable + 1))
             if test "$stable" -ge 2; then
                 return 0
@@ -477,17 +503,20 @@ run_action() {
         SERVICE_RESTART_VERIFIED=true
         must_write_status running service-restart-verified false "" "Exactly one new stable original-service PID was verified after restart."
     fi
-    must_write_status running service-cloud-wait false "" "Waiting for the original service to establish a stable MQTT/TCP 1883 connection before any runtime hook or OTA action."
-    wait_for_mqtt_ready "$MQTT_READY_TIMEOUT" "$MQTT_READY_CONFIRM_DELAY"; mqtt_rc=$?
-    case "$mqtt_rc" in
+    must_write_status running service-ready-wait false "" "Waiting for the local phnixIot4G runtime state to become fully initialized and idle before any runtime hook or OTA action."
+    wait_for_service_ready "$SERVICE_READY_TIMEOUT" "$SERVICE_READY_CONFIRM_DELAY"; ready_rc=$?
+    case "$ready_rc" in
         0)
-            must_write_status running service-cloud-ready false "" "Original-service MQTT/TCP 1883 was confirmed twice consecutively before hook start."
+            must_write_status running service-ready false "" "Local phnixIot4G state (run step 11, DTU state 4, board step 12 and idle UART send flag) was confirmed twice consecutively before hook start."
             ;;
         2)
-            terminal_result failed failed service-cloud-wait 83 service_unstable_before_hook "Original service PID changed, became ambiguous or was traced while waiting for cloud readiness; no hook or OTA action was started."
+            terminal_result failed failed service-ready-wait 83 service_unstable_before_hook "Original service PID changed, became ambiguous or was traced while waiting for local readiness; no hook or OTA action was started."
+            ;;
+        3)
+            terminal_result failed failed service-ready-wait 83 service_state_unreadable_before_hook "The local phnixIot4G runtime state could not be read safely; no hook or OTA action was started."
             ;;
         *)
-            terminal_result failed failed service-cloud-wait 83 cloud_not_ready_before_hook "Cloud/MQTT did not become stably connected within 120 seconds; no hook or OTA action was started."
+            terminal_result failed failed service-ready-wait 83 service_not_ready_before_hook "The local phnixIot4G runtime state did not become ready within 120 seconds; no hook or OTA action was started."
             ;;
     esac
     start_http || terminal_result failed failed staging 82 local_http_failed "Local firmware HTTP staging verification failed."
@@ -538,7 +567,7 @@ run_action() {
                 guarded_result recovery-required recovery-required 131 restore_unconfirmed "Abort restore was not unambiguously confirmed; lock and diagnostics retained."
             elif test "$post_abort_logged" = 0; then
                 post_abort_logged=1
-                log_event "abort request refused after authority handoff; observation continues"
+                log_event "abort request refused after point-of-no-return; observation continues"
             fi
         fi
         if test "$terminal" = true; then
