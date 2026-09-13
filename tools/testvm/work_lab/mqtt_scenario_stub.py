@@ -149,6 +149,97 @@ def send_probe(stream, topic, payload, packet_id, transcript, kind, label=""):
                             "payload_hex": payload.hex()})
 
 
+def handle_client(raw, peer, context, args, runtime_requests):
+    """Serve one MQTT client without blocking other lab connections."""
+    probe_sent = False
+    scheduled = []
+    pending_runtime = []
+    subscribed = set()
+    next_packet_id = 0x7100
+    try:
+        with context.wrap_socket(raw, server_side=True) as stream:
+            stream.settimeout(0.10)
+            log_record(args.transcript, {"type": "TLS", "peer": list(peer),
+                                          "version": stream.version(),
+                                          "cipher": stream.cipher()[0]})
+            while True:
+                # The readiness bridge never subscribes.  Leave one-shot
+                # requests queued for the real phnixIot4G connection.
+                if subscribed:
+                    while True:
+                        try:
+                            pending_runtime.append(runtime_requests.get_nowait())
+                        except queue.Empty:
+                            break
+                unsent = []
+                for topic, probe, label in pending_runtime:
+                    if topic not in subscribed:
+                        unsent.append((topic, probe, label))
+                        continue
+                    send_probe(stream, topic, probe, next_packet_id, args.transcript,
+                               "LAB_RUNTIME_PROBE_SENT", label)
+                    next_packet_id += 1
+                pending_runtime = unsent
+                now = time.monotonic()
+                while scheduled and scheduled[0][0] <= now:
+                    _, probe_path = scheduled.pop(0)
+                    probe = Path(probe_path).read_bytes().rstrip(b"\r\n")
+                    send_probe(stream, args.probe_topic, probe, next_packet_id,
+                               args.transcript, "LAB_SCHEDULED_PROBE_SENT", probe_path)
+                    next_packet_id += 1
+                try:
+                    first, encoded, payload = read_packet(stream)
+                except socket.timeout:
+                    continue
+                with open(args.binary_log, "ab") as binary:
+                    binary.write(bytes((first,)) + encoded + payload)
+                packet_type = first >> 4
+                if packet_type == 1:
+                    log_record(args.transcript, decode_connect(payload))
+                    stream.sendall(b"\x20\x02\x00\x00")
+                elif packet_type == 3:
+                    record = decode_publish(first, payload)
+                    log_record(args.transcript, record)
+                    if record["qos"] == 1:
+                        stream.sendall(b"\x40\x02" + struct.pack("!H", record["packet_id"]))
+                elif packet_type == 8:
+                    record = decode_subscribe(first, payload)
+                    log_record(args.transcript, record)
+                    subscribed.update(item["topic"] for item in record["topics"])
+                    granted = bytes([item["qos"] for item in record["topics"]])
+                    stream.sendall(b"\x90" + bytes((2 + len(granted),))
+                                   + struct.pack("!H", record["packet_id"]) + granted)
+                    if not probe_sent and args.probe_topic and args.probe_topic in subscribed:
+                        probe = (Path(args.probe_payload_file).read_bytes().rstrip(b"\r\n")
+                                 if args.probe_payload_file
+                                 else bytes.fromhex(args.probe_payload_hex or ""))
+                        send_probe(stream, args.probe_topic, probe, 0x7001,
+                                   args.transcript, "LAB_PROBE_SENT")
+                        probe_sent = True
+                        base = time.monotonic()
+                        for spec in args.scheduled_probe:
+                            delay_text, probe_path = spec.split(":", 1)
+                            scheduled.append((base + float(delay_text), probe_path))
+                        scheduled.sort()
+                elif packet_type == 4:
+                    packet_id = struct.unpack_from("!H", payload, 0)[0]
+                    log_record(args.transcript, {"type": "PUBACK", "packet_id": packet_id})
+                elif packet_type == 12:
+                    log_record(args.transcript, {"type": "PINGREQ"})
+                    stream.sendall(b"\xd0\x00")
+                elif packet_type == 14:
+                    log_record(args.transcript, {"type": "DISCONNECT"})
+                    break
+                else:
+                    log_record(args.transcript, {"type": "PACKET", "mqtt_type": packet_type,
+                                                 "flags": first & 0x0F,
+                                                 "length": len(payload)})
+    except (EOFError, ConnectionError, ssl.SSLError) as error:
+        log_record(args.transcript, {"type": "CONNECTION_END", "detail": str(error)})
+    finally:
+        raw.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cert", required=True)
@@ -182,89 +273,11 @@ def main():
 
     while True:
         raw, peer = listener.accept()
-        probe_sent = False
-        scheduled = []
-        pending_runtime = []
-        subscribed = set()
-        next_packet_id = 0x7100
-        try:
-            with context.wrap_socket(raw, server_side=True) as stream:
-                stream.settimeout(0.10)
-                log_record(args.transcript, {"type": "TLS", "peer": list(peer),
-                                              "version": stream.version(),
-                                              "cipher": stream.cipher()[0]})
-                while True:
-                    while True:
-                        try:
-                            pending_runtime.append(runtime_requests.get_nowait())
-                        except queue.Empty:
-                            break
-                    unsent = []
-                    for topic, probe, label in pending_runtime:
-                        if topic not in subscribed:
-                            unsent.append((topic, probe, label))
-                            continue
-                        send_probe(stream, topic, probe, next_packet_id, args.transcript,
-                                   "LAB_RUNTIME_PROBE_SENT", label)
-                        next_packet_id += 1
-                    pending_runtime = unsent
-                    now = time.monotonic()
-                    while scheduled and scheduled[0][0] <= now:
-                        _, probe_path = scheduled.pop(0)
-                        probe = Path(probe_path).read_bytes().rstrip(b"\r\n")
-                        send_probe(stream, args.probe_topic, probe, next_packet_id,
-                                   args.transcript, "LAB_SCHEDULED_PROBE_SENT", probe_path)
-                        next_packet_id += 1
-                    try:
-                        first, encoded, payload = read_packet(stream)
-                    except socket.timeout:
-                        continue
-                    with open(args.binary_log, "ab") as binary:
-                        binary.write(bytes((first,)) + encoded + payload)
-                    packet_type = first >> 4
-                    if packet_type == 1:
-                        log_record(args.transcript, decode_connect(payload))
-                        stream.sendall(b"\x20\x02\x00\x00")
-                    elif packet_type == 3:
-                        record = decode_publish(first, payload)
-                        log_record(args.transcript, record)
-                        if record["qos"] == 1:
-                            stream.sendall(b"\x40\x02" + struct.pack("!H", record["packet_id"]))
-                    elif packet_type == 8:
-                        record = decode_subscribe(first, payload)
-                        log_record(args.transcript, record)
-                        subscribed.update(item["topic"] for item in record["topics"])
-                        granted = bytes([item["qos"] for item in record["topics"]])
-                        stream.sendall(b"\x90" + bytes((2 + len(granted),))
-                                       + struct.pack("!H", record["packet_id"]) + granted)
-                        if (not probe_sent and args.probe_topic and args.probe_topic in subscribed):
-                            probe = (Path(args.probe_payload_file).read_bytes().rstrip(b"\r\n")
-                                     if args.probe_payload_file
-                                     else bytes.fromhex(args.probe_payload_hex or ""))
-                            send_probe(stream, args.probe_topic, probe, 0x7001,
-                                       args.transcript, "LAB_PROBE_SENT")
-                            probe_sent = True
-                            base = time.monotonic()
-                            for spec in args.scheduled_probe:
-                                delay_text, probe_path = spec.split(":", 1)
-                                scheduled.append((base + float(delay_text), probe_path))
-                            scheduled.sort()
-                    elif packet_type == 4:
-                        packet_id = struct.unpack_from("!H", payload, 0)[0]
-                        log_record(args.transcript, {"type": "PUBACK", "packet_id": packet_id})
-                    elif packet_type == 12:
-                        log_record(args.transcript, {"type": "PINGREQ"})
-                        stream.sendall(b"\xd0\x00")
-                    elif packet_type == 14:
-                        log_record(args.transcript, {"type": "DISCONNECT"})
-                        break
-                    else:
-                        log_record(args.transcript, {"type": "PACKET", "mqtt_type": packet_type,
-                                                     "flags": first & 0x0F, "length": len(payload)})
-        except (EOFError, ConnectionError, ssl.SSLError) as error:
-            log_record(args.transcript, {"type": "CONNECTION_END", "detail": str(error)})
-        finally:
-            raw.close()
+        threading.Thread(
+            target=handle_client,
+            args=(raw, peer, context, args, runtime_requests),
+            daemon=True,
+        ).start()
 
 
 if __name__ == "__main__":
