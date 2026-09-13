@@ -10,10 +10,10 @@ def _runner_text() -> str:
 
 def test_readiness_gate_uses_internal_service_state_not_mqtt_socket():
     runner = _runner_text()
-    state = runner.split("service_local_state() {", 1)[1].split("wait_for_service_ready() {", 1)[0]
+    probe = runner.split("read_process_u8() {", 1)[1].split("wait_for_service_ready() {", 1)[0]
     wait = runner.split("wait_for_service_ready() {", 1)[1].split("restore_original_confirmed() {", 1)[0]
 
-    assert 'dd if="/proc/$pid/mem"' in state
+    assert 'dd if="/proc/$pid/mem"' in probe
     assert "DTU_RUN_STEP_ADDR=624899" in runner  # 0x98903
     assert "DTU_STA_ADDR=624900" in runner  # 0x98904
     assert "BOARD_OTA_STEP_ADDR=625300" in runner  # 0x98a94
@@ -25,8 +25,8 @@ def test_readiness_gate_uses_internal_service_state_not_mqtt_socket():
     assert 'test "$board_step" = 12' in wait
     assert 'test "$uart_flag" = 0' in wait
     assert 'test "$stable" -ge 2' in wait
-    assert "netstat -nt" not in state
-    assert "ESTABLISHED" not in state
+    assert "netstat -nt" not in probe
+    assert "ESTABLISHED" not in probe
 
 
 def test_local_ready_gate_runs_before_http_hook_and_optional_mqtt_isolation():
