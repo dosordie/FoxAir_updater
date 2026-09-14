@@ -1,11 +1,11 @@
 # PHNIX Debug-Dauerlogger – Anleitung für Anwender
 
-Stand: 12. September 2026
+Stand: 14. September 2026
 
 Diese Anleitung beschreibt den PHNIX-Debuglogger für Raspberry Pi OS / Debian. Das Skript liest den Debug-Ausgang des LTE-Modems mit, schreibt einen vollständigen Rohlog und erkennt zusätzlich typische OTA-/Firmwareupdate-Ereignisse sowie Firmware-Download-URLs.
 
 > [!IMPORTANT]
-> Der Logger verändert die Firmwaredateien nicht. Er liest den Debugport passiv mit. Ohne `--no-restart` kann das Skript den Originaldienst `phnixIot4G` einmal kontrolliert neu starten, damit dessen Start-/Debugausgaben mit erfasst werden. Ein Neustart wird blockiert, wenn ein aktiver OTA-Zustand erkannt wird oder die Sicherheitsprüfung nicht zuverlässig möglich ist.
+> Der Logger verändert die Firmwaredateien nicht. Er liest den Debugport passiv mit. Ohne `--no-restart` kann das Skript den Originaldienst `phnixIot4G` einmal kontrolliert neu starten und besitzt zusätzlich einen Stumm-Watchdog. Vor jedem automatischen Dienstneustart wird geprüft, ob ein Firmwareupdate aktiv oder resumierbar sein könnte. Ist die Prüfung nicht eindeutig, wird **nicht** neu gestartet.
 
 > [!WARNING]
 > Die Logs können sensible Daten enthalten, z. B. IMEI/ICCID, ProductKey, DeviceSecret oder temporär gültige Download-URLs. Rohlogs und URL-Log deshalb vor einer Veröffentlichung immer prüfen und nicht ungefiltert in Foren oder öffentliche Repositories hochladen.
@@ -16,7 +16,7 @@ Diese Anleitung beschreibt den PHNIX-Debuglogger für Raspberry Pi OS / Debian. 
 
 Der Raspberry Pi muss per USB mit dem LTE-Modem verbunden sein. `adb devices` sollte das Modem als `device` anzeigen. Die USB-/ADB-Grundinstallation ist ausführlicher in [`firmware_backup_lte.md`](firmware_backup_lte.md) beschrieben.
 
-Für den Logger werden auf Raspberry Pi OS / Debian insbesondere `adb`, `udevadm` und `stty` benötigt. Am einfachsten einmalig installieren bzw. sicherstellen:
+Für den Logger werden auf Raspberry Pi OS / Debian insbesondere `adb`, `udevadm` und Werkzeuge aus `coreutils` benötigt. Am einfachsten einmalig installieren bzw. sicherstellen:
 
 ```bash
 sudo apt update
@@ -36,13 +36,23 @@ wget -O logging.sh \
 chmod +x logging.sh
 ```
 
+Optional kann die Shell-Syntax vor dem Start geprüft werden:
+
+```bash
+bash -n ./logging.sh
+```
+
+Bei erfolgreicher Prüfung gibt dieser Befehl nichts aus.
+
 ## 3. Erst einmal sicher testen – ohne Dienstneustart
 
 ```bash
 ./logging.sh --background --no-restart
 ```
 
-Damit wird der Logger im Hintergrund gestartet, der Originaldienst `phnixIot4G` aber nicht neu gestartet.
+Damit wird der Logger im Hintergrund gestartet. Der Originaldienst `phnixIot4G` wird weder beim Start noch später durch den Stumm-Watchdog neu gestartet.
+
+**Die USB-Reconnect-Selbstheilung bleibt trotzdem aktiv.** Wird das LTE-Modem kurz vom USB getrennt oder vom Kernel neu enumeriert, versucht der Logger den Debugport selbstständig neu zu öffnen.
 
 Eine typische Ausgabe sieht ungefähr so aus:
 
@@ -54,16 +64,37 @@ Das Terminal darf geschlossen werden; der Logger läuft weiter.
 Logverzeichnis: /home/USER/FoxAir_Logs
 OTA-URL-Log bereit: /home/USER/FoxAir_Logs/phnix_ota_urls.log
 ADB-Verbindung OK: 0123456789ABCDEF
---no-restart aktiv: ADB-Verbindung wurde geprüft; Dienst-Neustart wird übersprungen.
+--no-restart aktiv: ADB-Verbindung wurde geprüft; alle Dienst-Neustarts sind deaktiviert.
 Suche PHNIX-Debuginterface VID=1e0e PID=9001 IF=04 ...
 PHNIX-Debugport verbunden: /dev/ttyUSB4 (...)
-Serielles Logging läuft. Tagesdatei: phnix_2026-09-12.log
+USB-Generation: ...
+Serielles Logging läuft. Tagesdatei: phnix_2026-09-14.log
+USB-Reconnect-Selbstheilung aktiv: Neu-Enumeration wird auch bei gleichem /dev/ttyUSBx erkannt.
+Stumm-Watchdog: Dienstneustart deaktiviert; USB-Reconnect-Selbstheilung bleibt aktiv.
 Dauerlogging aktiv. Hintergrundbetrieb ist vom Terminal entkoppelt.
 ```
 
-`/dev/ttyUSB4` ist nur ein Beispiel. Das Skript sucht den richtigen USB-Port selbst anhand von VID/PID und USB-Interface; die Nummer kann nach einem Neustart anders sein.
+`/dev/ttyUSB4` ist nur ein Beispiel. Das Skript sucht den richtigen USB-Port selbst anhand von VID/PID und USB-Interface; die Nummer kann nach einem Neustart oder USB-Reconnect anders sein.
 
-## 4. Live-Anzeige verlassen
+## 4. Normaler Dauerbetrieb mit Stumm-Watchdog
+
+Soll der Logger sich auch dann selbst erholen, wenn `phnixIot4G` zwar läuft, aber dauerhaft keine Debugausgaben mehr liefert, wird er **ohne** `--no-restart` gestartet:
+
+```bash
+./logging.sh --background
+```
+
+Dann gelten zusätzlich:
+
+- kontrollierter `phnixIot4G`-Neustart beim Start, sofern die OTA-Sicherheitsprüfung ihn erlaubt;
+- nach ungefähr **30 Minuten ohne neue Debugdaten** wird die OTA-Sicherheit erneut geprüft;
+- nur wenn die Prüfung eindeutig unkritisch ist, wird `phnixIot4G` einmal kontrolliert neu gestartet;
+- pro zusammenhängender Stummphase gibt es höchstens **einen** solchen automatischen Neustart;
+- sobald wieder Debugdaten eintreffen, wird der Watchdog neu scharf geschaltet.
+
+Es gibt bewusst **keine Neustartschleife alle 30 Minuten**.
+
+## 5. Live-Anzeige verlassen
 
 Nach `--background` wird automatisch eine Live-Anzeige geöffnet.
 
@@ -77,7 +108,7 @@ wird **nur diese Anzeige beendet**. Der eigentliche Logger läuft im Hintergrund
 
 Auch wenn das SSH-/Terminalfenster geschlossen wird, läuft der Hintergrund-Logger weiter.
 
-## 5. Status prüfen
+## 6. Status prüfen
 
 ```bash
 ./logging.sh --status
@@ -89,15 +120,22 @@ Beispiel:
 PHNIX Hintergrund-Logger läuft.
 PID: 4992
 Debugport: /dev/ttyUSB4
-Logdatei: phnix_2026-09-12.log
-Zeilen heute: 0
+Logdatei: phnix_2026-09-14.log
+Zeilen heute: 304
+Letzte Debugaktivität: 2026-09-14 10:31:12 (vor 2 min)
 OTA-Status: noch kein Firmware-Update erkannt.
 OTA-URL-Log: phnix_ota_urls.log (bereit, noch leer)
 ```
 
+Im laufenden Hintergrundbetrieb enthält auch der Heartbeat die Zeit seit dem letzten Rohdatenempfang, z. B.:
+
+```text
+Logger aktiv | Port: /dev/ttyUSB4 | Log: phnix_2026-09-14.log | Zeilen: 304 | RX vor: 2 min
+```
+
 Eine Rohlogdatei mit `0` Zeilen ist normal, solange noch keine Debugdaten empfangen wurden.
 
-## 6. Live-Anzeige später wieder öffnen
+## 7. Live-Anzeige später wieder öffnen
 
 ```bash
 ./logging.sh --follow
@@ -105,7 +143,7 @@ Eine Rohlogdatei mit `0` Zeilen ist normal, solange noch keine Debugdaten empfan
 
 `Ctrl+C` beendet wieder nur die Anzeige, nicht den Logger.
 
-## 7. Logger beenden
+## 8. Logger beenden
 
 ```bash
 ./logging.sh --stop
@@ -120,17 +158,51 @@ Hintergrund-Logger beendet. phnixIot4G wurde nicht verändert.
 
 # Empfohlener Betrieb vor einem erwarteten Firmwareupdate
 
-Wenn der Logger für ein **bevorstehendes reales Firmwareupdate** verwendet wird und im Rohlog keine Debugzeilen erscheinen, sollte der Logger rechtzeitig **vor Beginn des Updates** neu gestartet werden:
+Für einen kurzen Funktionstest ist `--background --no-restart` die konservativste Variante.
+
+Für längeres Warten auf ein erwartetes Cloud-Firmwareupdate ist der normale Hintergrundbetrieb sinnvoll:
 
 ```bash
-./logging.sh --stop
 ./logging.sh --background
 ```
 
-Ohne `--no-restart` öffnet der Logger zuerst den Debugport und startet anschließend `phnixIot4G` einmal kontrolliert neu. Dadurch können auch die Startausgaben des Originaldienstes erfasst werden. Diese Debug ausgaben brauchen nach einiger zeit im "leerlauf" immer einen neustart von `phnixIot4G`
+Der Grund: Die Debugausgabe von `phnixIot4G` kann nach längerer Laufzeit verstummen. Der Stumm-Watchdog kann den Originaldienst dann nach 30 Minuten kontrolliert neu starten – **aber nur, wenn die OTA-Sicherheitsprüfung keinen aktiven oder unklaren Firmwarezustand findet**.
 
 > [!CAUTION]
-> `phnixIot4G` nicht während eines bereits laufenden Firmwareupdates manuell neu starten. Das Skript besitzt dafür eigene OTA-Sicherheitsprüfungen und blockiert seinen automatischen Neustart, wenn ein aktiver OTA-Zustand erkannt wird oder die Prüfung nicht zuverlässig möglich ist.
+> `phnixIot4G` während eines bereits laufenden Firmwareupdates nicht manuell neu starten. Das Skript prüft vor seinen eigenen Neustarts mehrere unabhängige OTA-Indikatoren und arbeitet dabei nach dem Fail-safe-Prinzip: unklar = kein Neustart.
+
+# Schutz vor Neustart während eines Firmwareupdates
+
+Vor jedem automatischen Neustart von `phnixIot4G` werden mehrere Ebenen geprüft:
+
+1. **Vom Logger erkannter OTA-Status** in `phnix_ota_state`. Ein erkannter, noch nicht abgeschlossener OTA blockiert den Neustart.
+2. **OTA-Schutzmarker** des FoxAir-Updaters auf dem LTE-Modem. Vorhandene Marker blockieren den Neustart.
+3. **Originale PHNIX-OTA-Persistenz** `/data/phnixIot_device_OTA_INFO`, also ein Zustand des Herstellerdienstes selbst und unabhängig vom seriellen Debugstream.
+
+Für die originale PHNIX-Persistenz gilt insbesondere:
+
+- Datei leer (`0` Byte) → möglicher neu gestarteter OTA-/Downloadpfad → **kein Neustart**;
+- unerwartete oder nicht lesbare Datei → **kein Neustart**;
+- 220-Byte-Struktur mit persistierter Firmware-Länge `> 0` → aktiver/resumierbarer Board-OTA möglich → **kein Neustart**;
+- bestätigter Idle-/Abschlusszustand `Offset=0` und `Länge=0` → diese Prüfung erlaubt den Neustart.
+
+Damit ist die Sicherheitsentscheidung nicht ausschließlich davon abhängig, dass der Debuglogger selbst den OTA-Beginn gesehen hat.
+
+# USB-Reconnect-Selbstheilung
+
+Ein Linux-USB-Gerät kann kurz verschwinden und danach wieder unter **dem gleichen Namen** wie `/dev/ttyUSB4` auftauchen. Ein alter Dateideskriptor kann dabei trotzdem auf dem nicht mehr existierenden USB-Endpunkt hängen bleiben.
+
+Der Logger merkt sich deshalb zusätzlich die konkrete USB-Generation (`devnum`). Der serielle Read wird regelmäßig unterbrochen, um diese Generation zu prüfen.
+
+Bei einem USB-Reset kann die Statusausgabe beispielsweise enthalten:
+
+```text
+WARNUNG: USB-Reconnect/Neu-Enumeration erkannt: /dev/ttyUSB4 Generation '...|4' -> '...|7'. Debugport wird neu geöffnet.
+PHNIX-Debugport verbunden: /dev/ttyUSB4 (...)
+USB-Generation: ...|7
+```
+
+Das funktioniert auch dann, wenn Linux vor und nach dem Reset wieder exakt `/dev/ttyUSB4` verwendet.
 
 # Welche Dateien werden angelegt?
 
@@ -147,7 +219,7 @@ Wichtige Dateien:
 | `phnix_YYYY-MM-DD.log` | Vollständiger serieller PHNIX-Rohdebug mit Zeitstempeln. Wird bereits beim erfolgreichen Öffnen des Debugports angelegt und kann zunächst 0 Byte groß sein. |
 | `phnix_ota_urls.log` | Erkannte Firmware-Download-URLs mit Zeitstempel und – soweit verfügbar – SoftwareCode, Version, SSID, MD5 und Dateigröße. Wird bereits beim Start angelegt und auf Schreibbarkeit geprüft. |
 | `phnix_ota_state` | Letzter erkannter OTA-Zustand. Entsteht erst beim ersten erkannten OTA-Ereignis. |
-| `logger_status.log` | Start-, Ereignis- und Heartbeat-Ausgabe für `--follow`. |
+| `logger_status.log` | Start-, Ereignis-, Reconnect-, Watchdog- und Heartbeat-Ausgabe für `--follow`. |
 | `phnix_logger.pid` | PID-/Steuerdatei des Hintergrund-Loggers. |
 
 Zusätzlich kann während des Betriebs eine versteckte Ready-Datei vorhanden sein. Diese dient nur der internen Prozesssteuerung.
@@ -321,18 +393,21 @@ cd ~
 wget -O logging.sh \
   https://raw.githubusercontent.com/dosordie/FoxAir_updater/main/tools/phnix_debug_logger/logging.sh
 chmod +x logging.sh
+bash -n ./logging.sh
 ```
 
-Anschließend wieder starten, z. B.:
+Anschließend wieder starten.
 
-```bash
-./logging.sh --background --no-restart
-```
-
-oder – wenn vor einem erwarteten Update bewusst ein kontrollierter Neustart des Originaldienstes gewünscht ist:
+Mit automatischer Stumm-Erholung:
 
 ```bash
 ./logging.sh --background
+```
+
+Ohne jeden Dienstneustart:
+
+```bash
+./logging.sh --background --no-restart
 ```
 
 # Häufige Fragen / Probleme
@@ -341,7 +416,26 @@ oder – wenn vor einem erwarteten Update bewusst ein kontrollierter Neustart de
 
 Das kann normal sein. Die Datei wird bereits beim erfolgreichen Öffnen des Debugports angelegt. Erst wenn `phnixIot4G` Debugzeilen sendet, wächst sie.
 
-Wenn auch vor einem erwarteten Update dauerhaft keine Debugzeilen erscheinen, den Logger rechtzeitig vor dem Update stoppen und ohne `--no-restart` neu starten.
+Im normalen Betrieb zeigt der Heartbeat mit `RX vor: ... min`, wie lange die letzte Debugaktivität zurückliegt. Nach 30 Minuten kann der Stumm-Watchdog – sofern sicher – den Originaldienst einmal neu starten.
+
+## Der Logger meldet den Port weiterhin, aber es kommen keine Daten
+
+Seit der Reconnect-Erweiterung prüft der Logger nicht mehr nur den Dateinamen `/dev/ttyUSBx`, sondern auch die USB-Generation. Ein USB-Reset mit anschließender Neu-Enumeration unter demselben Portnamen sollte deshalb erkannt und der Port neu geöffnet werden.
+
+In `logger_status.log` erscheinen dann entsprechende Reconnect-Meldungen.
+
+## Der Stumm-Watchdog will nicht neu starten
+
+Das ist absichtlich möglich. Ein Dienstneustart wird unter anderem blockiert, wenn:
+
+- `--no-restart` aktiv ist;
+- der Debugport gerade physisch getrennt ist;
+- ein nicht abgeschlossener OTA im Loggerzustand erkannt wurde;
+- ein OTA-Schutzmarker vorhanden ist;
+- die originale PHNIX-Datei `phnixIot_device_OTA_INFO` leer, nicht lesbar, unerwartet aufgebaut oder mit einer Firmware-Länge `> 0` belegt ist;
+- irgendeine dieser Prüfungen kein eindeutiges Ergebnis liefert.
+
+Im Zweifel bleibt der Originaldienst unangetastet.
 
 ## `phnix_ota_urls.log` ist leer
 
@@ -390,8 +484,9 @@ Kurzüberblick:
 ```text
 ./logging.sh                         Vordergrundbetrieb
 ./logging.sh --no-restart            Vordergrundbetrieb ohne Dienstneustart
-./logging.sh --background            Hintergrundbetrieb + Live-Anzeige
+./logging.sh --background            Hintergrundbetrieb + USB-Recovery + Stumm-Watchdog
 ./logging.sh --background --no-restart
+                                     Hintergrundbetrieb + USB-Recovery, keine Dienstneustarts
 ./logging.sh --follow                Live-Anzeige wieder öffnen
 ./logging.sh --status                aktuellen Status einmalig anzeigen
 ./logging.sh --stop                  Hintergrund-Logger beenden
