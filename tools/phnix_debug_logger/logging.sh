@@ -6,9 +6,13 @@
 # - The Raspberry Pi sees the debug endpoint as USB VID 1e0e / PID 9001 / IF 04.
 # - On the Linux USB-serial side the baud rate is not forced: the SimTech USB
 #   serial driver may reject a baud-rate change although the endpoint works.
+# - USB re-enumeration is detected by the USB device generation (devnum), even
+#   when Linux assigns the same /dev/ttyUSBx name after the reconnect.
 # - A service restart is blocked while PHNIX OTA safety markers are present or
 #   cannot be checked reliably.
 # - OTA download/update markers are recognized passively from the debug stream.
+# - In normal mode a silence watchdog may restart phnixIot4G once after 30
+#   minutes without debug data. --no-restart disables all service restarts.
 #
 # The script never modifies the phnixIot4G binary or the modem filesystem.
 
@@ -23,6 +27,8 @@ SERVICE_NAME="phnixIot4G"
 SCAN_INTERVAL=3
 RESTART_TIMEOUT=25
 HEARTBEAT_INTERVAL=300
+SERIAL_READ_TIMEOUT=5
+SILENCE_TIMEOUT=1800
 
 DEFAULT_LOG_DIR="${HOME:-.}/FoxAir_Logs"
 LOG_DIR="${LOG_DIR:-$DEFAULT_LOG_DIR}"
@@ -77,7 +83,8 @@ Verwendung:
 
 Optionen:
   --no-restart   ADB-Verbindung prüfen, phnixIot4G aber NICHT neu starten;
-                 serielles Logging läuft trotzdem.
+                 weder beim Start noch durch den 30-Minuten-Stumm-Watchdog.
+                 USB-Reconnect-Selbstheilung bleibt aktiv.
   --background   Logger vom Terminal entkoppelt im Hintergrund starten und
                  anschließend die Live-Statusausgabe anzeigen.
   --follow       Live-Status eines bereits laufenden Hintergrund-Loggers anzeigen.
@@ -89,7 +96,7 @@ Optionen:
 Zusätzliche Dateien:
   phnix_YYYY-MM-DD.log   vollständiger Roh-Debuglog mit Zeitstempeln
   phnix_ota_urls.log     deduplizierte erkannte Firmware-Download-URLs + Metadaten
-  phnix_ota_state       letzter erkannter OTA-Zustand für --status
+  phnix_ota_state        letzter erkannter OTA-Zustand für --status
   logger_status.log      Live-/Heartbeat-Ausgabe für --follow
 
 Umgebungsvariablen:
@@ -120,7 +127,7 @@ check_dependencies() {
     local -a missing=() packages=()
     local pair cmd pkg p seen apt_cmd="" answer
 
-    for pair in "adb:adb" "udevadm:udev" "stty:coreutils"; do
+    for pair in "adb:adb" "udevadm:udev" "stty:coreutils" "stat:coreutils"; do
         cmd=${pair%%:*}
         pkg=${pair#*:}
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -365,6 +372,24 @@ read_tty_usb_info() {
     printf '%s|%s|%s\n' "$vendor" "$product" "$iface"
 }
 
+read_tty_usb_generation() {
+    local dev="$1" tty_name=${1##*/} path vendor="" product="" devnum=""
+    path=$(readlink -f "/sys/class/tty/$tty_name/device" 2>/dev/null || true)
+    while [ -n "$path" ] && [ "$path" != "/" ]; do
+        if [ -r "$path/idVendor" ] && [ -r "$path/idProduct" ]; then
+            IFS= read -r vendor < "$path/idVendor" || vendor=""
+            IFS= read -r product < "$path/idProduct" || product=""
+            if [ "${vendor,,}" = "$USB_VENDOR_ID" ] && [ "${product,,}" = "$USB_PRODUCT_ID" ]; then
+                [ -r "$path/devnum" ] && IFS= read -r devnum < "$path/devnum"
+                printf '%s|%s\n' "$path" "$devnum"
+                return 0
+            fi
+        fi
+        path=${path%/*}; [ -n "$path" ] || path="/"
+    done
+    return 1
+}
+
 discover_debug_port() {
     local sys_tty tty_name dev info vendor product iface
     local -a matches=()
@@ -396,9 +421,6 @@ print_tty_diagnostics() {
 
 json_string_value() {
     local text="$1" key="$2" re
-    # Deliberately tolerant of whitespace: both
-    #   "key":"value" and "key" : "value"
-    # are accepted.
     re="\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
     if [[ "$text" =~ $re ]]; then
         printf '%s\n' "${BASH_REMATCH[1]}"
@@ -416,11 +438,6 @@ json_number_value() {
 extract_download_url_candidate() {
     local text="$1" lower re
     lower=${text,,}
-
-    # Known PHNIX forms are handled first, but keep a fallback for a changed
-    # field name. Any URI in a CMD_OTA / otaDeviceInfo / clearly firmware-URL
-    # line is considered worth preserving. This intentionally favors capture
-    # over being overly strict because a real OTA URL may only be printed once.
     re="([Hh][Tt][Tt][Pp][Ss]?|[Ff][Tt][Pp])://[^\"[:space:]]+"
     if [[ "$text" =~ $re ]]; then
         if [[ "$text" == *CMD_OTA* ]] || [[ "$text" == *otaDeviceInfo* ]] || \
@@ -476,9 +493,6 @@ ota_log_url() {
 ota_process_line() {
     local raw="$1" stamp="$2" value="" url="" progress="" cmd="" ota_code="" assign_url_re=""
 
-    # Fast path: most debug lines are unrelated to OTA and need no parsing.
-    # URL schemes are included intentionally so a changed PHNIX field name does
-    # not make us miss the one firmware URL we are trying to preserve.
     case "$raw" in
         *otaFileDownloadAddr*|*CMD_OTA*|*otaDeviceInfo*|*http://*|*https://*|*ftp://*|*softwareCodeCloud=*|*deviceSoftwareVer=*|*download*%*|*succeed\ downloading\ package*|*固件MD5校验正确*|*传输主板升级文件偏移:0*|*oat\ step:6*|*升级包传输完成*|*主板升级成功\<5\>*|*主板升级结束*) ;;
         *) return 0 ;;
@@ -487,8 +501,6 @@ ota_process_line() {
     cmd=$(json_string_value "$raw" "cmd" || true)
     ota_code=$(json_string_value "$raw" "code" || true)
 
-    # A new server OTA descriptor starts a new dedupe session. Whitespace in
-    # the JSON does not matter here.
     if [ "$cmd" = "CMD_OTA" ] && [ "$ota_code" = "0033" ]; then
         OTA_LAST_URL=""
         OTA_LAST_PROGRESS=""
@@ -523,24 +535,16 @@ ota_process_line() {
         *otaDeviceInfo.fileSize=*) value=${raw#*otaDeviceInfo.fileSize=}; value=${value%%[^0-9]*}; [ -z "$value" ] || OTA_FILE_SIZE="$value" ;;
     esac
 
-    # Known JSON field (whitespace tolerant).
     url=$(json_string_value "$raw" "otaFileDownloadAddr" || true)
-
-    # Known parsed PHNIX debug form, also tolerant of whitespace around '='.
     assign_url_re="otaFileDownloadAddr[[:space:]]*=[[:space:]]*((([Hh][Tt][Tt][Pp][Ss]?)|([Ff][Tt][Pp]))://[^\"[:space:]]+)"
     if [ -z "$url" ] && [[ "$raw" =~ $assign_url_re ]]; then
         url=${BASH_REMATCH[1]}
     fi
-
-    # Last-resort capture if PHNIX renames the field but still prints a URL in
-    # the OTA descriptor / otaDeviceInfo / a clearly firmware-related line.
     if [ -z "$url" ]; then
         url=$(extract_download_url_candidate "$raw" || true)
     fi
     [ -z "$url" ] || ota_log_url "$stamp" "$url"
 
-    # Terminal cloud success report. Parse fields rather than matching one
-    # exact JSON serialization so optional whitespace/order changes are harmless.
     if [ "$cmd" = "CMD_OTA" ] && [ "$ota_code" = "0053" ]; then
         progress=$(json_string_value "$raw" "progress" || true)
         if [ "$progress" = "100" ]; then
@@ -551,8 +555,6 @@ ota_process_line() {
 
     if [[ "$raw" =~ download[[:space:]]+([0-9]{1,3})% ]]; then
         progress=${BASH_REMATCH[1]}
-        # PHNIX prints each download percentage more than once. Keep only
-        # actual changes so --follow and the OTA state remain compact.
         [ "$progress" = "$OTA_LAST_PROGRESS" ] && return 0
         if [ "$progress" = "0" ] && [ -z "$OTA_LAST_PROGRESS" ]; then
             ota_emit "$stamp" "Download gestartet" "$progress"
@@ -583,6 +585,36 @@ ota_state_get() {
     return 1
 }
 
+ota_state_blocks_restart() {
+    local status=""
+    [ -r "$OTA_STATE_FILE" ] || return 1
+    status=$(ota_state_get status 2>/dev/null || true)
+    case "$status" in
+        "")
+            warn "OTA-Zustandsdatei ist vorhanden, aber ohne auswertbaren Status; Neustart wird sicherheitshalber blockiert."
+            return 0
+            ;;
+        "Firmware Update fertig")
+            return 1
+            ;;
+        *)
+            warn "Aktiver/nicht abgeschlossener lokaler OTA-Status: '$status'; Neustart wird blockiert."
+            return 0
+            ;;
+    esac
+}
+
+latest_raw_log_epoch() {
+    local f epoch latest=0
+    for f in "$LOG_DIR"/phnix_????-??-??.log; do
+        [ -s "$f" ] || continue
+        epoch=$(stat -c %Y -- "$f" 2>/dev/null || printf '0\n')
+        [[ "$epoch" =~ ^[0-9]+$ ]] || epoch=0
+        [ "$epoch" -gt "$latest" ] && latest=$epoch
+    done
+    printf '%s\n' "$latest"
+}
+
 write_log_line() {
     local raw="$1" stamp day logfile
     raw=${raw%$'\r'}
@@ -595,13 +627,17 @@ write_log_line() {
 
 logger_supervisor() {
     local port="" saved_stty="" line="" attempts=0 fd_open=0 cleaned=1
+    local opened_generation="" current_generation="" read_rc=0 pending=""
 
     worker_cleanup() {
         [ "$cleaned" -eq 0 ] || return 0
         cleaned=1
         [ "$fd_open" -eq 0 ] || { exec 3<&- || true; fd_open=0; }
         if [ -n "$port" ] && [ -n "$saved_stty" ] && [ -c "$port" ]; then
-            stty -F "$port" "$saved_stty" >/dev/null 2>&1 || true
+            current_generation=$(read_tty_usb_generation "$port" 2>/dev/null || true)
+            if [ -z "$opened_generation" ] || [ "$current_generation" = "$opened_generation" ]; then
+                stty -F "$port" "$saved_stty" >/dev/null 2>&1 || true
+            fi
         fi
     }
     worker_stop() { worker_cleanup; exit 0; }
@@ -629,8 +665,6 @@ logger_supervisor() {
             cleaned=1; sleep "$SCAN_INTERVAL"; continue
         fi
 
-        # Intentionally no baud-rate argument here. The real PHNIX/SimTech USB
-        # serial endpoint accepts the other termios flags but can reject 115200.
         if ! stty -F "$port" cs8 -parenb -cstopb -ixon -ixoff -ixany -crtscts \
             -icanon -echo -echoe -echok -echonl -icrnl -inlcr -igncr -istrip min 1 time 0 2>/dev/null; then
             error "$port konnte nicht für USB-Serial 8N1 ohne Flow-Control konfiguriert werden."
@@ -642,25 +676,48 @@ logger_supervisor() {
             worker_cleanup; port=""; saved_stty=""; sleep "$SCAN_INTERVAL"; continue
         fi
         fd_open=1
+        opened_generation=$(read_tty_usb_generation "$port" 2>/dev/null || true)
+        pending=""
         say "PHNIX-Debugport verbunden: $port (USB-Serial IF $USB_INTERFACE_NUM, 8N1; Baudrate nicht erzwungen)"
+        [ -z "$opened_generation" ] || say "USB-Generation: $opened_generation"
         printf '%s\n' "$port" > "$READY_FILE"
-        # Create the daily raw log immediately, even before the first debug line.
         : >> "$LOG_DIR/phnix_$(date +%F).log" || warn "Tages-Logdatei konnte nicht angelegt werden."
 
         while :; do
             line=""
-            if IFS= read -r line <&3; then
+            if IFS= read -r -t "$SERIAL_READ_TIMEOUT" line <&3; then
+                line="$pending$line"
+                pending=""
                 write_log_line "$line" || return 1
                 continue
             fi
-            [ -z "$line" ] || write_log_line "$line" || return 1
-            break
+            read_rc=$?
+            [ -z "$line" ] || pending="$pending$line"
+
+            if [ -n "$opened_generation" ]; then
+                current_generation=$(read_tty_usb_generation "$port" 2>/dev/null || true)
+                if [ "$current_generation" != "$opened_generation" ]; then
+                    warn "USB-Reconnect/Neu-Enumeration erkannt: $port Generation '$opened_generation' -> '${current_generation:-getrennt}'. Debugport wird neu geöffnet."
+                    break
+                fi
+            else
+                if ! discover_debug_port >/dev/null 2>&1; then
+                    warn "PHNIX-Debuginterface ist nicht mehr eindeutig vorhanden. Debugport wird neu gesucht."
+                    break
+                fi
+            fi
+
+            # Bash read returns >128 on timeout. Any other failure is treated as
+            # a real EOF/port error and causes a clean reopen.
+            if [ "$read_rc" -lt 128 ]; then
+                warn "Lesen von $port wurde beendet (Status $read_rc). Debugport wird neu geöffnet."
+                break
+            fi
         done
 
-        warn "PHNIX-Debugport $port wurde getrennt. Suche nach erneutem USB-Connect ..."
         rm -f -- "$READY_FILE"
         worker_cleanup
-        port=""; saved_stty=""
+        port=""; saved_stty=""; opened_generation=""; current_generation=""; pending=""
         sleep "$SCAN_INTERVAL"
     done
 }
@@ -682,6 +739,11 @@ wait_for_logger_ready() {
 
 check_ota_restart_safety() {
     local marker output state
+
+    if ota_state_blocks_restart; then
+        return 1
+    fi
+
     for marker in "${OTA_MARKERS[@]}"; do
         output=$(adb_shell "if [ -e '$marker' ]; then echo PRESENT; else echo ABSENT; fi" 2>&1) || {
             warn "OTA-Schutzmarker konnte nicht sicher geprüft werden: $marker"; return 1;
@@ -693,6 +755,7 @@ check_ota_restart_safety() {
             *) warn "Unerwartete Antwort beim Prüfen von $marker: ${output:-<leer>}"; return 1 ;;
         esac
     done
+    return 0
 }
 
 restart_phnix_service_once() {
@@ -732,7 +795,15 @@ restart_phnix_service_once() {
 
 status_heartbeat() {
     local stamp day logfile port lines interval="$HEARTBEAT_INTERVAL" sleep_pid="" ota_status=""
+    local now_epoch watchdog_reference_epoch observed_rx_epoch=0 silent_for=0 silent_minutes=0
+    local silence_restart_attempted=0 silence_notice_emitted=0
     [ "$DAEMON_MODE" -eq 0 ] || interval=60
+
+    watchdog_reference_epoch=$(date +%s)
+    observed_rx_epoch=$(latest_raw_log_epoch)
+    if [ "$observed_rx_epoch" -gt "$watchdog_reference_epoch" ]; then
+        watchdog_reference_epoch=$observed_rx_epoch
+    fi
 
     heartbeat_stop() {
         if [ -n "$sleep_pid" ] && kill -0 "$sleep_pid" 2>/dev/null; then
@@ -755,14 +826,45 @@ status_heartbeat() {
         if [ -f "$logfile" ]; then
             lines=$(wc -l < "$logfile" 2>/dev/null || printf '?\n'); lines=${lines//[[:space:]]/}; [ -n "$lines" ] || lines="?"
         fi
+
+        observed_rx_epoch=$(latest_raw_log_epoch)
+        if [ "$observed_rx_epoch" -gt "$watchdog_reference_epoch" ]; then
+            watchdog_reference_epoch=$observed_rx_epoch
+            silence_restart_attempted=0
+            silence_notice_emitted=0
+        fi
+        now_epoch=$(date +%s)
+        silent_for=$((now_epoch - watchdog_reference_epoch))
+        [ "$silent_for" -ge 0 ] || silent_for=0
+        silent_minutes=$((silent_for / 60))
+
         ota_status=$(ota_state_get status 2>/dev/null || true)
         if [ -n "$port" ]; then
-            printf '[%s] Logger aktiv | Port: %s | Log: %s | Zeilen: %s' "$stamp" "$port" "${logfile##*/}" "$lines"
+            printf '[%s] Logger aktiv | Port: %s | Log: %s | Zeilen: %s | RX vor: %s min' "$stamp" "$port" "${logfile##*/}" "$lines" "$silent_minutes"
         else
-            printf '[%s] Logger aktiv | Debugport getrennt - warte auf USB-Reconnect | Log: %s | Zeilen: %s' "$stamp" "${logfile##*/}" "$lines"
+            printf '[%s] Logger aktiv | Debugport getrennt - warte auf USB-Reconnect | Log: %s | Zeilen: %s | RX vor: %s min' "$stamp" "${logfile##*/}" "$lines" "$silent_minutes"
         fi
         [ -z "$ota_status" ] || printf ' | OTA: %s' "$ota_status"
         printf '\n'
+
+        if [ "$silent_for" -ge "$SILENCE_TIMEOUT" ]; then
+            if [ "$NO_RESTART" -eq 1 ]; then
+                if [ "$silence_notice_emitted" -eq 0 ]; then
+                    warn "Seit ${silent_minutes} Minuten keine Debugdaten. --no-restart aktiv; phnixIot4G wird nicht neu gestartet."
+                    silence_notice_emitted=1
+                fi
+            elif [ -z "$port" ]; then
+                if [ "$silence_notice_emitted" -eq 0 ]; then
+                    warn "Seit ${silent_minutes} Minuten keine Debugdaten, aber Debugport ist getrennt. Kein Dienstneustart; zuerst USB-Reconnect abwarten."
+                    silence_notice_emitted=1
+                fi
+            elif [ "$silence_restart_attempted" -eq 0 ]; then
+                warn "Seit ${silent_minutes} Minuten keine Debugdaten. Prüfe OTA-Sicherheit vor einmaligem automatischem $SERVICE_NAME-Neustart."
+                silence_restart_attempted=1
+                silence_notice_emitted=1
+                restart_phnix_service_once || true
+            fi
+        fi
     done
 }
 
@@ -811,7 +913,7 @@ run_logger_core() {
 
     if select_adb_device; then
         adb_ok=1
-        [ "$NO_RESTART" -eq 0 ] || say "--no-restart aktiv: ADB-Verbindung wurde geprüft; Dienst-Neustart wird übersprungen."
+        [ "$NO_RESTART" -eq 0 ] || say "--no-restart aktiv: ADB-Verbindung wurde geprüft; alle Dienst-Neustarts sind deaktiviert."
     else
         if [ "$NO_RESTART" -eq 0 ]; then
             say "Tipp: Mit './$PROGRAM_NAME --no-restart' kann trotz fehlgeschlagener ADB-Prüfung passiv geloggt werden."
@@ -826,10 +928,17 @@ run_logger_core() {
     say "Suche PHNIX-Debuginterface VID=$USB_VENDOR_ID PID=$USB_PRODUCT_ID IF=$USB_INTERFACE_NUM ..."
     wait_for_logger_ready || return 6
     say "Serielles Logging läuft. Tagesdatei: phnix_$(date +%F).log"
+    say "USB-Reconnect-Selbstheilung aktiv: Neu-Enumeration wird auch bei gleichem /dev/ttyUSBx erkannt."
 
     if [ "$NO_RESTART" -eq 0 ] && [ "$adb_ok" -eq 1 ]; then
         wait_for_logger_ready || return 6
         restart_phnix_service_once || true
+    fi
+
+    if [ "$NO_RESTART" -eq 0 ] && [ "$adb_ok" -eq 1 ]; then
+        say "Stumm-Watchdog aktiv: nach 30 Minuten ohne Debugdaten maximal ein sicherheitsgeprüfter Dienstneustart pro Stummphase."
+    else
+        say "Stumm-Watchdog: Dienstneustart deaktiviert; USB-Reconnect-Selbstheilung bleibt aktiv."
     fi
 
     if [ "$DAEMON_MODE" -eq 1 ]; then
@@ -879,7 +988,7 @@ show_ota_status() {
 }
 
 show_background_status() {
-    local rc pid="" port="" day logfile lines=0 last=""
+    local rc pid="" port="" day logfile lines=0 last="" last_rx_epoch=0 now_epoch=0 rx_age=0 rx_stamp=""
     resolve_log_dir || return 4
 
     background_state
@@ -908,6 +1017,17 @@ show_background_status() {
     if [ -n "$port" ]; then say "Debugport: $port"; else say "Debugport: getrennt / noch nicht bereit"; fi
     say "Logdatei: ${logfile##*/}"
     say "Zeilen heute: $lines"
+
+    last_rx_epoch=$(latest_raw_log_epoch)
+    if [ "$last_rx_epoch" -gt 0 ]; then
+        now_epoch=$(date +%s)
+        rx_age=$((now_epoch - last_rx_epoch)); [ "$rx_age" -ge 0 ] || rx_age=0
+        rx_stamp=$(date -d "@$last_rx_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf '%s' "$last_rx_epoch")
+        say "Letzte Debugaktivität: $rx_stamp (vor $((rx_age / 60)) min)"
+    else
+        say "Letzte Debugaktivität: noch keine Debugzeile vorhanden"
+    fi
+
     show_ota_status
     [ ! -f "$STATUS_FILE" ] || { last=$(tail -n 1 "$STATUS_FILE" 2>/dev/null || true); [ -z "$last" ] || say "Letzter Status: $last"; }
     return 0
@@ -932,7 +1052,7 @@ follow_background_status() {
     say ""
     say "Live-Status des PHNIX Loggers (Ctrl+C beendet NUR diese Anzeige)."
     say "Der Hintergrund-Logger läuft auch nach Schließen dieses Terminals weiter."
-    say "OTA-Ereignisse werden sofort, Lebenszeichen alle 60 Sekunden angezeigt."
+    say "OTA-/Reconnect-/Watchdog-Ereignisse werden sofort, Lebenszeichen alle 60 Sekunden angezeigt."
     say ""
 
     trap 'viewer_interrupted=1' INT TERM
