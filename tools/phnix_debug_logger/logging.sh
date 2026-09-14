@@ -9,7 +9,8 @@
 # - USB re-enumeration is detected by the USB device generation (devnum), even
 #   when Linux assigns the same /dev/ttyUSBx name after the reconnect.
 # - A service restart is blocked while PHNIX OTA safety markers are present or
-#   cannot be checked reliably.
+#   cannot be checked reliably. The original PHNIX OTA_INFO persistence is also
+#   inspected independently of the serial debug stream.
 # - OTA download/update markers are recognized passively from the debug stream.
 # - In normal mode a silence watchdog may restart phnixIot4G once after 30
 #   minutes without debug data. --no-restart disables all service restarts.
@@ -127,7 +128,7 @@ check_dependencies() {
     local -a missing=() packages=()
     local pair cmd pkg p seen apt_cmd="" answer
 
-    for pair in "adb:adb" "udevadm:udev" "stty:coreutils" "stat:coreutils"; do
+    for pair in "adb:adb" "udevadm:udev" "stty:coreutils" "stat:coreutils" "od:coreutils"; do
         cmd=${pair%%:*}
         pkg=${pair#*:}
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -604,6 +605,57 @@ ota_state_blocks_restart() {
     esac
 }
 
+check_original_ota_persistence_safety() {
+    local meta="/data/phnixIot_device_OTA_INFO" output="" size="" values="" offset="" length=""
+
+    # PHNIX deliberately truncates OTA_INFO when a new 0033 Board-OTA starts.
+    # Once the firmware download has completed, sys_para is 220 bytes again;
+    # +0xD4 contains the confirmed transfer offset and +0xD8 the firmware size.
+    # An idle/completed real-world state has offset=0 and length=0.
+    output=$(adb_shell "if [ -e '$meta' ]; then wc -c < '$meta'; else echo MISSING; fi" 2>&1) || {
+        warn "Original-PHNIX-OTA-Zustand kann nicht sicher gelesen werden; Neustart wird blockiert."
+        return 1
+    }
+    output=${output//$'\r'/}
+    size=${output##*$'\n'}
+    size=${size//[[:space:]]/}
+
+    case "$size" in
+        0)
+            warn "Original-PHNIX OTA_INFO ist leer (möglicher OTA-Start/Download); Neustart wird blockiert."
+            return 1
+            ;;
+        220)
+            ;;
+        MISSING)
+            warn "Original-PHNIX OTA_INFO fehlt; Neustart wird sicherheitshalber blockiert."
+            return 1
+            ;;
+        *)
+            warn "Original-PHNIX OTA_INFO hat unerwartete Größe '${size:-unbekannt}' statt 220 Byte; Neustart wird blockiert."
+            return 1
+            ;;
+    esac
+
+    values=$(adb_run exec-out cat "$meta" 2>/dev/null | od -An -N8 -j212 -tu4 2>/dev/null | tr -s '[:space:]' ' ')
+    read -r offset length <<< "$values"
+    if ! [[ "$offset" =~ ^[0-9]+$ && "$length" =~ ^[0-9]+$ ]]; then
+        warn "Original-PHNIX OTA_INFO Offset/Länge konnten nicht zuverlässig dekodiert werden; Neustart wird blockiert."
+        return 1
+    fi
+
+    if [ "$length" -gt 0 ]; then
+        warn "Original-PHNIX OTA_INFO zeigt Firmware-Länge $length Byte (Offset $offset): aktiver/resumierbarer OTA-Zustand möglich; Neustart wird blockiert."
+        return 1
+    fi
+    if [ "$offset" -ne 0 ]; then
+        warn "Original-PHNIX OTA_INFO ist inkonsistent (Offset $offset bei Länge 0); Neustart wird blockiert."
+        return 1
+    fi
+
+    return 0
+}
+
 latest_raw_log_epoch() {
     local f epoch latest=0
     for f in "$LOG_DIR"/phnix_????-??-??.log; do
@@ -755,6 +807,8 @@ check_ota_restart_safety() {
             *) warn "Unerwartete Antwort beim Prüfen von $marker: ${output:-<leer>}"; return 1 ;;
         esac
     done
+
+    check_original_ota_persistence_safety || return 1
     return 0
 }
 
