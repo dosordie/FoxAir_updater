@@ -983,9 +983,9 @@ status_heartbeat() {
 
         ota_status=$(ota_state_get status 2>/dev/null || true)
         if [ -n "$port" ]; then
-            printf '[%s] OK | %s | %s Zeilen | letzte Daten vor %s min' "$stamp" "$port" "$lines" "$silent_minutes"
+            printf '[%s] Logger aktiv | %s | %s | %s Zeilen | letzte Daten vor: %s min' "$stamp" "$port" "${logfile##*/}" "$lines" "$silent_minutes"
         else
-            printf '[%s] USB getrennt | %s Zeilen | letzte Daten vor %s min' "$stamp" "$lines" "$silent_minutes"
+            printf '[%s] Logger aktiv | USB getrennt | %s | %s Zeilen | letzte Daten vor: %s min' "$stamp" "${logfile##*/}" "$lines" "$silent_minutes"
         fi
         [ -z "$ota_status" ] || printf ' | OTA: %s' "$ota_status"
         printf '\n'
