@@ -606,12 +606,16 @@ ota_state_blocks_restart() {
 }
 
 check_original_ota_persistence_safety() {
-    local meta="/data/phnixIot_device_OTA_INFO" output="" size="" values="" offset="" length=""
+    local meta="/data/phnixIot_device_OTA_INFO"
+    local statistic="/data/phnixIot_device_statisic"
+    local cache="/cache/phnixIot_device_OTA"
+    local output="" size="" values="" offset="" length=""
+    local stat_size="" ssid="" cache_state=""
 
     # PHNIX deliberately truncates OTA_INFO when a new 0033 Board-OTA starts.
-    # Once the firmware download has completed, sys_para is 220 bytes again;
-    # +0xD4 contains the confirmed transfer offset and +0xD8 the firmware size.
-    # An idle/completed real-world state has offset=0 and length=0.
+    # Before doing that it persists the target Board-OTA SSID in statistic_para
+    # at +0x7C. This distinguishes a plausible virgin-device state from an OTA
+    # that already entered the 0033 path even when the serial debug is mute.
     output=$(adb_shell "if [ -e '$meta' ]; then wc -c < '$meta'; else echo MISSING; fi" 2>&1) || {
         warn "Original-PHNIX-OTA-Zustand kann nicht sicher gelesen werden; Neustart wird blockiert."
         return 1
@@ -620,39 +624,77 @@ check_original_ota_persistence_safety() {
     size=${output##*$'\n'}
     size=${size//[[:space:]]/}
 
+    if [ "$size" = "220" ]; then
+        values=$(adb_run exec-out cat "$meta" 2>/dev/null | od -An -N8 -j212 -tu4 2>/dev/null | tr -s '[:space:]' ' ')
+        read -r offset length <<< "$values"
+        if ! [[ "$offset" =~ ^[0-9]+$ && "$length" =~ ^[0-9]+$ ]]; then
+            warn "Original-PHNIX OTA_INFO Offset/Länge konnten nicht zuverlässig dekodiert werden; Neustart wird blockiert."
+            return 1
+        fi
+
+        if [ "$length" -gt 0 ]; then
+            warn "Original-PHNIX OTA_INFO zeigt Firmware-Länge $length Byte (Offset $offset): aktiver/resumierbarer OTA-Zustand möglich; Neustart wird blockiert."
+            return 1
+        fi
+        if [ "$offset" -ne 0 ]; then
+            warn "Original-PHNIX OTA_INFO ist inkonsistent (Offset $offset bei Länge 0); Neustart wird blockiert."
+            return 1
+        fi
+        return 0
+    fi
+
+    # Empty/missing OTA_INFO is ambiguous: it is accepted by PHNIX on a fresh
+    # device, while the 0033 handler also creates exactly this state at OTA start.
+    # Therefore it only blocks recovery when additional OTA evidence exists.
     case "$size" in
-        0)
-            warn "Original-PHNIX OTA_INFO ist leer (möglicher OTA-Start/Download); Neustart wird blockiert."
-            return 1
-            ;;
-        220)
-            ;;
-        MISSING)
-            warn "Original-PHNIX OTA_INFO fehlt; Neustart wird sicherheitshalber blockiert."
-            return 1
-            ;;
+        0|MISSING) ;;
         *)
-            warn "Original-PHNIX OTA_INFO hat unerwartete Größe '${size:-unbekannt}' statt 220 Byte; Neustart wird blockiert."
+            warn "Original-PHNIX OTA_INFO hat unerwartete Größe '${size:-unbekannt}' statt 0/220 Byte; Neustart wird blockiert."
             return 1
             ;;
     esac
 
-    values=$(adb_run exec-out cat "$meta" 2>/dev/null | od -An -N8 -j212 -tu4 2>/dev/null | tr -s '[:space:]' ' ')
-    read -r offset length <<< "$values"
-    if ! [[ "$offset" =~ ^[0-9]+$ && "$length" =~ ^[0-9]+$ ]]; then
-        warn "Original-PHNIX OTA_INFO Offset/Länge konnten nicht zuverlässig dekodiert werden; Neustart wird blockiert."
+    output=$(adb_shell "if [ -e '$cache' ]; then echo CACHE_PRESENT; else echo CACHE_ABSENT; fi; if [ -e '$statistic' ]; then wc -c < '$statistic'; else echo STAT_MISSING; fi" 2>&1) || {
+        warn "Original-PHNIX Zusatzstatus kann nicht sicher gelesen werden; Neustart wird blockiert."
+        return 1
+    }
+    output=${output//$'\r'/}
+    cache_state=${output%%$'\n'*}
+    stat_size=${output##*$'\n'}
+    stat_size=${stat_size//[[:space:]]/}
+
+    if [ "$cache_state" = "CACHE_PRESENT" ]; then
+        warn "Original-PHNIX Firmware-Cache ist vorhanden, während OTA_INFO leer/fehlend ist; OTA möglich, Neustart wird blockiert."
+        return 1
+    fi
+    if [ "$cache_state" != "CACHE_ABSENT" ]; then
+        warn "Original-PHNIX Firmware-Cache-Status ist unklar; Neustart wird blockiert."
         return 1
     fi
 
-    if [ "$length" -gt 0 ]; then
-        warn "Original-PHNIX OTA_INFO zeigt Firmware-Länge $length Byte (Offset $offset): aktiver/resumierbarer OTA-Zustand möglich; Neustart wird blockiert."
-        return 1
-    fi
-    if [ "$offset" -ne 0 ]; then
-        warn "Original-PHNIX OTA_INFO ist inkonsistent (Offset $offset bei Länge 0); Neustart wird blockiert."
-        return 1
-    fi
+    case "$stat_size" in
+        128)
+            ssid=$(adb_run exec-out cat "$statistic" 2>/dev/null | od -An -N2 -j124 -tu2 2>/dev/null | tr -d '[:space:]')
+            if ! [[ "$ssid" =~ ^[0-9]+$ ]]; then
+                warn "Original-PHNIX Board-OTA-SSID konnte nicht zuverlässig gelesen werden; Neustart wird blockiert."
+                return 1
+            fi
+            if [ "$ssid" -ne 0 ]; then
+                warn "Original-PHNIX OTA_INFO ist leer/fehlend und Board-OTA-SSID=$ssid ist bereits gesetzt; OTA-Start möglich, Neustart wird blockiert."
+                return 1
+            fi
+            ;;
+        0|STAT_MISSING)
+            # Plausible virgin-device state: no OTA_INFO, no firmware cache and
+            # no persisted Board-OTA metadata. Do not disable recovery forever.
+            ;;
+        *)
+            warn "Original-PHNIX Statistikdatei hat unerwartete Größe '${stat_size:-unbekannt}'; Neustart wird blockiert."
+            return 1
+            ;;
+    esac
 
+    warn "Original-PHNIX OTA_INFO ist leer/fehlend, aber es gibt keine weiteren OTA-Indikatoren; möglicher Erstzustand, Neustart wird erlaubt."
     return 0
 }
 
