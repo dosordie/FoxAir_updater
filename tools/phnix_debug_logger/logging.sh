@@ -779,13 +779,14 @@ logger_supervisor() {
 
         while :; do
             line=""
-            if IFS= read -r -t "$SERIAL_READ_TIMEOUT" line <&3; then
+            IFS= read -r -t "$SERIAL_READ_TIMEOUT" line <&3
+            read_rc=$?
+            if [ "$read_rc" -eq 0 ]; then
                 line="$pending$line"
                 pending=""
                 write_log_line "$line" || return 1
                 continue
             fi
-            read_rc=$?
             [ -z "$line" ] || pending="$pending$line"
 
             if [ -n "$opened_generation" ]; then
