@@ -12,7 +12,7 @@
 #   cannot be checked reliably. The original PHNIX OTA_INFO persistence is also
 #   inspected independently of the serial debug stream.
 # - OTA download/update markers are recognized passively from the debug stream.
-# - In normal mode a silence watchdog may restart phnixIot4G once after 30
+# - In normal mode a silence watchdog may restart phnixIot4G once after 15
 #   minutes without debug data. --no-restart disables all service restarts.
 #
 # The script never modifies the phnixIot4G binary or the modem filesystem.
@@ -29,7 +29,7 @@ SCAN_INTERVAL=3
 RESTART_TIMEOUT=25
 HEARTBEAT_INTERVAL=300
 SERIAL_READ_TIMEOUT=5
-SILENCE_TIMEOUT=1800
+SILENCE_TIMEOUT=900
 
 DEFAULT_LOG_DIR="${HOME:-.}/FoxAir_Logs"
 LOG_DIR="${LOG_DIR:-$DEFAULT_LOG_DIR}"
@@ -111,7 +111,7 @@ Verwendung:
 
 Optionen:
   --no-restart   ADB prüfen, phnixIot4G aber nicht neu starten;
-                 weder beim Start noch durch den 30-Minuten-Stumm-Watchdog.
+                 weder beim Start noch durch den 15-Minuten-Stumm-Watchdog.
                  USB-Wiederverbindung bleibt aktiv.
   --background   Logger im Hintergrund starten und Live-Status anzeigen.
   --follow       Live-Status eines laufenden Hintergrund-Loggers anzeigen.
@@ -1079,7 +1079,7 @@ run_logger_core() {
     fi
 
     if [ "$NO_RESTART" -eq 0 ] && [ "$adb_ok" -eq 1 ]; then
-        say "Stumm-Watchdog aktiv: Neustart nach 30 min ohne Daten (max. 1x pro Stummphase)."
+        say "Stumm-Watchdog aktiv: Neustart nach 15 min ohne Daten (max. 1x pro Stummphase)."
     else
         say "Stumm-Watchdog: Dienstneustart aus; USB-Wiederverbindung bleibt aktiv."
     fi
