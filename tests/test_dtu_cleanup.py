@@ -8,10 +8,11 @@ IDLE_OTA_INFO = b"\0" * 220
 
 
 class FakeAdb:
-    def __init__(self, *, files=None, ps="", ota_info=IDLE_OTA_INFO):
+    def __init__(self, *, files=None, ps="", ota_info=IDLE_OTA_INFO, boot_id="boot-current"):
         self.files = dict(files or {})
         self.ps = ps
         self.ota_info = ota_info
+        self.boot_id = boot_id
         self.removed = []
         self.ps_commands = []
 
@@ -19,6 +20,12 @@ class FakeAdb:
         if command.startswith("cat '"):
             path = command.split("'", 2)[1]
             return self.files.get(path, "")
+        if command.startswith("cat /proc/sys/kernel/random/boot_id"):
+            return self.boot_id
+        if command.startswith("awk '/^btime /"):
+            return ""
+        if command.startswith("awk '{print \"pid1-"):
+            return ""
         if command.startswith("test -e '"):
             path = command.split("'", 2)[1]
             return "1" if path in self.files else ""
@@ -61,6 +68,7 @@ class DtuCleanupTests(unittest.TestCase):
                         "run_id": run_id,
                         "terminal": False,
                         "phase": "c5a8",
+                        "boot_id": "boot-current",
                     }
                 ),
                 "/data/foxair_ota_runner": "dir",
@@ -71,6 +79,79 @@ class DtuCleanupTests(unittest.TestCase):
         with self.assertRaises(CleanupError):
             clean(adb)
         self.assertEqual(adb.removed, [])
+
+    def test_nonterminal_runner_from_previous_boot_can_be_removed_when_everything_else_is_idle(self):
+        run_id = "20260914-173921-0700"
+        adb = FakeAdb(
+            boot_id="boot-after-power-cycle",
+            files={
+                "/data/foxair_ota_runner/active.lock/run_id": run_id,
+                f"/data/foxair_ota_runner/runs/{run_id}/status.json": json.dumps(
+                    {
+                        "schema": "foxair-dtu-ota-run-v1",
+                        "run_id": run_id,
+                        "terminal": False,
+                        "phase": "original-service-active-unmonitored",
+                        "reason": "hook_monitor_lost",
+                        "boot_id": "boot-before-power-cycle",
+                    }
+                ),
+                "/data/foxair_ota_runner": "dir",
+            },
+        )
+        snapshot = safety_snapshot(adb)
+        self.assertTrue(snapshot["safe"])
+        self.assertEqual(snapshot["current_boot_id"], "boot-after-power-cycle")
+        self.assertTrue(any("vorherigem DTU-Boot" in item for item in snapshot["notes"]))
+        result = clean(adb)
+        self.assertTrue(result["ok"])
+        self.assertIn("/data/foxair_ota_runner", adb.removed)
+
+    def test_nonterminal_runner_without_saved_boot_proof_stays_blocked(self):
+        run_id = "20260914-173921-0701"
+        adb = FakeAdb(
+            files={
+                "/data/foxair_ota_runner/active.lock/run_id": run_id,
+                f"/data/foxair_ota_runner/runs/{run_id}/status.json": json.dumps(
+                    {
+                        "schema": "foxair-dtu-ota-run-v1",
+                        "run_id": run_id,
+                        "terminal": False,
+                        "phase": "original-service-active-unmonitored",
+                    }
+                ),
+                "/data/foxair_ota_runner": "dir",
+            }
+        )
+        snapshot = safety_snapshot(adb)
+        self.assertFalse(snapshot["safe"])
+        self.assertTrue(any("nicht eindeutig beweisbar" in item for item in snapshot["blockers"]))
+
+    def test_previous_boot_lock_still_blocks_when_ota_info_is_resumable(self):
+        run_id = "20260914-173921-0702"
+        raw = bytearray(IDLE_OTA_INFO)
+        raw[212:216] = (4096).to_bytes(4, "little")
+        raw[216:220] = (289806).to_bytes(4, "little")
+        adb = FakeAdb(
+            boot_id="boot-new",
+            ota_info=bytes(raw),
+            files={
+                "/data/foxair_ota_runner/active.lock/run_id": run_id,
+                f"/data/foxair_ota_runner/runs/{run_id}/status.json": json.dumps(
+                    {
+                        "schema": "foxair-dtu-ota-run-v1",
+                        "run_id": run_id,
+                        "terminal": False,
+                        "phase": "original-service-active-unmonitored",
+                        "boot_id": "boot-old",
+                    }
+                ),
+                "/data/foxair_ota_runner": "dir",
+            },
+        )
+        snapshot = safety_snapshot(adb)
+        self.assertFalse(snapshot["safe"])
+        self.assertTrue(any("fortsetzbaren OTA-Zustand" in item for item in snapshot["blockers"]))
 
     def test_terminal_stale_runner_lock_can_be_removed(self):
         run_id = "20260902-150000-0002"
