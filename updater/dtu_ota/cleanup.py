@@ -66,6 +66,26 @@ def _read(adb: AdbClient, path: str) -> str:
     return adb.shell(f"cat '{path}' 2>/dev/null || true")
 
 
+def _boot_fingerprint(adb: AdbClient) -> str:
+    """Return the same boot identity used by the autonomous DTU runner.
+
+    A stale non-terminal runner lock is only cleanable when the saved run can
+    be proven to belong to a previous DTU boot.  Missing/ambiguous boot data is
+    therefore never treated as permission to delete anything.
+    """
+    value = adb.shell("cat /proc/sys/kernel/random/boot_id 2>/dev/null || true").strip()
+    if value:
+        return value
+    value = adb.shell(
+        "awk '/^btime / {print \"btime-\" $2; exit}' /proc/stat 2>/dev/null || true"
+    ).strip()
+    if value:
+        return value
+    return adb.shell(
+        "awk '{print \"pid1-\" $22}' /proc/1/stat 2>/dev/null || true"
+    ).strip()
+
+
 def _process_lines(adb: AdbClient) -> list[str]:
     """Return only real OTA/debugger helper process lines.
 
@@ -105,6 +125,8 @@ def _ota_info_resume(adb: AdbClient) -> dict[str, object]:
 def safety_snapshot(adb: AdbClient) -> dict[str, object]:
     blockers: list[str] = []
     notes: list[str] = []
+    active_status: dict[str, object] | None = None
+    current_boot = _boot_fingerprint(adb)
 
     active_lock = _read(adb, f"{REMOTE_BASE}/active.lock/run_id").strip()
     if active_lock:
@@ -120,13 +142,21 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
                 or status.get("run_id") != active_lock
             ):
                 blockers.append(f"Aktiver Runner-Lock {active_lock} ist inkonsistent.")
-            elif status.get("terminal") is not True:
-                blockers.append(
-                    f"DTU-OTA-Lauf {active_lock} ist noch aktiv "
-                    f"(phase={status.get('phase', '?')})."
-                )
             else:
-                notes.append(f"Staler terminaler Runner-Lock: {active_lock}")
+                active_status = status
+                if status.get("terminal") is True:
+                    notes.append(f"Staler terminaler Runner-Lock: {active_lock}")
+                else:
+                    saved_boot = str(status.get("boot_id") or "").strip()
+                    if saved_boot and current_boot and saved_boot != current_boot:
+                        notes.append(
+                            f"Verwaister nichtterminaler Runner-Lock aus vorherigem DTU-Boot: {active_lock}"
+                        )
+                    else:
+                        blockers.append(
+                            f"DTU-OTA-Lauf {active_lock} ist noch aktiv oder sein vorheriger Boot "
+                            f"ist nicht eindeutig beweisbar (phase={status.get('phase', '?')})."
+                        )
 
     legacy_markers = {
         "run_active": _exists(adb, f"{LEGACY_HOOK_STATE}/run.active"),
@@ -173,6 +203,8 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
         "blockers": blockers,
         "notes": notes,
         "active_lock": active_lock or None,
+        "active_status": active_status,
+        "current_boot_id": current_boot or None,
         "legacy_markers": legacy_markers,
         "ota_helper_processes": processes,
         "ota_info": ota_info,

@@ -31,12 +31,36 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
+_SUPERVISOR_HOOK_EXIT_OLD = b'''        if ! kill -0 "$HOOK_PID" 2>/dev/null; then\n            wait "$HOOK_PID" 2>/dev/null; hook_rc=$?\n            if test "$ORIGINAL_AUTH" = true; then\n'''
+
+_SUPERVISOR_HOOK_EXIT_NEW = b'''        if ! kill -0 "$HOOK_PID" 2>/dev/null; then\n            wait "$HOOK_PID" 2>/dev/null; hook_rc=$?\n            # The hook can persist terminal=true and exit cleanly between this\n            # loop's status read and the process-liveness check. Re-read after\n            # wait so the normal terminal branch consumes the final state.\n            final_terminal=$(hook_bool terminal)\n            if test "$final_terminal" = true; then\n                log_event "hook exited after persisting terminal status; consuming final hook state"\n                continue\n            fi\n            if test "$ORIGINAL_AUTH" = true; then\n'''
+
+
+def _patch_supervisor_terminal_race(path: Path, payload: bytes) -> bytes:
+    """Patch the packaged supervisor's narrow hook-exit race fail-closed.
+
+    The runtime package and its SHA256 are both built from this exact byte
+    stream, so the DTU still validates the payload it actually executes.  The
+    replacement is intentionally exact and fails package construction if the
+    expected source block changes, preventing a silent partial patch.
+    """
+    if path.name != "dtu_ota_supervisor.sh":
+        return payload
+    count = payload.count(_SUPERVISOR_HOOK_EXIT_OLD)
+    if count != 1:
+        raise PackageError(
+            f"supervisor terminal-race patch expected exactly one source block, found {count}"
+        )
+    return payload.replace(_SUPERVISOR_HOOK_EXIT_OLD, _SUPERVISOR_HOOK_EXIT_NEW, 1)
+
+
 def shell_payload_bytes(path: Path) -> bytes:
     """Return a shell payload with deterministic Unix line endings."""
     payload = path.read_bytes()
     if b"\x00" in payload:
         raise PackageError(f"shell payload contains NUL bytes: {path}")
-    return payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    payload = payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return _patch_supervisor_terminal_race(path, payload)
 
 
 def ota_command_bytes(manifest: FirmwareManifest) -> bytes:
