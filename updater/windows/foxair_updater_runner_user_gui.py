@@ -391,6 +391,32 @@ class MainWindow(runner.MainWindow):
                 )
             return
 
+        if op == "runner-current":
+            status = self._runner_json(output)
+            if (
+                code != 0
+                and isinstance(status, dict)
+                and status.get("error") == "DTU has no last_run_id"
+            ):
+                # A clean auto-cleanup intentionally removes last_run_id. Treat
+                # that normal state as empty history instead of a firmware error.
+                runner.legacy.MainWindow._done(self, "handled-result", code, output)
+                self._runner_run_id = None
+                self._runner_prepared_manifest = None
+                self._runner_active = False
+                self._runner_terminal = False
+                self._runner_abort_allowed = False
+                self._runner_acknowledged = False
+                self.runner_status_text.setText(
+                    "<b>Kein gespeicherter Update-Status vorhanden.</b><br>"
+                    "Auf dem LTE-Modem ist derzeit kein gespeicherter Firmwareupdate-Lauf vorhanden. "
+                    "Erfolgreich abgeschlossene Läufe werden nach der lokalen Protokollsicherung "
+                    "automatisch bereinigt."
+                )
+                self.ota_reattach_btn.setVisible(False)
+                self._buttons()
+                return
+
         if op.startswith("runner-"):
             original_label = self.status_text
             self.status_text = self.runner_status_text
