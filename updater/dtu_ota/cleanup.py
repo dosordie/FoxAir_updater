@@ -69,9 +69,9 @@ def _read(adb: AdbClient, path: str) -> str:
 def _boot_fingerprint(adb: AdbClient) -> str:
     """Return the same boot identity used by the autonomous DTU runner.
 
-    A stale non-terminal runner lock is only cleanable when the saved run can
-    be proven to belong to a previous DTU boot.  Missing/ambiguous boot data is
-    therefore never treated as permission to delete anything.
+    A changed boot is useful evidence that a stored non-terminal lock is stale,
+    but cleanup does not require a reboot.  Live process/marker checks plus the
+    original OTA_INFO resume counters remain the decisive safety gates.
     """
     value = adb.shell("cat /proc/sys/kernel/random/boot_id 2>/dev/null || true").strip()
     if value:
@@ -191,10 +191,15 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
                         notes.append(
                             f"Verwaister nichtterminaler Runner-Lock aus vorherigem DTU-Boot: {active_lock}"
                         )
+                    elif saved_boot and current_boot and saved_boot == current_boot:
+                        notes.append(
+                            f"Nichtterminaler Runner-Lock im aktuellen DTU-Boot: {active_lock}; "
+                            "Live-Prozesse, Runtime-Marker und OTA_INFO entscheiden über die Bereinigung."
+                        )
                     else:
-                        blockers.append(
-                            f"DTU-OTA-Lauf {active_lock} ist noch aktiv oder sein vorheriger Boot "
-                            f"ist nicht eindeutig beweisbar (phase={status.get('phase', '?')})."
+                        notes.append(
+                            f"Nichtterminaler Runner-Lock ohne eindeutigen Bootnachweis: {active_lock}; "
+                            "Live-Prozesse, Runtime-Marker und OTA_INFO entscheiden über die Bereinigung."
                         )
 
     legacy_markers = {
