@@ -44,6 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("status", "log", "abort-request", "ack", "cleanup"):
         item = commands.add_parser(name)
         item.add_argument("--run-id")
+        if name == "status":
+            item.add_argument(
+                "--no-reconcile",
+                action="store_true",
+                help="read status.json only; do not run the DTU-side lost-run classifier",
+            )
     commands.add_parser("current", aliases=["active"])
     return parser
 
@@ -65,7 +71,7 @@ def main() -> int:
         elif args.command == "start":
             value = client.start(args.run_id)
         elif args.command == "status":
-            value = client.status(args.run_id)
+            value = client.status(args.run_id, reconcile=not args.no_reconcile)
         elif args.command == "log":
             print(client.log(args.run_id))
             return 0
