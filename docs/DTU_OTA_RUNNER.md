@@ -86,14 +86,13 @@ Der Runtime-Hook schreibt seinen Terminalstatus persistent. Da der Hook unmittel
 
 Am eigentlichen Mainboard-Protokoll C350/C36E/C357/C5A8 wurde dafür nichts geändert.
 
-## Reboot und verwaiste Runs
+## Verwaiste Runs und Cleanup
 
-`/data/foxair_ota_runner` überlebt einen DTU-Reboot, während flüchtige `/tmp`-Marker und laufende GDB-/Hook-Prozesse verschwinden.
+Ein nichtterminaler `active.lock` bedeutet nicht automatisch, dass noch ein OTA läuft. Der Lock kann nach einem abgestürzten oder verlorenen Supervisor zurückbleiben – mit oder ohne DTU-Reboot.
 
-Ein nichtterminaler alter Run wird deshalb nicht automatisch als aktiv behandelt. Cleanup darf ihn jedoch nur dann als verwaist akzeptieren, wenn der vorherige Boot eindeutig nachgewiesen ist und alle weiteren Sicherheitsprüfungen idle sind:
+Ein Bootwechsel ist deshalb nur noch ein zusätzlicher Hinweis auf einen verwaisten Lauf, aber keine Voraussetzung für Cleanup. Entscheidend sind die aktuellen Live-Prüfungen:
 
-- gespeicherte `boot_id` unterscheidet sich vom aktuellen DTU-Boot;
-- keine OTA-, Hook-, GDB- oder GDBServer-Prozesse laufen;
+- kein OTA-Supervisor, Runtime-Hook, GDB oder GDBServer läuft;
 - keine aktiven Transfer-/Injection-/Authority-Marker vorhanden;
 - `OTA_INFO` ist gültig und zeigt keinen plausibel unvollständigen Board-Transfer.
 
@@ -104,7 +103,7 @@ Für die beiden Board-Transferzähler in `OTA_INFO` gilt beim Cleanup:
 - `offset == length > 0`: vollständig übertragener historischer Zustand, blockiert den Cleanup nicht;
 - inkonsistente Werte bleiben fail-closed gesperrt.
 
-Damit werden von PHNIX stehen gelassene Abschlusszähler nicht mehr fälschlich als laufender OTA interpretiert.
+Damit können verwaiste nichtterminale Runner-Daten auch im selben DTU-Boot entfernt werden, wenn keine Live-Komponente mehr aktiv ist und kein unvollständiger Transfer erkennbar ist. Ein tatsächlich laufender Helper oder ein partieller Resume-Zustand blockiert weiterhin.
 
 ## Cleanup und Diagnose-Retention
 
