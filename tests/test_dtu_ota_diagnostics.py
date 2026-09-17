@@ -20,6 +20,8 @@ class FakeAdb:
             "/data/foxair_ota_runner/runs/run-42/state/OTA_INFO": b"RUN-BACKUP-MUST-NOT-BE-INCLUDED",
             "/data/foxair_ota_runner/runs/run-42/payload/firmware.bin": b"FIRMWARE-MUST-NOT-BE-INCLUDED",
             "/data/phnixIot_device_OTA_INFO": bytes(ota_info),
+            "/tmp/phnix_ota_hook/gdb.log": b"Program received signal SIGSEGV\n",
+            "/tmp/phnix_ota_hook/gdbserver.log": b"Remote debugging from host 127.0.0.1\n",
         }
 
     def shell(self, command, check=True):
@@ -32,8 +34,28 @@ class FakeAdb:
         if command.startswith("if [ -f '"):
             remote = command.split("'", 2)[1]
             return "PRESENT" if remote in self.files else "ABSENT"
+        if "=== /proc/meminfo ===" in command:
+            return (
+                "=== capture ===\n"
+                "service_pid=123\n"
+                "=== /proc/loadavg ===\n0.10 0.20 0.30 1/40 123\n"
+                "=== /proc/meminfo ===\nMemTotal: 162040 kB\nMemAvailable: 101088 kB\n"
+                "=== ps ===\n123 root phnixIot4G\n"
+                "=== /proc/123/status ===\nState:\tZ (zombie)\n"
+                "=== dmesg tail (last 400 lines) ===\nno oom killer entry\n"
+            )
         if "SERVICE_PID=$(pidof phnixIot4G" in command:
-            return "boot_id=test-boot\nservice_pids=123\nservice_tracer_pid=0"
+            return (
+                "boot_id=test-boot\n"
+                "uptime=123.00 45.00\n"
+                "loadavg=0.10 0.20 0.30 1/40 123\n"
+                "mem_total_kb=162040\n"
+                "mem_free_kb=42016\n"
+                "mem_available_kb=101088\n"
+                "service_pids=123\n"
+                "service_state=Z (zombie)\n"
+                "service_tracer_pid=0\n"
+            )
         return ""
 
     def read_file(self, remote):
@@ -77,6 +99,8 @@ class SameDayFakeAdb(FakeAdb):
         if command.startswith("if [ -f '"):
             remote = command.split("'", 2)[1]
             return "PRESENT" if remote in self.files else "ABSENT"
+        if "=== /proc/meminfo ===" in command:
+            return "=== /proc/meminfo ===\nMemAvailable: 100000 kB\n"
         if "SERVICE_PID=$(pidof phnixIot4G" in command:
             return "boot_id=test-boot\nservice_pids=123\nservice_tracer_pid=0"
         return ""
@@ -107,12 +131,22 @@ class DiagnosticBundleTests(unittest.TestCase):
                 self.assertIn("diagnostic_manifest.json", names)
                 self.assertIn("dtu-state/phnixIot_device_OTA_INFO", names)
                 self.assertIn("dtu-state/phnixIot_device_OTA_INFO.json", names)
+                self.assertIn("dtu-state/runtime/gdb.log", names)
+                self.assertIn("dtu-state/runtime/gdbserver.log", names)
+                self.assertIn("dtu-state/runtime_snapshot.txt", names)
                 self.assertNotIn("dtu-run/state/OTA_INFO", names)
                 self.assertNotIn("dtu-run/payload/firmware.bin", names)
                 self.assertEqual(len(archive.read("dtu-state/phnixIot_device_OTA_INFO")), 220)
                 ota_summary = json.loads(archive.read("dtu-state/phnixIot_device_OTA_INFO.json"))
                 self.assertEqual(ota_summary["board_offset"], 287598)
                 self.assertEqual(ota_summary["board_down_cnt"], 287598)
+                self.assertIn(
+                    "Program received signal SIGSEGV",
+                    archive.read("dtu-state/runtime/gdb.log").decode("utf-8"),
+                )
+                runtime_snapshot = archive.read("dtu-state/runtime_snapshot.txt").decode("utf-8")
+                self.assertIn("MemAvailable: 101088 kB", runtime_snapshot)
+                self.assertIn("State:\tZ (zombie)", runtime_snapshot)
                 combined = "\n".join(
                     archive.read(name).decode("utf-8", errors="replace")
                     for name in names
