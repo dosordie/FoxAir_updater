@@ -102,9 +102,9 @@ class MainWindow(product.MainWindow):
             return
         self.diagnostics_button = QPushButton("Diagnosepaket speichern…")
         self.diagnostics_button.setToolTip(
-            "Speichert den sichtbaren GUI-Log sowie die Textdiagnose aller DTU-OTA-Versuche "
-            "des betreffenden Tages als ZIP. Firmware, OTA_INFO und Statistik-Binärdaten "
-            "werden nicht eingebunden."
+            "Speichert den sichtbaren GUI-Log, die Textdiagnose aller DTU-OTA-Versuche "
+            "des betreffenden Tages und die originale PHNIX-OTA_INFO als ZIP. "
+            "Firmware und Statistik-Binärdaten werden nicht eingebunden."
         )
         self.diagnostics_button.clicked.connect(self._save_diagnostic_bundle)
         toolbar.insertWidget(max(0, toolbar.indexOf(clear_button)), self.diagnostics_button)
@@ -535,8 +535,8 @@ class MainWindow(product.MainWindow):
                 f"Das Diagnosepaket wurde gespeichert:\n{parsed.get('output', self._diagnostic_output)}"
                 f"\n\nEnthaltene DTU-OTA-Versuche dieses Tages: {attempts}"
                 f"\nZusätzliche Windows-Update-Logs dieses Tages: {host_count}"
-                "\n\nFirmware, OTA_INFO und Statistik-Binärdaten wurden nicht eingebunden. "
-                "Bekannte Geräte-/Cloudkennungen werden in Textdateien maskiert."
+                "\n\nDie originale PHNIX-OTA_INFO wurde eingebunden. Firmware und Statistik-Binärdaten "
+                "wurden nicht eingebunden. Bekannte Geräte-/Cloudkennungen werden in Textdateien maskiert."
                 + suffix,
             )
             return

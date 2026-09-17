@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Create a privacy-conscious diagnostic ZIP for autonomous DTU OTA runs.
 
-Only an explicit text whitelist is collected. Firmware binaries, OTA_INFO,
-statistics blobs and other arbitrary DTU files are intentionally excluded.
+Only an explicit whitelist is collected. Firmware and statistics blobs remain
+excluded. The original 220-byte PHNIX OTA_INFO file is included because its
+board-transfer counters are important for diagnosing cleanup/recovery cases.
 By default all runner attempts from the same calendar day as the selected run
 are included so repeated update attempts can be diagnosed together.
 
@@ -34,6 +35,10 @@ from updater.common.adb_transport import AdbClient, TransportError
 from updater.dtu_ota.client import REMOTE_BASE, RUN_ID_RE
 
 
+REMOTE_OTA_INFO = "/data/phnixIot_device_OTA_INFO"
+OTA_INFO_ARCHIVE_PATH = "dtu-state/phnixIot_device_OTA_INFO"
+OTA_INFO_SUMMARY_PATH = "dtu-state/phnixIot_device_OTA_INFO.json"
+
 TEXT_FILES = (
     "status.json",
     "result.json",
@@ -63,6 +68,18 @@ def redact_text(text: str) -> str:
 
 def safe_decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
+
+
+def ota_info_summary(data: bytes) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "path": REMOTE_OTA_INFO,
+        "length_bytes": len(data),
+        "valid_220_bytes": len(data) == 220,
+    }
+    if len(data) == 220:
+        summary["board_offset"] = int.from_bytes(data[212:216], "little")
+        summary["board_down_cnt"] = int.from_bytes(data[216:220], "little")
+    return summary
 
 
 def _valid_run_id(value: str) -> str:
@@ -233,6 +250,7 @@ def create_bundle_from_saved_archive(
                 host_logs.append(path.name)
                 included.append(f"host/day/{path.name}")
 
+            ota_info_included = OTA_INFO_ARCHIVE_PATH in included
             manifest = {
                 "schema": "foxair-diagnostic-bundle-v2",
                 "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -247,7 +265,7 @@ def create_bundle_from_saved_archive(
                 "saved_dtu_archive": str(saved_archive),
                 "privacy": {
                     "firmware_included": False,
-                    "ota_info_binary_included": False,
+                    "ota_info_binary_included": ota_info_included,
                     "statistics_binary_included": False,
                     "text_redaction_applied": True,
                 },
@@ -306,6 +324,7 @@ def create_bundle(
     included: list[str] = []
     missing: dict[str, str] = {}
     host_logs: list[str] = []
+    ota_info_included = False
     with tempfile.NamedTemporaryFile(prefix="foxair-diagnostics-", suffix=".zip", delete=False, dir=output.parent) as tmp:
         temp_path = Path(tmp.name)
     try:
@@ -327,6 +346,19 @@ def create_bundle(
                     # for the primary/current run.
                     if collected_run_id == resolved:
                         archive.writestr(f"dtu-run/{relative}", text)
+
+            ota_info, ota_info_error = read_optional(adb, REMOTE_OTA_INFO)
+            if ota_info is None:
+                missing[REMOTE_OTA_INFO] = ota_info_error or "unavailable"
+            else:
+                archive.writestr(OTA_INFO_ARCHIVE_PATH, ota_info)
+                summary = ota_info_summary(ota_info)
+                archive.writestr(
+                    OTA_INFO_SUMMARY_PATH,
+                    json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+                )
+                included.extend((OTA_INFO_ARCHIVE_PATH, OTA_INFO_SUMMARY_PATH))
+                ota_info_included = True
 
             snapshot = system_snapshot(adb) + "\n"
             archive.writestr("dtu-run/system_snapshot.txt", snapshot)
@@ -357,7 +389,7 @@ def create_bundle(
                 "source": "live-dtu-run",
                 "privacy": {
                     "firmware_included": False,
-                    "ota_info_binary_included": False,
+                    "ota_info_binary_included": ota_info_included,
                     "statistics_binary_included": False,
                     "text_redaction_applied": True,
                 },

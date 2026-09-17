@@ -57,9 +57,13 @@ class DtuCleanupTests(unittest.TestCase):
         }
         self.assertTrue(forbidden.isdisjoint(CLEAN_PATHS))
 
-    def test_active_nonterminal_runner_blocks_cleanup(self):
+    def test_live_nonterminal_runner_process_blocks_cleanup(self):
         run_id = "20260902-150000-0001"
         adb = FakeAdb(
+            ps=(
+                "4534 root /system/bin/sh "
+                f"/data/foxair_ota_runner/runs/{run_id}/payload/dtu_ota_supervisor.sh run {run_id}"
+            ),
             files={
                 "/data/foxair_ota_runner/active.lock/run_id": run_id,
                 f"/data/foxair_ota_runner/runs/{run_id}/status.json": json.dumps(
@@ -72,13 +76,39 @@ class DtuCleanupTests(unittest.TestCase):
                     }
                 ),
                 "/data/foxair_ota_runner": "dir",
-            }
+            },
         )
         snapshot = safety_snapshot(adb)
         self.assertFalse(snapshot["safe"])
+        self.assertTrue(any("Hilfsprozesse" in item for item in snapshot["blockers"]))
         with self.assertRaises(CleanupError):
             clean(adb)
         self.assertEqual(adb.removed, [])
+
+    def test_same_boot_nonterminal_lock_is_cleanable_when_runtime_is_idle(self):
+        run_id = "20260914-173921-0600"
+        adb = FakeAdb(
+            boot_id="boot-current",
+            files={
+                "/data/foxair_ota_runner/active.lock/run_id": run_id,
+                f"/data/foxair_ota_runner/runs/{run_id}/status.json": json.dumps(
+                    {
+                        "schema": "foxair-dtu-ota-run-v1",
+                        "run_id": run_id,
+                        "terminal": False,
+                        "phase": "original-service-active-unmonitored",
+                        "reason": "hook_monitor_lost",
+                        "boot_id": "boot-current",
+                    }
+                ),
+                "/data/foxair_ota_runner": "dir",
+            },
+        )
+        snapshot = safety_snapshot(adb)
+        self.assertTrue(snapshot["safe"])
+        self.assertTrue(any("aktuellen DTU-Boot" in item for item in snapshot["notes"]))
+        result = clean(adb)
+        self.assertTrue(result["ok"])
 
     def test_nonterminal_runner_from_previous_boot_can_be_removed_when_everything_else_is_idle(self):
         run_id = "20260914-173921-0700"
@@ -107,7 +137,7 @@ class DtuCleanupTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("/data/foxair_ota_runner", adb.removed)
 
-    def test_nonterminal_runner_without_saved_boot_proof_stays_blocked(self):
+    def test_nonterminal_runner_without_saved_boot_proof_is_cleanable_when_runtime_is_idle(self):
         run_id = "20260914-173921-0701"
         adb = FakeAdb(
             files={
@@ -124,8 +154,8 @@ class DtuCleanupTests(unittest.TestCase):
             }
         )
         snapshot = safety_snapshot(adb)
-        self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("nicht eindeutig beweisbar" in item for item in snapshot["blockers"]))
+        self.assertTrue(snapshot["safe"])
+        self.assertTrue(any("ohne eindeutigen Bootnachweis" in item for item in snapshot["notes"]))
 
     def test_previous_boot_lock_still_blocks_when_ota_info_is_resumable(self):
         run_id = "20260914-173921-0702"

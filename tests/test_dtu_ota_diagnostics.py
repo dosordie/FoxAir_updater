@@ -9,13 +9,17 @@ from updater.dtu_ota.diagnostics import create_bundle, redact_text
 
 class FakeAdb:
     def __init__(self):
+        ota_info = bytearray(b"\0" * 220)
+        ota_info[212:216] = (287598).to_bytes(4, "little")
+        ota_info[216:220] = (287598).to_bytes(4, "little")
         self.files = {
             "/data/foxair_ota_runner/last_run_id": b"run-42\n",
             "/data/foxair_ota_runner/runs/run-42/status.json": b'{"state":"completed","deviceCode":"860147058259753"}\n',
             "/data/foxair_ota_runner/runs/run-42/runner.log": b"service restart verified\n",
             "/data/foxair_ota_runner/runs/run-42/package.json": b'{"firmware_file":"firmware.bin"}\n',
-            "/data/foxair_ota_runner/runs/run-42/state/OTA_INFO": b"MUST-NOT-BE-INCLUDED",
+            "/data/foxair_ota_runner/runs/run-42/state/OTA_INFO": b"RUN-BACKUP-MUST-NOT-BE-INCLUDED",
             "/data/foxair_ota_runner/runs/run-42/payload/firmware.bin": b"FIRMWARE-MUST-NOT-BE-INCLUDED",
+            "/data/phnixIot_device_OTA_INFO": bytes(ota_info),
         }
 
     def shell(self, command, check=True):
@@ -87,7 +91,7 @@ class DiagnosticBundleTests(unittest.TestCase):
         self.assertNotIn("860147058259753", value)
         self.assertNotIn("89330112407972705790", value)
 
-    def test_bundle_uses_text_whitelist_and_excludes_binary_state(self):
+    def test_bundle_uses_whitelist_and_includes_original_ota_info(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             host_log = root / "gui.log"
@@ -101,8 +105,14 @@ class DiagnosticBundleTests(unittest.TestCase):
                 self.assertIn("dtu-run/runner.log", names)
                 self.assertIn("host/foxair-updater.log", names)
                 self.assertIn("diagnostic_manifest.json", names)
+                self.assertIn("dtu-state/phnixIot_device_OTA_INFO", names)
+                self.assertIn("dtu-state/phnixIot_device_OTA_INFO.json", names)
                 self.assertNotIn("dtu-run/state/OTA_INFO", names)
                 self.assertNotIn("dtu-run/payload/firmware.bin", names)
+                self.assertEqual(len(archive.read("dtu-state/phnixIot_device_OTA_INFO")), 220)
+                ota_summary = json.loads(archive.read("dtu-state/phnixIot_device_OTA_INFO.json"))
+                self.assertEqual(ota_summary["board_offset"], 287598)
+                self.assertEqual(ota_summary["board_down_cnt"], 287598)
                 combined = "\n".join(
                     archive.read(name).decode("utf-8", errors="replace")
                     for name in names
@@ -111,7 +121,7 @@ class DiagnosticBundleTests(unittest.TestCase):
                 self.assertNotIn("860147058259753", combined)
                 manifest = json.loads(archive.read("diagnostic_manifest.json"))
                 self.assertFalse(manifest["privacy"]["firmware_included"])
-                self.assertFalse(manifest["privacy"]["ota_info_binary_included"])
+                self.assertTrue(manifest["privacy"]["ota_info_binary_included"])
                 self.assertFalse(manifest["privacy"]["statistics_binary_included"])
 
     def test_bundle_collects_all_runner_attempts_and_host_logs_from_same_day(self):
@@ -140,6 +150,7 @@ class DiagnosticBundleTests(unittest.TestCase):
                 self.assertEqual(manifest["schema"], "foxair-diagnostic-bundle-v2")
                 self.assertEqual(manifest["run_day"], "20260902")
                 self.assertEqual(manifest["run_ids"], [SameDayFakeAdb.RUN1, SameDayFakeAdb.RUN2])
+                self.assertFalse(manifest["privacy"]["ota_info_binary_included"])
 
     def test_bundle_can_be_recreated_repeatedly_after_remote_run_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -194,6 +205,7 @@ class DiagnosticBundleTests(unittest.TestCase):
                     manifest = json.loads(archive.read("diagnostic_manifest.json"))
                     self.assertEqual(manifest["source"], "saved-local-dtu-archive")
                     self.assertEqual(manifest["run_id"], run_id)
+                    self.assertFalse(manifest["privacy"]["ota_info_binary_included"])
 
 
 if __name__ == "__main__":

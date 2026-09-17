@@ -69,9 +69,9 @@ def _read(adb: AdbClient, path: str) -> str:
 def _boot_fingerprint(adb: AdbClient) -> str:
     """Return the same boot identity used by the autonomous DTU runner.
 
-    A stale non-terminal runner lock is only cleanable when the saved run can
-    be proven to belong to a previous DTU boot.  Missing/ambiguous boot data is
-    therefore never treated as permission to delete anything.
+    A changed boot is useful evidence that a stored non-terminal lock is stale,
+    but cleanup does not require a reboot.  Live process/marker checks plus the
+    original OTA_INFO resume counters remain the decisive safety gates.
     """
     value = adb.shell("cat /proc/sys/kernel/random/boot_id 2>/dev/null || true").strip()
     if value:
@@ -106,7 +106,7 @@ def _process_lines(adb: AdbClient) -> list[str]:
 
 
 def _ota_info_resume(adb: AdbClient) -> dict[str, object]:
-    """Read only the resume counters from the original 220-byte OTA_INFO.
+    """Read only the board resume counters from the original 220-byte OTA_INFO.
 
     The file itself is never modified here.  Unknown/corrupt state is a blocker
     because cleanup must never guess that an OTA is idle.
@@ -120,6 +120,45 @@ def _ota_info_resume(adb: AdbClient) -> dict[str, object]:
         "offset": int.from_bytes(raw[212:216], "little"),
         "length": int.from_bytes(raw[216:220], "little"),
     }
+
+
+def _classify_ota_info(ota_info: dict[str, object]) -> tuple[str | None, str | None]:
+    """Classify OTA_INFO without treating every historic non-zero value as active.
+
+    PHNIX can retain the final board transfer counters after a completed OTA.
+    ``offset == length > 0`` therefore means that the transfer itself reached
+    the end and must not, by itself, block removal of our updater-owned files.
+
+    A plausible unfinished transfer (offset < length) remains a blocker.  Values
+    that cannot describe a sane transfer are also blocked rather than guessed.
+    """
+    if ota_info.get("valid") is not True:
+        return "OTA_INFO hat nicht die erwarteten 220 Byte; OTA-Zustand ist nicht sicher bewertbar.", None
+
+    offset = ota_info.get("offset")
+    length = ota_info.get("length")
+    if not isinstance(offset, int) or not isinstance(length, int):
+        return "OTA_INFO enthält keine gültigen Board-Transferzähler.", None
+
+    if offset == 0 and length == 0:
+        return None, None
+    if length > 0 and 0 <= offset < length:
+        return (
+            "OTA_INFO enthält einen aktiven/fortsetzbaren OTA-Zustand "
+            f"(offset={offset}, length={length}).",
+            None,
+        )
+    if length > 0 and offset == length:
+        return (
+            None,
+            "OTA_INFO enthält einen vollständig übertragenen historischen OTA-Zustand "
+            f"(offset=length={length}); dies blockiert die Bereinigung nicht.",
+        )
+    return (
+        "OTA_INFO enthält einen inkonsistenten OTA-Zustand "
+        f"(offset={offset}, length={length}); Bereinigung bleibt gesperrt.",
+        None,
+    )
 
 
 def safety_snapshot(adb: AdbClient) -> dict[str, object]:
@@ -152,10 +191,15 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
                         notes.append(
                             f"Verwaister nichtterminaler Runner-Lock aus vorherigem DTU-Boot: {active_lock}"
                         )
+                    elif saved_boot and current_boot and saved_boot == current_boot:
+                        notes.append(
+                            f"Nichtterminaler Runner-Lock im aktuellen DTU-Boot: {active_lock}; "
+                            "Live-Prozesse, Runtime-Marker und OTA_INFO entscheiden über die Bereinigung."
+                        )
                     else:
-                        blockers.append(
-                            f"DTU-OTA-Lauf {active_lock} ist noch aktiv oder sein vorheriger Boot "
-                            f"ist nicht eindeutig beweisbar (phase={status.get('phase', '?')})."
+                        notes.append(
+                            f"Nichtterminaler Runner-Lock ohne eindeutigen Bootnachweis: {active_lock}; "
+                            "Live-Prozesse, Runtime-Marker und OTA_INFO entscheiden über die Bereinigung."
                         )
 
     legacy_markers = {
@@ -187,15 +231,11 @@ def safety_snapshot(adb: AdbClient) -> dict[str, object]:
         ota_info = {"valid": False, "error": str(error), "offset": None, "length": None}
         blockers.append("OTA_INFO konnte nicht sicher gelesen werden.")
     else:
-        if ota_info.get("valid") is not True:
-            blockers.append(
-                "OTA_INFO hat nicht die erwarteten 220 Byte; OTA-Ruhezustand ist nicht beweisbar."
-            )
-        elif ota_info.get("offset") != 0 or ota_info.get("length") != 0:
-            blockers.append(
-                "OTA_INFO enthält einen aktiven/fortsetzbaren OTA-Zustand "
-                f"(offset={ota_info.get('offset')}, length={ota_info.get('length')})."
-            )
+        ota_blocker, ota_note = _classify_ota_info(ota_info)
+        if ota_blocker:
+            blockers.append(ota_blocker)
+        if ota_note:
+            notes.append(ota_note)
 
     present = [path for path in CLEAN_PATHS if _exists(adb, path)]
     return {

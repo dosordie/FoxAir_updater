@@ -1,6 +1,6 @@
 # DTU OTA Runner – aktueller Architektur- und Sicherheitsstand
 
-Stand: 16. September 2026
+Stand: 17. September 2026
 
 Der Umbau auf den autonomen DTU-Runner ist abgeschlossen. Diese Datei ersetzt die frühere Entwicklungs-Roadmap unter `docs/dev/DTU_OTA_RUNNER_ROADMAP.md` und beschreibt nur noch den produktiven Stand sowie die dauerhaft relevanten Sicherheitsgrenzen.
 
@@ -86,18 +86,24 @@ Der Runtime-Hook schreibt seinen Terminalstatus persistent. Da der Hook unmittel
 
 Am eigentlichen Mainboard-Protokoll C350/C36E/C357/C5A8 wurde dafür nichts geändert.
 
-## Reboot und verwaiste Runs
+## Verwaiste Runs und Cleanup
 
-`/data/foxair_ota_runner` überlebt einen DTU-Reboot, während flüchtige `/tmp`-Marker und laufende GDB-/Hook-Prozesse verschwinden.
+Ein nichtterminaler `active.lock` bedeutet nicht automatisch, dass noch ein OTA läuft. Der Lock kann nach einem abgestürzten oder verlorenen Supervisor zurückbleiben – mit oder ohne DTU-Reboot.
 
-Ein nichtterminaler alter Run wird deshalb nicht automatisch als aktiv behandelt. Cleanup darf ihn jedoch nur dann als verwaist akzeptieren, wenn der vorherige Boot eindeutig nachgewiesen ist und alle weiteren Sicherheitsprüfungen idle sind:
+Ein Bootwechsel ist deshalb nur noch ein zusätzlicher Hinweis auf einen verwaisten Lauf, aber keine Voraussetzung für Cleanup. Entscheidend sind die aktuellen Live-Prüfungen:
 
-- gespeicherte `boot_id` unterscheidet sich vom aktuellen DTU-Boot;
-- keine OTA-, Hook-, GDB- oder GDBServer-Prozesse laufen;
+- kein OTA-Supervisor, Runtime-Hook, GDB oder GDBServer läuft;
 - keine aktiven Transfer-/Injection-/Authority-Marker vorhanden;
-- `OTA_INFO` ist gültig und meldet `offset=0`, `length=0`.
+- `OTA_INFO` ist gültig und zeigt keinen plausibel unvollständigen Board-Transfer.
 
-Fehlt dieser Nachweis oder ist der Zustand nicht eindeutig, wird nichts gelöscht.
+Für die beiden Board-Transferzähler in `OTA_INFO` gilt beim Cleanup:
+
+- `offset=0`, `length=0`: normaler Ruhezustand;
+- `0 <= offset < length`: fortsetzbarer/unvollständiger Transfer, Cleanup bleibt gesperrt;
+- `offset == length > 0`: vollständig übertragener historischer Zustand, blockiert den Cleanup nicht;
+- inkonsistente Werte bleiben fail-closed gesperrt.
+
+Damit können verwaiste nichtterminale Runner-Daten auch im selben DTU-Boot entfernt werden, wenn keine Live-Komponente mehr aktiv ist und kein unvollständiger Transfer erkennbar ist. Ein tatsächlich laufender Helper oder ein partieller Resume-Zustand blockiert weiterhin.
 
 ## Cleanup und Diagnose-Retention
 
@@ -109,6 +115,8 @@ Die Option **„Danach alle FoxAir-Updater-Dateien vom LTE-Modem entfernen“** 
 - `/cache/phnixIot_device_OTA`
 - `/data/phnixIot_device_OTA_INFO`
 - `/data/phnixIot_device_statisic`
+
+Das Diagnosepaket nimmt die originale 220-Byte-Datei `/data/phnixIot_device_OTA_INFO` standardmäßig unverändert mit auf und legt zusätzlich eine kleine JSON-Auswertung der Board-Transferzähler ab. Firmware und Statistik-Binärdaten bleiben ausgeschlossen.
 
 Nach bereits erfolgtem Auto-Cleanup behandelt **„Update-Status lesen“** einen fehlenden `last_run_id` als normalen Zustand und nicht als Firmwareupdate-Fehler.
 
