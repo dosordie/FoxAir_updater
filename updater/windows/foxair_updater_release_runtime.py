@@ -45,6 +45,12 @@ class MainWindow(release.MainWindow):
         self._auto_diagnostic_host_log: Path | None = None
         super().__init__()
 
+    @staticmethod
+    def _diagnostics_core_path() -> Path:
+        # Use the release-only scope wrapper so global /tmp GDB logs are only
+        # archived when they can be tied to this exact autonomous run.
+        return release.base.backend_dir() / "updater/dtu_ota/diagnostics_current_run.py"
+
     def _poll_runner_status(self):
         if self.busy or not self._runner_active or not self._runner_run_id:
             return
