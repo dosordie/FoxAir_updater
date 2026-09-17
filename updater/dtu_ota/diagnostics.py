@@ -7,6 +7,12 @@ board-transfer counters are important for diagnosing cleanup/recovery cases.
 By default all runner attempts from the same calendar day as the selected run
 are included so repeated update attempts can be diagnosed together.
 
+Live runtime diagnostics are collected only when a diagnostic bundle is
+explicitly created. They are passive/read-only and do not add any background
+polling to the DTU OTA runner. Existing GDB/GDBServer logs, memory/load state,
+process state and a bounded kernel-log tail are useful when the original
+phnixIot4G process exits unexpectedly.
+
 After a successful/same-version run the release GUI may already have archived
 and removed the DTU runner data. In that case this exporter reuses the newest
 local FoxAir_DTU_Logs_*.zip from the host log directory, so repeated manual
@@ -38,6 +44,13 @@ from updater.dtu_ota.client import REMOTE_BASE, RUN_ID_RE
 REMOTE_OTA_INFO = "/data/phnixIot_device_OTA_INFO"
 OTA_INFO_ARCHIVE_PATH = "dtu-state/phnixIot_device_OTA_INFO"
 OTA_INFO_SUMMARY_PATH = "dtu-state/phnixIot_device_OTA_INFO.json"
+RUNTIME_SNAPSHOT_PATH = "dtu-state/runtime_snapshot.txt"
+MAX_RUNTIME_LOG_BYTES = 512 * 1024
+
+LIVE_RUNTIME_TEXT_FILES = {
+    "dtu-state/runtime/gdb.log": "/tmp/phnix_ota_hook/gdb.log",
+    "dtu-state/runtime/gdbserver.log": "/tmp/phnix_ota_hook/gdbserver.log",
+}
 
 TEXT_FILES = (
     "status.json",
@@ -68,6 +81,15 @@ def redact_text(text: str) -> str:
 
 def safe_decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
+
+
+def _bounded_runtime_text(data: bytes) -> str:
+    """Keep support logs useful without allowing an unbounded diagnostic ZIP."""
+    if len(data) <= MAX_RUNTIME_LOG_BYTES:
+        return safe_decode(data)
+    omitted = len(data) - MAX_RUNTIME_LOG_BYTES
+    tail = safe_decode(data[-MAX_RUNTIME_LOG_BYTES:])
+    return f"[FoxAir diagnostics: omitted {omitted} older bytes]\n{tail}"
 
 
 def ota_info_summary(data: bytes) -> dict[str, object]:
@@ -138,10 +160,18 @@ def system_snapshot(adb: AdbClient) -> str:
     command = r'''
 SERVICE_PID=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
 echo "boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+echo "uptime=$(cat /proc/uptime 2>/dev/null || true)"
+echo "loadavg=$(cat /proc/loadavg 2>/dev/null || true)"
+echo "mem_total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
+echo "mem_free_kb=$(awk '/^MemFree:/ {print $2}' /proc/meminfo 2>/dev/null)"
+echo "mem_available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)"
 echo "service_pids=$(pidof phnixIot4G 2>/dev/null || true)"
 if [ -n "$SERVICE_PID" ]; then
   echo "service_state=$(awk '/^State:/ {print $2,$3}' /proc/$SERVICE_PID/status 2>/dev/null)"
   echo "service_tracer_pid=$(awk '/^TracerPid:/ {print $2}' /proc/$SERVICE_PID/status 2>/dev/null)"
+  echo "service_vmrss_kb=$(awk '/^VmRSS:/ {print $2}' /proc/$SERVICE_PID/status 2>/dev/null)"
+  echo "service_vmsize_kb=$(awk '/^VmSize:/ {print $2}' /proc/$SERVICE_PID/status 2>/dev/null)"
+  echo "service_threads=$(awk '/^Threads:/ {print $2}' /proc/$SERVICE_PID/status 2>/dev/null)"
 fi
 echo "service_sha256=$(sha256sum /data/phnixIot4G 2>/dev/null | awk '{print $1}')"
 echo "data_free_kb=$(df -k /data 2>/dev/null | awk 'NR==2 {print $4}')"
@@ -149,6 +179,33 @@ echo "watchdog_pids=$(ps 2>/dev/null | awk '$4 == "{helloworld}" {print $1}' | t
 for marker in run.active transfer-started original-service-owns; do
   if [ -e "/tmp/phnix_ota_hook/$marker" ]; then echo "hook_marker_$marker=present"; else echo "hook_marker_$marker=absent"; fi
 done
+'''
+    return redact_text(adb.shell(command, check=False))
+
+
+def runtime_snapshot(adb: AdbClient) -> str:
+    """Collect one passive support snapshot; no polling, tracing or process signals."""
+    command = r'''
+SERVICE_PID=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
+echo "=== capture ==="
+date 2>/dev/null || true
+echo "service_pid=$SERVICE_PID"
+echo "=== /proc/uptime ==="
+cat /proc/uptime 2>/dev/null || true
+echo "=== /proc/loadavg ==="
+cat /proc/loadavg 2>/dev/null || true
+echo "=== /proc/meminfo ==="
+cat /proc/meminfo 2>/dev/null || true
+echo "=== ps ==="
+ps 2>/dev/null || true
+if [ -n "$SERVICE_PID" ]; then
+  echo "=== /proc/$SERVICE_PID/status ==="
+  cat /proc/$SERVICE_PID/status 2>/dev/null || true
+  echo "=== /proc/$SERVICE_PID/stat ==="
+  cat /proc/$SERVICE_PID/stat 2>/dev/null || true
+fi
+echo "=== dmesg tail (last 400 lines) ==="
+dmesg 2>&1 | tail -n 400 2>/dev/null || true
 '''
     return redact_text(adb.shell(command, check=False))
 
@@ -360,10 +417,23 @@ def create_bundle(
                 included.extend((OTA_INFO_ARCHIVE_PATH, OTA_INFO_SUMMARY_PATH))
                 ota_info_included = True
 
+            for archive_name, remote in LIVE_RUNTIME_TEXT_FILES.items():
+                data, error = read_optional(adb, remote)
+                if data is None:
+                    missing[remote] = error or "unavailable"
+                    continue
+                text = redact_text(_bounded_runtime_text(data))
+                archive.writestr(archive_name, text)
+                included.append(archive_name)
+
             snapshot = system_snapshot(adb) + "\n"
             archive.writestr("dtu-run/system_snapshot.txt", snapshot)
             archive.writestr(f"dtu-runs/{resolved}/system_snapshot.txt", snapshot)
             included.append(f"{resolved}/system_snapshot.txt")
+
+            runtime = runtime_snapshot(adb) + "\n"
+            archive.writestr(RUNTIME_SNAPSHOT_PATH, runtime)
+            included.append(RUNTIME_SNAPSHOT_PATH)
 
             if host_log and host_log.is_file():
                 text = redact_text(host_log.read_text(encoding="utf-8", errors="replace"))
