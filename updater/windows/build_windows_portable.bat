@@ -55,6 +55,8 @@ if exist "%OUT%" (
     goto :err
   )
 )
+rem Die finale Runtime-Schicht erweitert weiterhin den etablierten Produkt-Layer:
+rem updater\windows\foxair_updater_release_product.py
 %PY_CMD% -m PyInstaller ^
   --noconfirm ^
   --clean ^
