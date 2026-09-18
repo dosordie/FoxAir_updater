@@ -18,8 +18,8 @@ REMOTE_CACHE="/cache/phnixIot_device_OTA"
 abspath() {
     if command -v realpath >/dev/null 2>&1; then
         realpath "$1"
-    elif readlink -f "$1" 2>/dev/null; then
-        :
+    elif readlink -f "$1" >/dev/null 2>&1; then
+        readlink -f "$1"
     else
         python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
     fi
@@ -137,7 +137,7 @@ backup_update_cache() {
         "$CACHE_BACKUP_DIR/SHA256"
 
     if remote_file_exists "$REMOTE_CACHE"; then
-        "$ADB_BIN" pull "$REMOTE_CACHE" "$CACHE_BACKUP_DIR/phnixIot_device_OTA" >/dev/null \
+        "$ADB_BIN" pull "$REMOTE_CACHE" "$CACHE_BACKUP_DIR/phnixIot_device_OTA" </dev/null >/dev/null \
             || die "Vorhandene Cache-Firmware konnte vor dem OTA nicht gesichert werden"
         hash_md5 "$CACHE_BACKUP_DIR/phnixIot_device_OTA" > "$CACHE_BACKUP_DIR/MD5"
         hash_sha256 "$CACHE_BACKUP_DIR/phnixIot_device_OTA" > "$CACHE_BACKUP_DIR/SHA256"
@@ -163,13 +163,13 @@ restore_update_cache() {
         [[ -f "$backup" ]] || die "Cache-Backup-Marker vorhanden, aber Sicherungsdatei fehlt"
         expected="$(cat "$CACHE_BACKUP_DIR/SHA256")"
 
-        "$ADB_BIN" push "$backup" /cache/.phnixIot_device_OTA.restore >/dev/null \
+        "$ADB_BIN" push "$backup" /cache/.phnixIot_device_OTA.restore </dev/null >/dev/null \
             || die "Cache-Firmware konnte nicht zum LTE-Modem zurueckkopiert werden"
-        remote_hash="$("$ADB_BIN" shell "sha256sum /cache/.phnixIot_device_OTA.restore | awk '{print \$1}'" | tr -d '\r')"
+        remote_hash="$("$ADB_BIN" shell "sha256sum /cache/.phnixIot_device_OTA.restore | awk '{print \$1}'" </dev/null | tr -d '\r')"
         [[ "$remote_hash" == "$expected" ]] || die "SHA-256 der zurueckkopierten Cache-Firmware stimmt nicht"
-        "$ADB_BIN" shell "mv /cache/.phnixIot_device_OTA.restore '$REMOTE_CACHE' && sync" >/dev/null \
+        "$ADB_BIN" shell "mv /cache/.phnixIot_device_OTA.restore '$REMOTE_CACHE' && sync" </dev/null >/dev/null \
             || die "Cache-Firmware konnte nicht atomar wiederhergestellt werden"
-        remote_hash="$("$ADB_BIN" shell "sha256sum '$REMOTE_CACHE' | awk '{print \$1}'" | tr -d '\r')"
+        remote_hash="$("$ADB_BIN" shell "sha256sum '$REMOTE_CACHE' | awk '{print \$1}'" </dev/null | tr -d '\r')"
         [[ "$remote_hash" == "$expected" ]] || die "SHA-256 der wiederhergestellten Cache-Firmware stimmt nicht"
         clear_update_cache_pending
         printf '[OK] Urspruengliche LTE-Cache-Firmware wiederhergestellt\n'
@@ -177,7 +177,7 @@ restore_update_cache() {
     fi
 
     if [[ -f "$CACHE_BACKUP_DIR/cache.absent" ]]; then
-        "$ADB_BIN" shell "rm -f '$REMOTE_CACHE' /cache/.phnixIot_device_OTA.restore && sync" >/dev/null \
+        "$ADB_BIN" shell "rm -f '$REMOTE_CACHE' /cache/.phnixIot_device_OTA.restore && sync" </dev/null >/dev/null \
             || die "Urspruenglich leeren Cache-Zustand konnte nicht wiederhergestellt werden"
         clear_update_cache_pending
         printf '[OK] Urspruenglicher leerer LTE-Cache-Zustand wiederhergestellt\n'
