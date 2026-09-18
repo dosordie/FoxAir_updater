@@ -42,12 +42,13 @@ class MainWindow(product.MainWindow):
         widget = super()._status()
         layout = widget.layout()
 
-        # Keep the two restore/status buttons in their inherited row.  Put the
-        # optional full-cleanup checkbox on a dedicated line below them so it
-        # remains visible even at normal/narrow window widths.
+        # Use the exact v0.4.6 placement that is proven visible in the release:
+        # insert the cleanup checkbox directly after the real restore button.
         restore_parent = self.original_restore_btn.parentWidget()
         restore_parent_layout = restore_parent.layout() if restore_parent is not None else None
-
+        restore_row = self._layout_containing(
+            restore_parent_layout, self.original_restore_btn
+        )
         self.clean_dtu_after_restore = QCheckBox(
             "Danach FoxAir-Updater-Dateien vollständig vom LTE-Modem entfernen"
         )
@@ -56,9 +57,15 @@ class MainWindow(product.MainWindow):
             "Nur verwenden, wenn kein Update läuft. Originale PHNIX-Dateien, Firmware, OTA_INFO "
             "und Statistik werden nicht gelöscht."
         )
-        cleanup_row = QHBoxLayout()
-        cleanup_row.addWidget(self.clean_dtu_after_restore)
-        cleanup_row.addStretch()
+        if restore_row is not None:
+            insert_at = restore_row.indexOf(self.original_restore_btn)
+            restore_row.insertWidget(insert_at + 1, self.clean_dtu_after_restore)
+        else:
+            # Same defensive fallback as v0.4.6 if the inherited layout changes.
+            fallback_row = QHBoxLayout()
+            fallback_row.addWidget(self.clean_dtu_after_restore)
+            fallback_row.addStretch()
+            layout.insertLayout(1, fallback_row)
 
         self.full_cleanup_note = QLabel(
             "<b>Normalerweise nicht erforderlich:</b> Nach einem erfolgreichen Firmwareupdate "
@@ -69,18 +76,13 @@ class MainWindow(product.MainWindow):
             "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik bleiben erhalten."
         )
         self.full_cleanup_note.setWordWrap(True)
-
         if restore_parent_layout is not None:
             status_index = restore_parent_layout.indexOf(self.status_text)
             if status_index >= 0:
-                restore_parent_layout.insertLayout(status_index, cleanup_row)
-                restore_parent_layout.insertWidget(status_index + 1, self.full_cleanup_note)
+                restore_parent_layout.insertWidget(status_index, self.full_cleanup_note)
             else:
-                restore_parent_layout.addLayout(cleanup_row)
                 restore_parent_layout.addWidget(self.full_cleanup_note)
         else:
-            # Defensive fallback if the inherited status layout changes later.
-            layout.insertLayout(1, cleanup_row)
             layout.insertWidget(2, self.full_cleanup_note)
 
         # Successful/same-version terminal runs are now archived and cleaned up
