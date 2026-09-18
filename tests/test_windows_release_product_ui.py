@@ -26,6 +26,25 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
         self.assertIn("super()._original_restore()", self.source)
         self.assertNotIn("layout.removeWidget(self.restore_btn)", self.source)
 
+    def test_cleanup_modes_are_explained_as_different_actions(self):
+        self.assertIn(
+            "Danach FoxAir-Updater-Dateien vollständig vom LTE-Modem entfernen",
+            self.source,
+        )
+        self.assertIn("Normalerweise nicht erforderlich:", self.source)
+        self.assertIn(
+            "Sie stellt zuerst den normalen PHNIX-Betrieb kontrolliert wieder her",
+            self.source,
+        )
+        self.assertIn("Automatisches Aufräumen nach Firmwareupdate:", self.source)
+        self.assertIn("Update-Protokolle lokal sichern", self.source)
+        self.assertIn("abgeschlossenes Ergebnis bestätigen", self.source)
+        self.assertIn("gespeicherte Laufdaten entfernen", self.source)
+        self.assertIn(
+            "Der normale PHNIX-Betrieb wird dabei nicht erneut verändert.",
+            self.source,
+        )
+
     def test_success_and_same_version_are_auto_archived_then_cleaned(self):
         self.assertIn(
             'AUTO_FINALIZE_RESULTS = {"success", "same-version"}',
