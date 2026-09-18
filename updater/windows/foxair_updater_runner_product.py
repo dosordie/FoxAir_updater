@@ -561,4 +561,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Direct source starts historically used this lower product layer.  Delegate
+    # them to the final release runtime so source tests cannot silently miss
+    # release-only UI/diagnostics/ACK/cleanup behavior.
+    import foxair_updater_release_runtime as release_runtime
+
+    raise SystemExit(release_runtime.main())
