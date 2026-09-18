@@ -4,6 +4,16 @@ import sys
 import time
 from pathlib import Path
 
+
+# Direct source launches (for example from PowerShell after a git pull) add
+# updater/windows to sys.path, but not the repository root required by imports
+# such as updater.common.*.  The packaged PyInstaller application manages its
+# own import paths, so leave frozen/end-user builds completely untouched.
+if not getattr(sys, "frozen", False):
+    _repo_root = Path(__file__).resolve().parents[2]
+    if str(_repo_root) not in sys.path:
+        sys.path.insert(0, str(_repo_root))
+
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
