@@ -15,12 +15,16 @@ Der produktive OTA-Pfad ist:
 
 ```text
 FoxAir_Updater.exe
+bzw. Source: foxair_updater_release_runtime.py
+        ↓
+foxair_updater_release_runtime.py
+(finales Polling / automatische Diagnose)
+        ↓
+foxair_updater_release_product.py
+(Release-UI / Archivierung / ACK / Cleanup)
         ↓
 foxair_updater_runner_product.py
-        ↓
-Windows GUI / Vorprüfung / Statusdarstellung
-        ↓
-private Python Runtime
+(Produkt-GUI / Vorprüfung / Runner)
         ↓
 updater/dtu_ota/cli.py
         ↓
@@ -152,16 +156,31 @@ Der Release-Workflow wird unter GitHub Actions über **Release Windows** manuell
 
 ## Entwicklungsstart
 
-Für einen Quellcode-Start sollte derselbe finale Produkteinstieg verwendet werden wie beim Build:
+Für einen Quellcode-Start muss derselbe **finale Release-Einstieg** verwendet werden wie beim
+PyInstaller-Build:
 
 ```bat
 py -m pip install -r updater\windows\requirements-build.txt
-py updater\windows\foxair_updater_runner_product.py
+py updater\windows\foxair_updater_release_runtime.py
 ```
 
+Für wiederholte Tests nach einem Update des Repositories genügt normalerweise:
+
+```bat
+git pull
+py .\updater\windows\foxair_updater_release_runtime.py
+```
+
+Damit laufen auch im Quellcode-Start die Release-Schichten für automatische Diagnose,
+lokale Archivierung, ACK/Cleanup sowie die optionale DTU-Bereinigung beim
+„Originalzustand wiederherstellen“. `foxair_updater_runner_product.py` ist nur die
+darunterliegende Produkt-/Runner-Schicht und **nicht** der vollständige Release-Einstieg.
+
 Der direkte Start aus dem Repository-Root benötigt kein manuell gesetztes `PYTHONPATH`.
-Der Produkteinstieg ergänzt das Repository-Root nur bei einem nicht eingefrorenen
-Quellcode-Start. Der gepackte PyInstaller-/Endanwender-Build bleibt davon unberührt.
+Die darunterliegende Produkt-Schicht ergänzt das Repository-Root nur bei einem nicht
+eingefrorenen Quellcode-Start. Der gepackte PyInstaller-/Endanwender-Build bleibt davon
+unberührt. Im Source-Modus wird die lokal installierte Python-Laufzeit verwendet; die
+Release-/Cleanup-Logik ist dieselbe wie im gebauten Programm.
 
 ## Weitere Dokumentation
 
