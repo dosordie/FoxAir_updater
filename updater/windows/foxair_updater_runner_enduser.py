@@ -34,6 +34,8 @@ class MainWindow(user_gui.MainWindow):
         self._passive_runner_poll = False
         self._runner_started_epoch: int | None = None
         self._runner_terminal_epoch: int | None = None
+        self._manual_status_direct_attempt = False
+        self._manual_status_reconnect_pending = False
         super().__init__()
         # The DTU itself refreshes OTA_INFO every two seconds. Poll at the same
         # cadence so the Windows fallback display does not lag several seconds
@@ -61,6 +63,38 @@ class MainWindow(user_gui.MainWindow):
         layout.removeWidget(self.ota_reattach_btn)
         layout.insertWidget(max(0, layout.count() - 1), self.ota_reattach_btn)
         return widget
+
+    def _reattach_ota(self):
+        """Read status first; reconnect ADB only after a real transport failure."""
+        if self.busy:
+            return
+        if not self._require_adb():
+            return
+        self._manual_status_direct_attempt = True
+        self._manual_status_reconnect_pending = False
+        self._run_runner("runner-current", "current")
+
+    @staticmethod
+    def _runner_current_transport_error(status: dict | None, output: str) -> bool:
+        error = ""
+        if isinstance(status, dict):
+            error = str(status.get("error") or "")
+        if not error:
+            error = str(output or "")
+        lower = error.lower().strip()
+        if not lower.startswith("adb "):
+            return False
+        return any(
+            marker in lower
+            for marker in (
+                "no devices/emulators found",
+                "device offline",
+                "device not found",
+                "cannot connect",
+                "failed to connect",
+                "connection refused",
+            )
+        )
 
     def _poll_runner_status(self):
         if self.busy or not self._runner_active or not self._runner_run_id:
@@ -672,7 +706,74 @@ class MainWindow(user_gui.MainWindow):
 
     def _done(self, op, code, output):
         passive_poll = op == "runner-status" and self._passive_runner_poll
+
+        # The manual firmware-page status button must not tear down a healthy
+        # Remote-ADB connection just to read runner state. Try the read-only
+        # current command first. Only a genuine ADB transport error enters the
+        # established reconnect -> devices check path, then retries once.
+        if op == "runner-current" and self._manual_status_direct_attempt:
+            self._manual_status_direct_attempt = False
+            status = self._runner_json(output)
+            if code != 0 and self._runner_current_transport_error(status, output):
+                user_gui.runner.legacy.MainWindow._done(
+                    self, "handled-result", code, output
+                )
+                adb = self._require_adb()
+                if adb:
+                    self._manual_status_reconnect_pending = True
+                    self._log(
+                        "[ADB] Statusabfrage nicht erreichbar – Verbindung wird einmal neu aufgebaut."
+                    )
+                    self._run("reconnect", [str(adb), "reconnect"])
+                return
+
+        reconnect_pending = self._manual_status_reconnect_pending
         super()._done(op, code, output)
+
+        if reconnect_pending and op == "reconnect":
+            if code != 0:
+                self._manual_status_reconnect_pending = False
+                user_gui.QMessageBox.warning(
+                    self,
+                    "ADB-Verbindung",
+                    "Die ADB-Verbindung konnte für die Statusabfrage nicht neu aufgebaut werden. "
+                    "Ein laufendes Firmwareupdate auf dem LTE-Modem wird dadurch nicht verändert.",
+                )
+                return
+
+        if reconnect_pending and op == "adb":
+            device = next(
+                (
+                    line
+                    for line in output.splitlines()
+                    if "\tdevice" in line or " device " in line
+                ),
+                "",
+            )
+            if device:
+                self._manual_status_reconnect_pending = False
+                self._log(
+                    "[ADB] Verbindung wieder verfügbar – Update-Status wird erneut gelesen."
+                )
+                self._run_runner("runner-current", "current")
+                return
+
+            # The inherited ADB handler may already have started one additional
+            # reconnect when it observed an explicit "offline" state. Keep the
+            # retry pending until that established reconnect finishes.
+            if self.busy:
+                return
+
+            self._manual_status_reconnect_pending = False
+            user_gui.QMessageBox.warning(
+                self,
+                "ADB-Verbindung",
+                "Nach dem Reconnect ist noch kein ADB-Gerät im Status 'device' erreichbar. "
+                "Der Update-Status wurde deshalb nicht erneut gelesen. "
+                "Ein laufendes Firmwareupdate auf dem LTE-Modem wird dadurch nicht verändert.",
+            )
+            return
+
         if passive_poll:
             self._passive_runner_poll = False
             self._buttons()
