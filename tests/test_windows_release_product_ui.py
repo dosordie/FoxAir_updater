@@ -33,7 +33,11 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
         )
         self.assertIn("Normalerweise nicht erforderlich:", self.source)
         self.assertIn(
-            "Sie stellt zuerst den normalen PHNIX-Betrieb kontrolliert wieder her",
+            "Sie stellt zuerst den normalen PHNIX-Betrieb kontrolliert",
+            self.source,
+        )
+        self.assertIn(
+            "wieder her und entfernt anschließend alle bekannten FoxAir-Updater-Arbeitsdateien.",
             self.source,
         )
         self.assertIn("Automatisches Aufräumen nach Firmwareupdate:", self.source)
