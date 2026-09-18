@@ -11,7 +11,7 @@ jobs:
   python:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.11", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
@@ -60,3 +60,93 @@ jobs:
       - run: sh -n updater/dtu_ota/payload/dtu_ota_supervisor.sh
       - run: sh -n tools/phnix_ota/phnix-ota-sim
       - run: sh -n tools/phnix_ota/phnix-sim-adb
+      - run: bash -n foxair-updater
+
+  macos-cli:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: CLI syntax and basic commands
+        run: |
+          bash -n foxair-updater
+          ./foxair-updater --help >/dev/null
+          ./foxair-updater version
+
+      - name: Exercise macOS path resolution
+        run: |
+          tmp="$(mktemp -d)"
+          printf 'FoxAir macOS CI smoke test\n' > "$tmp/test.bin"
+          ./foxair-updater manifest "$tmp/test.bin" \
+            --software-code 82400644 \
+            --display-version V3.4 \
+            --show > "$tmp/manifest.json"
+          python3 - "$tmp/manifest.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data["firmware_file"] == "test.bin"
+          assert data["software_code"] == "82400644"
+          assert data["display_version"] == "V3.4"
+          assert data["wire_version"] == "0034"
+          PY
+
+      - name: Exercise macOS hashes and adb stdin isolation
+        run: |
+          python_bin="$(command -v python3)"
+          fake_bin="$(mktemp -d)"
+          ln -s "$python_bin" "$fake_bin/python3"
+
+          cat > "$fake_bin/adb" <<'SH'
+          #!/bin/sh
+          if IFS= read -r leaked; then
+              printf 'fake adb unexpectedly received stdin: %s\n' "$leaked" >&2
+              exit 97
+          fi
+
+          case "$1" in
+              shell)
+                  case "$2" in
+                      *"if [ -f '"*)
+                          case "$2" in
+                              *"/cache/phnixIot_device_OTA"*) printf 'PRESENT\n' ;;
+                              *) printf 'ABSENT\n' ;;
+                          esac
+                          ;;
+                      *) exit 0 ;;
+                  esac
+                  ;;
+              pull)
+                  printf 'fake firmware cache\n' > "$3"
+                  ;;
+              *)
+                  exit 0
+                  ;;
+          esac
+          SH
+          chmod +x "$fake_bin/adb"
+
+          export PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          ! command -v md5sum
+          ! command -v sha256sum
+          command -v md5
+          command -v shasum
+
+          rm -rf downloaded_firmware
+          FOX_AIR_ADB="$fake_bin/adb" ./foxair-updater download
+
+          latest="$(find downloaded_firmware -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          test -n "$latest"
+          test -s "$latest/phnixIot_device_OTA"
+          test -s "$latest/MD5SUMS.txt"
+          test -s "$latest/SHA256SUMS.txt"
+
+          expected_md5="$(md5 -q "$latest/phnixIot_device_OTA")"
+          expected_sha256="$(shasum -a 256 "$latest/phnixIot_device_OTA" | awk '{print $1}')"
+          grep -q "$expected_md5" "$latest/MD5SUMS.txt"
+          grep -q "$expected_sha256" "$latest/SHA256SUMS.txt"
