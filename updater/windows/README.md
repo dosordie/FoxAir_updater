@@ -173,8 +173,9 @@ py .\updater\windows\foxair_updater_release_runtime.py
 
 Damit laufen auch im Quellcode-Start die Release-Schichten für automatische Diagnose,
 lokale Archivierung, ACK/Cleanup sowie die optionale DTU-Bereinigung beim
-„Originalzustand wiederherstellen“. `foxair_updater_runner_product.py` ist nur die
-darunterliegende Produkt-/Runner-Schicht und **nicht** der vollständige Release-Einstieg.
+„Originalzustand wiederherstellen“. `foxair_updater_runner_product.py` bleibt die
+darunterliegende Produkt-/Runner-Schicht; ein direkter Quellcode-Start dieser Datei
+delegiert aus Kompatibilitätsgründen automatisch an den finalen Release-Einstieg.
 
 Der direkte Start aus dem Repository-Root benötigt kein manuell gesetztes `PYTHONPATH`.
 Die darunterliegende Produkt-Schicht ergänzt das Repository-Root nur bei einem nicht
