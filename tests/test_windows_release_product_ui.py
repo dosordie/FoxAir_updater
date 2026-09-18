@@ -18,17 +18,20 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
             "restore_parent_layout = restore_parent.layout()",
             self.source,
         )
-        self.assertIn("cleanup_row = QHBoxLayout()", self.source)
         self.assertIn(
-            "cleanup_row.addWidget(self.clean_dtu_after_restore)",
+            "restore_row = self._layout_containing(",
             self.source,
         )
         self.assertIn(
-            "restore_parent_layout.insertLayout(status_index, cleanup_row)",
+            "restore_row.indexOf(self.original_restore_btn)",
             self.source,
         )
         self.assertIn(
-            "restore_parent_layout.insertWidget(status_index + 1, self.full_cleanup_note)",
+            "restore_row.insertWidget(insert_at + 1, self.clean_dtu_after_restore)",
+            self.source,
+        )
+        self.assertIn(
+            "restore_parent_layout.insertWidget(status_index, self.full_cleanup_note)",
             self.source,
         )
         self.assertIn("def _original_restore(self):", self.source)
