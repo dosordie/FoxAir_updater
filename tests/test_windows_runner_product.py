@@ -16,7 +16,8 @@ class WindowsRunnerProductTests(unittest.TestCase):
 
     def test_windows_uses_production_runner_path(self):
         self.assertIn('base.backend_dir() / "updater/dtu_ota/cli.py"', self.product)
-        self.assertIn("updater\\windows\\foxair_updater_release_product.py", self.build)
+        self.assertIn("updater\\windows\\foxair_updater_release_runtime.py", self.build)
+        self.assertIn("import foxair_updater_release_product as release", self.runtime)
         self.assertIn("import foxair_updater_runner_product as product", self.release)
         self.assertIn('root / "updater/dtu_ota"', self.prepare)
         self.assertNotIn("backend\\tools\\dtu_ota_runner", self.build)
