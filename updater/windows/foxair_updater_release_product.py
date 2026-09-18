@@ -52,12 +52,12 @@ class MainWindow(product.MainWindow):
             restore_parent_layout, self.original_restore_btn
         )
         self.clean_dtu_after_restore = QCheckBox(
-            "Danach alle FoxAir-Updater-Dateien vom LTE-Modem entfernen"
+            "Danach FoxAir-Updater-Dateien vollständig vom LTE-Modem entfernen"
         )
         self.clean_dtu_after_restore.setToolTip(
-            "Nur verwenden, wenn kein Update läuft. Entfernt ausschließlich Arbeitsdateien, "
-            "Hooks, temporäre Statusdateien und Runner-Verzeichnisse des FoxAir Updaters. "
-            "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik werden nicht gelöscht."
+            "Umfassende DTU-Bereinigung für Wiederherstellung, Fehlersuche oder alte Updater-Reste. "
+            "Nur verwenden, wenn kein Update läuft. Originale PHNIX-Dateien, Firmware, OTA_INFO "
+            "und Statistik werden nicht gelöscht."
         )
         if restore_row is not None:
             insert_at = restore_row.indexOf(self.original_restore_btn)
@@ -69,6 +69,24 @@ class MainWindow(product.MainWindow):
             fallback_row.addStretch()
             layout.insertLayout(1, fallback_row)
 
+        self.full_cleanup_note = QLabel(
+            "<b>Normalerweise nicht erforderlich:</b> Nach einem erfolgreichen Firmwareupdate "
+            "wird nur der zugehörige Lauf automatisch archiviert und aufgeräumt. "
+            "Diese Option ist für Wiederherstellung, Fehlersuche oder eine vollständige "
+            "DTU-Bereinigung gedacht. Sie stellt zuerst den normalen PHNIX-Betrieb kontrolliert "
+            "wieder her und entfernt anschließend alle bekannten FoxAir-Updater-Arbeitsdateien. "
+            "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik bleiben erhalten."
+        )
+        self.full_cleanup_note.setWordWrap(True)
+        if restore_parent_layout is not None:
+            status_index = restore_parent_layout.indexOf(self.status_text)
+            if status_index >= 0:
+                restore_parent_layout.insertWidget(status_index, self.full_cleanup_note)
+            else:
+                restore_parent_layout.addWidget(self.full_cleanup_note)
+        else:
+            layout.insertWidget(1, self.full_cleanup_note)
+
         # Successful/same-version terminal runs are now archived and cleaned up
         # automatically.  Keep the old lifecycle controls instantiated for
         # compatibility, but hide the manual two-step flow from the normal UI.
@@ -78,10 +96,13 @@ class MainWindow(product.MainWindow):
             text = label.text()
             if "<b>Normaler Ablauf:</b>" in text and "Ergebnis bestätigen" in text:
                 label.setText(
-                    "<b>Normaler Ablauf:</b> Vorprüfung → Firmwareupdate starten → LTE-Modem "
-                    "arbeitet selbstständig weiter → Endergebnis wird gespeichert → bei Erfolg "
-                    "oder gleicher Firmware werden die DTU-Protokolle automatisch lokal gesichert "
-                    "und die gespeicherten Updatedaten anschließend vom LTE-Modem entfernt."
+                    "<b>Automatisches Aufräumen nach Firmwareupdate:</b><br>"
+                    "✓ Update-Protokolle lokal sichern<br>"
+                    "✓ abgeschlossenes Ergebnis bestätigen<br>"
+                    "✓ gespeicherte Laufdaten entfernen<br><br>"
+                    "<b>Hinweis:</b> Der normale PHNIX-Betrieb wird dabei nicht erneut verändert. "
+                    "Das ist der Standardfall nach einem erfolgreichen Firmwareupdate oder bei "
+                    "gleicher Firmware."
                 )
                 break
         return widget
