@@ -35,6 +35,16 @@ class WindowsRunnerProductTests(unittest.TestCase):
             self.windows_readme,
         )
 
+    def test_direct_runner_product_start_delegates_to_final_release_runtime(self):
+        self.assertIn(
+            "import foxair_updater_release_runtime as release_runtime",
+            self.product,
+        )
+        self.assertIn(
+            "raise SystemExit(release_runtime.main())",
+            self.product,
+        )
+
     def test_relocated_cli_imports_production_package(self):
         self.assertIn("from updater.dtu_ota.client import DtuOtaClient", self.cli)
         self.assertIn("from updater.dtu_ota.package import PackageError", self.cli)
