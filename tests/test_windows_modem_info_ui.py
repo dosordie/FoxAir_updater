@@ -23,6 +23,9 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         cls.release_ui = Path(
             "updater/windows/foxair_updater_release_product.py"
         ).read_text(encoding="utf-8")
+        cls.runtime_ui = Path(
+            "updater/windows/foxair_updater_release_runtime.py"
+        ).read_text(encoding="utf-8")
         cls.backend_prep = Path(
             "updater/windows/prepare_windows_backend.py"
         ).read_text(encoding="utf-8")
@@ -51,8 +54,9 @@ class WindowsModemInfoUiTests(unittest.TestCase):
 
     def test_windows_build_uses_product_entrypoint_and_maintenance_backend(self):
         self.assertIn(
-            "updater\\windows\\foxair_updater_release_product.py", self.build
+            "updater\\windows\\foxair_updater_release_runtime.py", self.build
         )
+        self.assertIn("import foxair_updater_release_product as release", self.runtime_ui)
         self.assertIn("import foxair_updater_runner_product as product", self.release_ui)
         self.assertIn('root / "updater/common"', self.backend_prep)
         self.assertIn('backend / "updater/common" / source.name', self.backend_prep)
