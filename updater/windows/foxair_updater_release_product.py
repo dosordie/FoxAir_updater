@@ -85,11 +85,20 @@ class MainWindow(product.MainWindow):
         else:
             layout.insertWidget(2, self.full_cleanup_note)
 
-        # Successful/same-version terminal runs are now archived and cleaned up
-        # automatically.  Keep the old lifecycle controls instantiated for
-        # compatibility, but hide the manual two-step flow from the normal UI.
-        self.runner_ack_btn.setVisible(False)
-        self.runner_cleanup_btn.setVisible(False)
+        # Keep the manual lifecycle controls visible as a deliberate fallback.
+        # Automatic archive -> ACK -> cleanup remains the normal path; the
+        # buttons stay disabled while that automatic finalization is active.
+        self.runner_ack_btn.setVisible(True)
+        self.runner_cleanup_btn.setVisible(True)
+        self.runner_ack_btn.setToolTip(
+            "Manueller Fallback: bestätigt ein gespeichertes terminales Endergebnis. "
+            "Während der automatischen Abschlussverarbeitung ist der Button deaktiviert."
+        )
+        self.runner_cleanup_btn.setToolTip(
+            "Manueller Fallback: löscht nach der Ergebnisbestätigung die gespeicherten "
+            "Daten dieses Firmwareupdates. Während der automatischen Abschlussverarbeitung "
+            "ist der Button deaktiviert."
+        )
         for label in widget.findChildren(QLabel):
             text = label.text()
             if "<b>Normaler Ablauf:</b>" in text and "Ergebnis bestätigen" in text:
@@ -100,7 +109,10 @@ class MainWindow(product.MainWindow):
                     "✓ gespeicherte Laufdaten entfernen<br><br>"
                     "<b>Hinweis:</b> Der normale PHNIX-Betrieb wird dabei nicht erneut verändert. "
                     "Das ist der Standardfall nach einem erfolgreichen Firmwareupdate oder bei "
-                    "gleicher Firmware."
+                    "gleicher Firmware.<br><br>"
+                    "<b>Manueller Fallback:</b> Die beiden Buttons darüber bleiben sichtbar. "
+                    "Sie können verwendet werden, wenn die automatische Abschlussverarbeitung "
+                    "nicht durchgeführt werden konnte."
                 )
                 break
         return widget
@@ -220,12 +232,19 @@ class MainWindow(product.MainWindow):
             checkbox.setEnabled(
                 not self.busy and self._adb_ready() and not self._runner_active
             )
+        auto_finalize_active = bool(self._auto_finalize_run_id)
         if hasattr(self, "runner_ack_btn"):
-            self.runner_ack_btn.setVisible(False)
+            self.runner_ack_btn.setVisible(True)
+            if auto_finalize_active:
+                self.runner_ack_btn.setEnabled(False)
         if hasattr(self, "runner_cleanup_btn"):
-            self.runner_cleanup_btn.setVisible(self._auto_cleanup_retry_visible)
+            self.runner_cleanup_btn.setVisible(True)
             if self._auto_cleanup_retry_visible:
                 self.runner_cleanup_btn.setText("Gespeicherte Updatedaten erneut löschen")
+            elif self.runner_cleanup_btn.text() != "Diagnosedaten werden beibehalten":
+                self.runner_cleanup_btn.setText("Gespeicherte Updatedaten löschen")
+            if auto_finalize_active:
+                self.runner_cleanup_btn.setEnabled(False)
 
     def _diagnostic_log_directory(self) -> Path:
         """Use the same directory in which automatic update logs are stored."""
@@ -396,6 +415,7 @@ class MainWindow(product.MainWindow):
             self._auto_finalize_started.discard(run_id)
         self._auto_finalize_run_id = None
         self._auto_finalize_archive = None
+        self._buttons()
         QMessageBox.warning(self, title, message)
 
     def _done(self, op, code, output):
