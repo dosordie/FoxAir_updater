@@ -159,6 +159,10 @@ py -m pip install -r updater\windows\requirements-build.txt
 py updater\windows\foxair_updater_runner_product.py
 ```
 
+Der direkte Start aus dem Repository-Root benötigt kein manuell gesetztes `PYTHONPATH`.
+Der Produkteinstieg ergänzt das Repository-Root nur bei einem nicht eingefrorenen
+Quellcode-Start. Der gepackte PyInstaller-/Endanwender-Build bleibt davon unberührt.
+
 ## Weitere Dokumentation
 
 - [`../../docs/HowTo/firmware_update_windows.md`](../../docs/HowTo/firmware_update_windows.md)
