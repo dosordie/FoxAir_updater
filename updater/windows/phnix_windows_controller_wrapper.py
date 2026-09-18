@@ -152,6 +152,7 @@ def adb_command(args: list[str]) -> list[str]:
 def run_checked(command: list[str], *, binary: bool = False) -> str | bytes:
     completed = subprocess.run(
         command,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=not binary,
@@ -220,6 +221,7 @@ def backup_update_cache(base: list[str]) -> None:
     if remote_file_exists(base, REMOTE_CACHE):
         completed = subprocess.run(
             [*base, "pull", REMOTE_CACHE, str(paths["backup"])],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
