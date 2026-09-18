@@ -12,6 +12,37 @@ CACHE_BACKUP_DIR="$STATE_DIR/original-cache"
 CACHE_PENDING="$CACHE_BACKUP_DIR/cache.pending"
 REMOTE_CACHE="/cache/phnixIot_device_OTA"
 
+# Portable canonical-path helper: GNU readlink -f exists on Linux, but BSD
+# readlink on macOS lacks -f. Prefer realpath (brew coreutils or /bin/realpath),
+# fall back to a tiny python3 resolver so ./foxair-updater works on macOS.
+abspath() {
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$1"
+    elif readlink -f "$1" 2>/dev/null; then
+        :
+    else
+        python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
+    fi
+}
+
+# Portable checksums: GNU md5sum/sha256sum on Linux (or brew coreutils on macOS),
+# fall back to BSD md5 -r / shasum -a 256 shipped with macOS.
+hash_md5() {
+    if command -v md5sum >/dev/null 2>&1; then
+        md5sum "$1" | awk '{print $1}'
+    else
+        md5 -r "$1" | awk '{print $1}'
+    fi
+}
+
+hash_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
 usage() {
     cat <<'TXT'
 FoxAir Updater
@@ -77,13 +108,13 @@ warn() {
 }
 
 require_adb() {
-    command -v "$ADB_BIN" >/dev/null 2>&1 || die "ADB wurde nicht gefunden: $ADB_BIN"
+    command -v "$ADB_BIN" >/dev/null 2>&1 || die "ADB wurde nicht gefunden: $ADB_BIN (Linux: android-tools-adb installieren; macOS: brew install android-platform-tools)"
 }
 
 remote_file_exists() {
     local remote="$1"
     local state
-    state="$("$ADB_BIN" shell "if [ -f '$remote' ]; then echo PRESENT; else echo ABSENT; fi" 2>/dev/null | tr -d '\r')" \
+    state="$("$ADB_BIN" shell "if [ -f '$remote' ]; then echo PRESENT; else echo ABSENT; fi" </dev/null 2>/dev/null | tr -d '\r')" \
         || die "ADB-Verbindung zum LTE-Modem ist beim Pruefen von $remote fehlgeschlagen"
     case "$state" in
         PRESENT) return 0 ;;
@@ -108,8 +139,8 @@ backup_update_cache() {
     if remote_file_exists "$REMOTE_CACHE"; then
         "$ADB_BIN" pull "$REMOTE_CACHE" "$CACHE_BACKUP_DIR/phnixIot_device_OTA" >/dev/null \
             || die "Vorhandene Cache-Firmware konnte vor dem OTA nicht gesichert werden"
-        md5sum "$CACHE_BACKUP_DIR/phnixIot_device_OTA" | awk '{print $1}' > "$CACHE_BACKUP_DIR/MD5"
-        sha256sum "$CACHE_BACKUP_DIR/phnixIot_device_OTA" | awk '{print $1}' > "$CACHE_BACKUP_DIR/SHA256"
+        hash_md5 "$CACHE_BACKUP_DIR/phnixIot_device_OTA" > "$CACHE_BACKUP_DIR/MD5"
+        hash_sha256 "$CACHE_BACKUP_DIR/phnixIot_device_OTA" > "$CACHE_BACKUP_DIR/SHA256"
         touch "$CACHE_BACKUP_DIR/cache.present"
         printf '[OK] Vorhandene LTE-Cache-Firmware vor dem OTA gesichert\n'
     else
@@ -189,7 +220,7 @@ download_device_files() {
     while IFS='|' read -r remote name; do
         [[ -n "$remote" ]] || continue
         if remote_file_exists "$remote"; then
-            "$ADB_BIN" pull "$remote" "$dest/$name" >/dev/null \
+            "$ADB_BIN" pull "$remote" "$dest/$name" </dev/null >/dev/null \
                 || die "Datei konnte nicht gesichert werden: $remote"
             printf '[OK] %s\n' "$remote"
             pulled=$((pulled + 1))
@@ -211,8 +242,16 @@ EOF
 
     (
         cd "$dest"
-        md5sum phnixIot* 2>/dev/null > MD5SUMS.txt || true
-        sha256sum phnixIot* 2>/dev/null > SHA256SUMS.txt || true
+        if command -v md5sum >/dev/null 2>&1; then
+            md5sum phnixIot* 2>/dev/null > MD5SUMS.txt || true
+        else
+            md5 -r phnixIot* 2>/dev/null > MD5SUMS.txt || true
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum phnixIot* 2>/dev/null > SHA256SUMS.txt || true
+        else
+            shasum -a 256 phnixIot* 2>/dev/null > SHA256SUMS.txt || true
+        fi
     )
 
     cat > "$dest/README.txt" <<EOF
@@ -238,11 +277,11 @@ resolve_manifest() {
     [[ -n "$input" ]] || die "Manifest fehlt. Beispiel: ./foxair-updater check FW3.4.json"
 
     if [[ -f "$input" ]]; then
-        readlink -f "$input"
+        abspath "$input"
         return
     fi
     if [[ -f "$FIRMWARE_DIR/$input" ]]; then
-        readlink -f "$FIRMWARE_DIR/$input"
+        abspath "$FIRMWARE_DIR/$input"
         return
     fi
     die "Manifest nicht gefunden: $input (auch nicht unter $FIRMWARE_DIR/)"
@@ -253,11 +292,11 @@ resolve_firmware() {
     [[ -n "$input" ]] || die "Firmware fehlt. Beispiel: ./foxair-updater manifest FW3.4.bin ..."
 
     if [[ -f "$input" ]]; then
-        readlink -f "$input"
+        abspath "$input"
         return
     fi
     if [[ -f "$FIRMWARE_DIR/$input" ]]; then
-        readlink -f "$FIRMWARE_DIR/$input"
+        abspath "$FIRMWARE_DIR/$input"
         return
     fi
     die "Firmware nicht gefunden: $input (auch nicht unter $FIRMWARE_DIR/)"
@@ -283,11 +322,11 @@ PY
 )" || die "Firmware-Dateiname konnte nicht aus dem Manifest gelesen werden"
 
     if [[ -f "$(dirname "$manifest")/$firmware_name" ]]; then
-        readlink -f "$(dirname "$manifest")/$firmware_name"
+        abspath "$(dirname "$manifest")/$firmware_name"
         return
     fi
     if [[ -f "$FIRMWARE_DIR/$firmware_name" ]]; then
-        readlink -f "$FIRMWARE_DIR/$firmware_name"
+        abspath "$FIRMWARE_DIR/$firmware_name"
         return
     fi
     die "Zum Manifest gehoerende Firmware nicht gefunden: $firmware_name"
