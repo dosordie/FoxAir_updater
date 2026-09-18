@@ -79,9 +79,13 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
         )
         self.assertIn("archive.is_file()", self.source)
 
-    def test_manual_ack_cleanup_controls_are_hidden_in_normal_flow(self):
-        self.assertIn("self.runner_ack_btn.setVisible(False)", self.source)
-        self.assertIn("self.runner_cleanup_btn.setVisible(False)", self.source)
+    def test_manual_ack_cleanup_controls_remain_visible_as_fallback(self):
+        self.assertIn("self.runner_ack_btn.setVisible(True)", self.source)
+        self.assertIn("self.runner_cleanup_btn.setVisible(True)", self.source)
+        self.assertIn("Manueller Fallback:", self.source)
+        self.assertIn("auto_finalize_active = bool(self._auto_finalize_run_id)", self.source)
+        self.assertIn("self.runner_ack_btn.setEnabled(False)", self.source)
+        self.assertIn("self.runner_cleanup_btn.setEnabled(False)", self.source)
         self.assertIn("self._auto_cleanup_retry_visible", self.source)
         self.assertIn("Gespeicherte Updatedaten erneut löschen", self.source)
 
