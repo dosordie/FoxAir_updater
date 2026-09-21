@@ -257,20 +257,32 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertEqual(frame[-2:], crc16_modbus(frame[:-2]))
 
     def test_qemu_watchdog_restarts_only_after_external_service_death(self):
-        with mock.patch.object(
-            qemu_work_lab_backend, "_schedule_idle_service_restart",
-        ) as restart:
+        with (
+            mock.patch.object(qemu_work_lab_backend, "_ota_restart_blocked", return_value=False),
+            mock.patch.object(qemu_work_lab_backend, "_schedule_idle_service_restart") as restart,
+        ):
             observed = qemu_work_lab_backend._service_watchdog_transition((), (4100,))
             self.assertEqual(observed, (4100,))
             observed = qemu_work_lab_backend._service_watchdog_transition(observed, ())
             self.assertEqual(observed, ())
             restart.assert_called_once_with((4100,))
 
+        # During a real OTA the production helloworld watchdogs are paused.
+        # Simulator infrastructure must therefore not hide a phnixIot4G crash.
+        with (
+            mock.patch.object(qemu_work_lab_backend, "_ota_restart_blocked", return_value=True),
+            mock.patch.object(qemu_work_lab_backend, "_schedule_idle_service_restart") as restart,
+        ):
+            observed = qemu_work_lab_backend._service_watchdog_transition((4150,), ())
+            self.assertEqual(observed, ())
+            restart.assert_not_called()
+
         qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.set()
         try:
-            with mock.patch.object(
-                qemu_work_lab_backend, "_schedule_idle_service_restart",
-            ) as restart:
+            with (
+                mock.patch.object(qemu_work_lab_backend, "_ota_restart_blocked", return_value=False),
+                mock.patch.object(qemu_work_lab_backend, "_schedule_idle_service_restart") as restart,
+            ):
                 observed = qemu_work_lab_backend._service_watchdog_transition((4200,), ())
                 self.assertEqual(observed, ())
                 restart.assert_not_called()
