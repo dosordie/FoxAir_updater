@@ -345,6 +345,34 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertIn("break *0x1ba04", shared_gdb)
         self.assertIn("set \\$r0 = 11", shared_gdb)
 
+    def test_windows_maps_productive_runner_phases_to_friendly_text(self):
+        gui = Path("updater/windows/foxair_updater_runner_gui.py").read_text(
+            encoding="utf-8"
+        )
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        for phase in (
+            "service-restart-wait",
+            "service-restart-verified",
+            "service-ready-wait",
+            "service-ready",
+            "post-restart-preflight",
+            "failure-report",
+            "precondition-rejected",
+            "parser-rejected",
+            "c36e-rejected",
+            "debugger-ended-before-terminal",
+            "debugger-unexpected-stop",
+            "runner-lost",
+            "recovery-required",
+            "same-version-restore",
+            "backup",
+        ):
+            self.assertIn(f'"{phase}":', gui)
+        self.assertIn('"service-ready-wait": (', enduser)
+        self.assertIn('"runner-lost": (', enduser)
+
     def test_runner_shell_payloads_parse_with_posix_sh(self):
         for path in (
             Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
