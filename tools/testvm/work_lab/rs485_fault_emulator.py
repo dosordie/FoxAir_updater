@@ -69,6 +69,34 @@ def board_software_info_frame(board_version: str) -> bytes:
     return frame_with_crc(b"\x63\x10\xc5\x44\x00\x0d\x1a" + payload)
 
 
+def completion_replay_ack(
+    *, ssid: int, total: int, block: int, block_size: int,
+    total_blocks: int, payload: bytes, firmware: bytes,
+) -> tuple[int, bytes]:
+    """Validate an already completed C5A8 block and repeat its C371 ACK."""
+    if (ssid, total, block_size) != (0x63, total_blocks, 168):
+        raise RuntimeError(
+            f"bad completion C5A8 header: ssid={ssid} total={total} "
+            f"block={block} size={block_size}"
+        )
+    if block < 1 or block > total_blocks:
+        raise RuntimeError(
+            f"completion C5A8 block {block} outside 1..{total_blocks}"
+        )
+    start = (block - 1) * block_size
+    expected = firmware[start:start + block_size]
+    expected_padded = expected + b"\xff" * (block_size - len(expected))
+    if payload != expected_padded:
+        raise RuntimeError(f"firmware mismatch in completion replay block {block}")
+    ack_b = 2 if block == total_blocks else 1
+    ack = frame_with_crc(
+        b"\x63\x10\xc3\x71\x00\x04\x08\x00\x63\x00\x01"
+        + ack_b.to_bytes(2, "big")
+        + block.to_bytes(2, "big")
+    )
+    return ack_b, ack
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--peer", required=True)
@@ -454,17 +482,31 @@ def main():
                     ssid = int.from_bytes(frame[7:9], "big")
                     total = int.from_bytes(frame[9:11], "big")
                     block = int.from_bytes(frame[11:13], "big")
-                    if completion_state in {"wait-status3-ack", "wait-status5-ack"} and block == total_blocks:
-                        retry_ack = frame_with_crc(
-                            b"\x63\x10\xc3\x71\x00\x04\x08\x00\x63\x00\x01\x00\x02"
-                            + block.to_bytes(2, "big")
+                    if completion_state in {"wait-status3-ack", "wait-status5-ack"}:
+                        # A restarted phnixIot4G may reload its last durable
+                        # 64-KiB OTA_INFO checkpoint after the board has
+                        # already accepted the final block.  A physical board
+                        # remains responsive here: it validates and ACKs the
+                        # replayed C5A8 range without appending it a second
+                        # time.  Previously the lab only accepted a replay of
+                        # the final block, so a rollback to 0x40000 killed the
+                        # board emulator at the completion boundary and left
+                        # the runner looking permanently stuck at 99 percent.
+                        replay_payload = frame[13:13 + block_size]
+                        retry_ack_b, retry_ack = completion_replay_ack(
+                            ssid=ssid, total=total, block=block,
+                            block_size=block_size, total_blocks=total_blocks,
+                            payload=replay_payload, firmware=expected_firmware,
                         )
                         os.write(fd, retry_ack)
                         to_app.write(retry_ack)
                         transcript.write(
-                            f"{time.time():.6f} BOARD -> DTU c371-ack retry "
-                            f"block={block}/{total} ackB=2\n"
+                            f"{time.time():.6f} BOARD -> DTU c371-ack completion-replay "
+                            f"block={block}/{total} ackB={retry_ack_b} "
+                            f"offset_unchanged={(next_block - 1) * 168}\n"
                         )
+                        if block != total_blocks:
+                            continue
                         retry_status = (
                             C36E_STATUS_3 if completion_state == "wait-status3-ack"
                             else C36E_STATUS_5
