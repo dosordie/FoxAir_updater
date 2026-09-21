@@ -131,6 +131,13 @@ class MainWindow(product.MainWindow):
         toolbar = self._layout_containing(root_layout, clear_button)
         if toolbar is None or clear_button is None:
             return
+        self.update_debug_monitor_btn = QPushButton("LTE DTU Debug öffnen")
+        self.update_debug_monitor_btn.setToolTip(
+            "Öffnet denselben read-only PHNIX-Debugmonitor wie auf der Seite "
+            "„Modem Info / Diagnose“."
+        )
+        self.update_debug_monitor_btn.clicked.connect(self._open_debug_monitor)
+
         self.diagnostics_button = QPushButton("Diagnosepaket speichern…")
         self.diagnostics_button.setToolTip(
             "Speichert den sichtbaren GUI-Log, die Textdiagnose aller DTU-OTA-Versuche "
@@ -138,7 +145,9 @@ class MainWindow(product.MainWindow):
             "Firmware und Statistik-Binärdaten werden nicht eingebunden."
         )
         self.diagnostics_button.clicked.connect(self._save_diagnostic_bundle)
-        toolbar.insertWidget(max(0, toolbar.indexOf(clear_button)), self.diagnostics_button)
+        insert_at = max(0, toolbar.indexOf(clear_button))
+        toolbar.insertWidget(insert_at, self.update_debug_monitor_btn)
+        toolbar.insertWidget(insert_at + 1, self.diagnostics_button)
 
     @staticmethod
     def _diagnostics_core_path() -> Path:
