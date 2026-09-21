@@ -570,6 +570,7 @@ recover_after_hook_loss() {
 
         terminal=$(hook_bool terminal)
         if test "$terminal" = true; then
+            RECOVERY=completed
             log_event "recovery hook reached terminal OTA state before another offset increment"
             return 0
         fi
@@ -770,7 +771,7 @@ run_action() {
                 fi
                 RECOVERY=required
                 log_event "automatic recovery failed: $RECOVERY_ERROR"
-                guarded_result recovery-required recovery-required "$hook_rc" hook_monitor_lost "$RECOVERY_ERROR Original service state, HTTP and lock remain untouched."
+                guarded_result recovery-required recovery-required 95 hook_monitor_lost "$RECOVERY_ERROR Original service state, HTTP and lock remain untouched."
             fi
             if restore_original_confirmed "$RUN_DIR/recovery-status.json"; then
                 RECOVERY=completed STATE_RESTORED=true
