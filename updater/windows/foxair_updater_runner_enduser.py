@@ -349,6 +349,20 @@ class MainWindow(user_gui.MainWindow):
         result_type = str(status.get("result_type") or "")
         transfer_started = status.get("transfer_started") is True
         authoritative = status.get("original_service_authoritative") is True
+        recovery = str(status.get("recovery") or "")
+        recovery_attempts = int(status.get("recovery_attempts") or 0)
+
+        if recovery_attempts > 0:
+            if recovery == "completed":
+                self._set_step(
+                    "runner-recovery-resume", "ok",
+                    "Firmwareübertragung wurde nach einem Dienstausfall automatisch fortgesetzt.",
+                )
+            elif recovery == "attempting":
+                self._set_step(
+                    "runner-recovery-resume", "warn",
+                    "Automatische Wiederaufnahme der laufenden Firmwareübertragung ist aktiv.",
+                )
 
         # Replace the technical protocol labels created by the lower runner
         # layer with end-user wording. Reusing the same flow keys updates the
