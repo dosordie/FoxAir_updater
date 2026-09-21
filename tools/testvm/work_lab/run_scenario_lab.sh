@@ -101,11 +101,11 @@ if [[ -n "${REUSE_NETNS_PID:-}" ]]; then
   # The productive recovery supervisor still owns the former QEMU network
   # namespace.  Reuse only that namespace so its resume hook can reach the new
   # 127.0.0.1:12345 endpoint; retain a fresh mount namespace for lab binds.
-  lab_namespace=(unshare --mount --fork nsenter -t "$REUSE_NETNS_PID" -n --)
+  set -- unshare --mount --fork nsenter -t "$REUSE_NETNS_PID" -n -- bash -c
 else
-  lab_namespace=(unshare --net --mount --fork)
+  set -- unshare --net --mount --fork bash -c
 fi
-"${lab_namespace[@]}" bash -c '
+"$@" '
   set -Eeuo pipefail
   rootfs="$1"; tools="$2"; run_dir="$3"; run_secs="$4"; tls_dir="$5"; mqtt_host="$6"; v33_fixture="$7"
   cleanup() {
