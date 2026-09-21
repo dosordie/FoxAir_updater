@@ -500,6 +500,14 @@ recover_after_hook_loss() {
     RECOVERY_ERROR=
     refresh_progress
 
+    if ! test -r /data/phnixIot_device_OTA_INFO || test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" != 220; then
+        RECOVERY_ERROR="Persistent OTA_INFO is unavailable or has the wrong size."
+        return 1
+    fi
+    if ! test -r /cache/phnixIot_device_OTA; then
+        RECOVERY_ERROR="The existing PHNIX cache firmware is missing; automatic resume will not recreate it."
+        return 1
+    fi
     if test "$LENGTH" -le 0 || test "$OFFSET" -ge "$LENGTH"; then
         RECOVERY_ERROR="No partial OTA transfer is available for automatic resume."
         return 1
