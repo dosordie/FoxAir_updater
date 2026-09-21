@@ -391,6 +391,27 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertIn("roughly 15 minutes", supervisor)
         self.assertIn("safety timeout is 20 minutes", supervisor)
 
+    def test_windows_completes_transient_flow_warnings_after_next_step(self):
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'if phase not in {"hook-starting", "attaching"}:',
+            enduser,
+        )
+        self.assertIn(
+            '"Update-Überwachung auf dem LTE-Modem wurde gestartet."',
+            enduser,
+        )
+        self.assertIn(
+            '"Sicherer Start des Firmwareupdates wurde erreicht."',
+            enduser,
+        )
+        self.assertIn(
+            'current = self._flow_steps.get("runner-yield")',
+            enduser,
+        )
+
     def test_runner_shell_payloads_parse_with_posix_sh(self):
         for path in (
             Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
