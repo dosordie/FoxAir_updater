@@ -17,8 +17,9 @@ printf \"PHNIX yield pc=0x%x\\n\", $pc
 """
         patched, changed = patch_script(source)
         self.assertTrue(changed)
-        self.assertIn("hbreak *0x1fe40", patched)
+        self.assertIn("thbreak *0x1fe40", patched)
         self.assertIn("hbreak *0x1ba04", patched)
+        self.assertNotIn("disable 1", patched)
         self.assertIn("break *0x1cea0", patched)
         self.assertNotIn("file /data/phnixIot4G", patched)
 

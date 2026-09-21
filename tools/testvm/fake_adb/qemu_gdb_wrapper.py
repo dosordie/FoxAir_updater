@@ -17,8 +17,13 @@ def patch_script(text: str) -> tuple[str, bool]:
         or "PHNIX yield pc=" not in text
     ):
         return text, False
-    patched = text.replace("break *0x1fe40", "hbreak *0x1fe40", 1)
+    # QEMU's remote stub becomes unstable when GDB disables the currently hit
+    # persistent hardware breakpoint from inside its own command list.  Make
+    # the yield stop a one-shot hardware breakpoint instead; GDB removes it as
+    # part of the stop event before the parser hand-off continues.
+    patched = text.replace("break *0x1fe40", "thbreak *0x1fe40", 1)
     patched = patched.replace("break *0x1ba04", "hbreak *0x1ba04", 1)
+    patched = patched.replace("  disable 1\n  set $return_pc = $pc", "  set $return_pc = $pc", 1)
     # The proven Work-QEMU script deliberately operates on absolute
     # addresses without loading the ARM ELF into host GDB.  Loading it is not
     # required for this hook and makes GDB 16.3 internally crash while qemu
