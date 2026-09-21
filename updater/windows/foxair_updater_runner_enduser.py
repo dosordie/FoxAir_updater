@@ -156,6 +156,12 @@ class MainWindow(user_gui.MainWindow):
     def _reset_flow(self, title: str, *, transfer_expected: bool = False):
         self._runner_started_epoch = None
         self._runner_terminal_epoch = None
+        self._recovery_deadline_at = 0
+        self._recovery_wait_active = False
+        if hasattr(self, "_recovery_countdown_timer"):
+            self._recovery_countdown_timer.stop()
+        if hasattr(self, "recovery_wait_label"):
+            self.recovery_wait_label.hide()
         return super()._reset_flow(title, transfer_expected=transfer_expected)
 
     def _update_ota_elapsed(self) -> None:
