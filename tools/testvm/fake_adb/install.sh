@@ -125,6 +125,7 @@ fetch tools/testvm/fake_adb/foxair_debug_stream_server.py "$INSTALL_DIR/foxair_d
 fetch tools/testvm/fake_adb/qemu_lab_adapter.py "$INSTALL_DIR/qemu_lab_adapter.py"
 fetch tools/testvm/fake_adb/qemu_work_lab_backend.py "$INSTALL_DIR/qemu_work_lab_backend.py"
 fetch tools/testvm/fake_adb/qemu_permissive_backend.py "$INSTALL_DIR/qemu_permissive_backend.py"
+fetch tools/testvm/fake_adb/qemu_gdb_wrapper.py "$INSTALL_DIR/qemu_gdb_wrapper.py"
 fetch tools/testvm/fake_adb/gdb_warm_detach.gdb "$INSTALL_DIR/gdb_warm_detach.gdb"
 fetch tools/testvm/fake_adb/gdb_original_ota_1fe40.gdb "$INSTALL_DIR/gdb_original_ota_1fe40.gdb"
 fetch tools/testvm/work_lab/run_scenario_lab.sh "$LAB_ROOT/tools/run_scenario_lab.sh"
@@ -150,12 +151,18 @@ rm -f "$INSTALL_DIR/dtu_ota_supervisor.sh" \
     "$INSTALL_DIR/qemu_permissive_backend.py.tmp"
 rm -rf "$INSTALL_DIR/__pycache__"
 
+# Preserve the distro debugger under a simulator-private name.  The
+# production hook continues to address /usr/bin/gdb-multiarch; bubblewrap
+# overlays only that path with the QEMU adapter for an autonomous VM run.
+install -m 0755 /usr/bin/gdb-multiarch "$INSTALL_DIR/gdb-multiarch.real"
+
 python3 -m py_compile \
     "$INSTALL_DIR/foxair_fake_adb_server.py" \
     "$INSTALL_DIR/foxair_debug_stream_server.py" \
     "$INSTALL_DIR/qemu_lab_adapter.py" \
     "$INSTALL_DIR/qemu_work_lab_backend.py" \
     "$INSTALL_DIR/qemu_permissive_backend.py" \
+    "$INSTALL_DIR/qemu_gdb_wrapper.py" \
     "$INSTALL_DIR/phnix_ota_simulator.py" \
     "$LAB_ROOT/tools/mqtt_ready_bridge.py"
 sh -n "$LAB_ROOT/tools/run_scenario_lab.sh"
@@ -166,6 +173,7 @@ chmod 0755 \
     "$INSTALL_DIR/qemu_lab_adapter.py" \
     "$INSTALL_DIR/qemu_work_lab_backend.py" \
     "$INSTALL_DIR/qemu_permissive_backend.py" \
+    "$INSTALL_DIR/qemu_gdb_wrapper.py" \
     "$INSTALL_DIR/phnix_ota_simulator.py" \
     "$INSTALL_DIR/foxair-fake-adbctl"
 chmod 0755 "$LAB_ROOT/tools/run_scenario_lab.sh" "$LAB_ROOT/tools/rs485_fault_emulator.py" \

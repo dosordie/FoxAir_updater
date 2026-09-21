@@ -559,6 +559,19 @@ def _sandbox_command(command: str) -> list[str]:
     # unmodified hook reaches the exact QEMU/GDB path used by the lab.  Other
     # fake-ADB commands retain the normal host namespace.
     if "dtu_ota_supervisor.sh" in command and " run " in command:
+        # The uploaded production hook must remain byte-identical for package
+        # verification.  Overlay only its debugger executable inside this
+        # VM-only bubblewrap process.  The wrapper converts the two parser
+        # handoff breakpoints to the hardware form proven stable with
+        # qemu-user; it delegates every other GDB invocation unchanged.
+        wrapper = Path("/opt/foxair-fake-adb/qemu_gdb_wrapper.py")
+        real_gdb = Path("/opt/foxair-fake-adb/gdb-multiarch.real")
+        if not wrapper.is_file() or not real_gdb.is_file():
+            raise FileNotFoundError("QEMU-GDB-Wrapper ist nicht installiert")
+        separator = argv.index("--")
+        argv[separator:separator] = [
+            "--ro-bind", str(wrapper), "/usr/bin/gdb-multiarch",
+        ]
         pids = service_pids()
         nsenter = Path("/usr/bin/nsenter")
         if pids and nsenter.is_file():
