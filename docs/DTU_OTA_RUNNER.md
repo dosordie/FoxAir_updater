@@ -1,6 +1,6 @@
 # DTU OTA Runner – aktueller Architektur- und Sicherheitsstand
 
-Stand: 17. September 2026
+Stand: 21. September 2026
 
 Der Umbau auf den autonomen DTU-Runner ist abgeschlossen. Diese Datei ersetzt die frühere Entwicklungs-Roadmap unter `docs/dev/DTU_OTA_RUNNER_ROADMAP.md` und beschreibt nur noch den produktiven Stand sowie die dauerhaft relevanten Sicherheitsgrenzen.
 
