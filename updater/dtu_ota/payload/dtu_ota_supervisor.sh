@@ -15,7 +15,6 @@ EXPECTED_SERVICE_FIXED=7C573431F0A67620D473419644A83A4F4DC04B8A91BDE5923C74A63BA
 SERVICE_READY_TIMEOUT=120
 SERVICE_READY_CONFIRM_DELAY=3
 RECOVERY_RESUME_TIMEOUT=1200
-RECOVERY_SERVICE_START_TIMEOUT=30
 RECOVERY_MAX_ATTEMPTS=3
 DTU_RUN_STEP_ADDR=624899
 DTU_STA_ADDR=624900
@@ -279,8 +278,7 @@ service_pids() {
     for pid in $(pidof phnixIot4G 2>/dev/null || true); do
         case "$pid" in ''|*[!0-9]*) continue ;; esac
         cmd=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
-        state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
-        test "$state" = Z && continue
+        test "$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)" = Z && continue
         case "$cmd" in *phnixIot4G*) found="$found $pid" ;; esac
     done
     if test -z "$found" && test -f /data/phnixIot4G.tls-lab; then
@@ -440,56 +438,18 @@ restart_service() {
 
 
 start_service_direct() {
-    # Recovery only: the original helloworld watchdogs remain paused. Start the
-    # exact original service directly with the same working directory.
-    test -z "$(service_pids)" || return 2
-    test -x "$SERVICE" || return 3
-    test "$(sha256sum "$SERVICE" 2>/dev/null | awk '{print toupper($1)}')" = "$EXPECTED_SERVICE" || return 4
-
-    log_event "recovery starting phnixIot4G directly; watchdogs remain paused"
-    (
-        cd /data || exit 1
-        exec ./phnixIot4G
-    ) >> "$RUN_DIR/phnix-resume-service.log" 2>&1 &
-    launched_pid=$!
-    log_event "recovery direct launch pid=$launched_pid"
-
-    elapsed=0
-    stable_pid=
-    stable_count=0
-    while test "$elapsed" -lt "$RECOVERY_SERVICE_START_TIMEOUT"; do
-        sleep 1
-        elapsed=$((elapsed + 1))
-        current=$(service_pids)
-        current_count=$(printf '%s\n' "$current" | awk '{print NF}')
-        if test "$current_count" = 1; then
-            tracer=$(awk '/^TracerPid:/ {print $2}' "/proc/$current/status" 2>/dev/null || true)
-            test "$tracer" = 0 || return 5
-            if test "$stable_pid" = "$current"; then
-                stable_count=$((stable_count + 1))
-            else
-                stable_pid=$current
-                stable_count=1
-            fi
-            if test "$stable_count" -ge 3; then
-                SERVICE_PID=$current
-                log_event "recovery service stable pid=$SERVICE_PID"
-                return 0
-            fi
-        else
-            stable_pid=
-            stable_count=0
-        fi
-    done
-    return 1
+    test -z "$(service_pids)" || return 1
+    log_event "update service crashed; starting /data/phnixIot4G directly"
+    (cd /data || exit 1; exec ./phnixIot4G) >> "$RUN_DIR/phnix-resume-service.log" 2>&1 &
+    sleep 3
+    SERVICE_PID=$(single_service_pid) || return 1
+    test "$(awk '/^TracerPid:/ {print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null)" = 0
 }
 
 start_resume_hook() {
-    test -r "$HOOK" || return 1
     test -f "$HOOK_STATUS" && cp "$HOOK_STATUS" "$RUN_DIR/hook-status.pre-recovery-$RECOVERY_ATTEMPTS.json" 2>/dev/null || true
     rm -f "$HOOK_STATUS"
-    args="resume --build-id $EXPECTED_BUILD --status $HOOK_STATUS --allow-publish 0023,0053,0083"
-    "$SHELL_BIN" "$HOOK" $args >> "$HOOK_LOG" 2>&1 &
+    "$SHELL_BIN" "$HOOK" resume --build-id "$EXPECTED_BUILD" --status "$HOOK_STATUS" --allow-publish 0023,0053,0083 >> "$HOOK_LOG" 2>&1 &
     HOOK_PID=$!
     printf '%s\n' "$HOOK_PID" > "$RUN_DIR/hook.pid"
     sleep 2
@@ -497,98 +457,60 @@ start_resume_hook() {
 }
 
 recover_after_hook_loss() {
-    RECOVERY_ERROR=
     refresh_progress
-
-    if ! test -r /data/phnixIot_device_OTA_INFO || test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" != 220; then
-        RECOVERY_ERROR="Persistent OTA_INFO is unavailable or has the wrong size."
+    RECOVERY_ERROR=
+    test -r /cache/phnixIot_device_OTA || { RECOVERY_ERROR="Cached PHNIX firmware is missing."; return 1; }
+    test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220 || {
+        RECOVERY_ERROR="Persistent OTA_INFO is unavailable."
         return 1
-    fi
-    if ! test -r /cache/phnixIot_device_OTA; then
-        RECOVERY_ERROR="The existing PHNIX cache firmware is missing; automatic resume will not recreate it."
+    }
+    test "$LENGTH" -gt 0 && test "$OFFSET" -lt "$LENGTH" || {
+        RECOVERY_ERROR="No partial OTA transfer is available for resume."
         return 1
-    fi
-    if test "$LENGTH" -le 0 || test "$OFFSET" -ge "$LENGTH"; then
-        RECOVERY_ERROR="No partial OTA transfer is available for automatic resume."
+    }
+    test "$RECOVERY_ATTEMPTS" -lt "$RECOVERY_MAX_ATTEMPTS" || {
+        RECOVERY_ERROR="Automatic resume limit reached."
         return 1
-    fi
-    if test "$RECOVERY_ATTEMPTS" -ge "$RECOVERY_MAX_ATTEMPTS"; then
-        RECOVERY_ERROR="Automatic resume limit reached after $RECOVERY_ATTEMPTS successful or attempted recoveries."
-        return 1
-    fi
+    }
 
     RECOVERY_ATTEMPTS=$((RECOVERY_ATTEMPTS + 1))
     RESUME_BASELINE_OFFSET=$OFFSET
     RECOVERY=attempting
-    log_event "recovery attempt=$RECOVERY_ATTEMPTS detected baseline_offset=$RESUME_BASELINE_OFFSET length=$LENGTH"
-
     current=$(service_pids)
-    current_count=$(printf '%s\n' "$current" | awk '{print NF}')
-    if test "$current_count" -gt 1; then
-        RECOVERY_ERROR="More than one live phnixIot4G process exists; refusing automatic resume."
-        return 1
-    fi
-
-    if test "$current_count" = 0; then
-        must_write_status running recovery-service-restart false "" "Update service stopped unexpectedly. Restarting phnixIot4G directly; watchdogs remain paused."
-        log_event "update service crashed; direct restart requested"
-        if ! start_service_direct; then
-            RECOVERY_ERROR="Direct phnixIot4G restart failed."
-            return 1
-        fi
-        wait_text="Update service restarted; waiting for the mainboard resume handshake."
+    if test -z "$current"; then
+        must_write_status running recovery-service-restart false "" "Update service crashed. Restarting phnixIot4G directly; watchdogs remain paused."
+        start_service_direct || { RECOVERY_ERROR="phnixIot4G could not be restarted."; return 1; }
     else
-        SERVICE_PID=$current
-        tracer=$(awk '/^TracerPid:/ {print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null || true)
-        if test "$tracer" != 0; then
-            RECOVERY_ERROR="Live phnixIot4G is already traced by another process."
+        SERVICE_PID=$(single_service_pid) || { RECOVERY_ERROR="Service state is ambiguous."; return 1; }
+        test "$(awk '/^TracerPid:/ {print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null)" = 0 || {
+            RECOVERY_ERROR="Live phnixIot4G is traced by another process."
             return 1
-        fi
-        log_event "hook/debugger lost while service pid=$SERVICE_PID remains live; reattaching"
-        wait_text="Update service is still running; monitoring was reattached and is waiting for the mainboard."
+        }
     fi
 
-    must_write_status running recovery-hook-attach false "" "Connecting update monitoring to phnixIot4G without restarting or modifying the OTA session."
-    if ! start_resume_hook; then
-        RECOVERY_ERROR="Resume monitoring hook could not be attached."
-        return 1
-    fi
-
+    must_write_status running recovery-hook-attach false "" "Reattaching update monitoring without changing OTA state."
+    start_resume_hook || { RECOVERY_ERROR="Resume monitoring could not be attached."; return 1; }
     elapsed=0
-    next_console=0
     while test "$elapsed" -lt "$RECOVERY_RESUME_TIMEOUT"; do
         sleep 2
         elapsed=$((elapsed + 2))
         refresh_progress
-
         if test "$OFFSET" -gt "$RESUME_BASELINE_OFFSET"; then
             RECOVERY=completed
-            must_write_status running recovery-resumed false "" "Mainboard transfer resumed; the persisted confirmed firmware offset is advancing again."
-            log_event "recovery resumed baseline_offset=$RESUME_BASELINE_OFFSET new_offset=$OFFSET"
+            must_write_status running recovery-resumed false "" "Persisted firmware offset is advancing again."
+            log_event "resume confirmed baseline=$RESUME_BASELINE_OFFSET offset=$OFFSET"
             return 0
         fi
-
-        terminal=$(hook_bool terminal)
-        if test "$terminal" = true; then
+        if test "$(hook_bool terminal)" = true; then
             RECOVERY=completed
-            log_event "recovery hook reached terminal OTA state before another offset increment"
             return 0
         fi
-        kill -0 "$HOOK_PID" 2>/dev/null || {
-            RECOVERY_ERROR="Resume monitoring ended before transfer progress was confirmed."
-            return 1
-        }
-
+        kill -0 "$HOOK_PID" 2>/dev/null || { RECOVERY_ERROR="Resume monitoring ended before progress."; return 1; }
         remaining=$(( (RECOVERY_RESUME_TIMEOUT - elapsed + 59) / 60 ))
-        test "$remaining" -lt 0 && remaining=0
-        if test "$elapsed" -ge "$next_console"; then
-            log_event "recovery waiting for mainboard response remaining_minutes=$remaining baseline_offset=$RESUME_BASELINE_OFFSET"
-            next_console=$((elapsed + 60))
-        fi
-        must_write_status running recovery-wait-mainboard false "" "$wait_text Waiting up to approximately $remaining more minute(s); existing cache firmware and OTA_INFO remain untouched."
+        test "$elapsed" = 2 || test $((elapsed % 60)) != 0 || log_event "waiting for mainboard resume; about $remaining minute(s) remain"
+        must_write_status running recovery-wait-mainboard false "" "Update service is running; waiting for mainboard resume (about $remaining minute(s) remaining)."
     done
-
-    RECOVERY_ERROR="Mainboard did not resume the persisted transfer within the recovery wait window."
+    RECOVERY_ERROR="Mainboard resume timed out."
     return 1
 }
 
@@ -766,11 +688,10 @@ run_action() {
             wait "$HOOK_PID" 2>/dev/null; hook_rc=$?
             if test "$ORIGINAL_AUTH" = true; then
                 if recover_after_hook_loss; then
-                    post_abort_logged=0
                     continue
                 fi
                 RECOVERY=required
-                log_event "automatic recovery failed: $RECOVERY_ERROR"
+                log_event "automatic resume failed: $RECOVERY_ERROR"
                 guarded_result recovery-required recovery-required 95 hook_monitor_lost "$RECOVERY_ERROR Original service state, HTTP and lock remain untouched."
             fi
             if restore_original_confirmed "$RUN_DIR/recovery-status.json"; then
