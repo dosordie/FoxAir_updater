@@ -443,7 +443,8 @@ start_service_direct() {
     (cd /data || exit 1; exec ./phnixIot4G) >> "$RUN_DIR/phnix-resume-service.log" 2>&1 &
     sleep 3
     SERVICE_PID=$(single_service_pid) || return 1
-    test "$(awk '/^TracerPid:/ {print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null)" = 0
+    test "$(awk '/^TracerPid:/ {print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null)" = 0 || return 1
+    log_event "phnixIot4G restarted successfully pid=$SERVICE_PID"
 }
 
 start_resume_hook() {
@@ -490,6 +491,7 @@ recover_after_hook_loss() {
 
     must_write_status running recovery-hook-attach false "" "Reattaching update monitoring without changing OTA state."
     start_resume_hook || { RECOVERY_ERROR="Resume monitoring could not be attached."; return 1; }
+    log_event "resume monitoring attached pid=$SERVICE_PID baseline_offset=$RESUME_BASELINE_OFFSET"
     elapsed=0
     while test "$elapsed" -lt "$RECOVERY_RESUME_TIMEOUT"; do
         sleep 2
