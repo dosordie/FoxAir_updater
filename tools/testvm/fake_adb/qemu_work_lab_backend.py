@@ -674,6 +674,30 @@ def _ota_restart_blocked() -> bool:
     )
 
 
+def _runner_status_candidates() -> list[Path]:
+    """Return the active autonomous-run status first, then legacy locations."""
+    candidates: list[Path] = []
+    runner_root = base.root_path("/data/foxair_ota_runner")
+    try:
+        run_id = (runner_root / "active.lock/run_id").read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        run_id = ""
+    if run_id and all(char.isalnum() or char in "._-" for char in run_id):
+        candidates.append(runner_root / "runs" / run_id / "status.json")
+    candidates.append(
+        Path(os.environ.get(
+            "FOXAIR_FAKE_ADB_TMP", str(base.state_root() / "device-tmp")
+        )) / "phnix_ota_status.json"
+    )
+    try:
+        candidates.append(base.root_path("/tmp/phnix_ota_status.json"))
+    except RuntimeError:
+        pass
+    return candidates
+
+
 def _runner_recovery_restart_requested() -> bool:
     """Recognize only the productive runner's explicit crash-recovery phase.
 
@@ -684,16 +708,7 @@ def _runner_recovery_restart_requested() -> bool:
     subsequent resume-hook attach.  No generic OTA watchdog restart is
     inferred from process death alone.
     """
-    candidates = [
-        Path(os.environ.get(
-            "FOXAIR_FAKE_ADB_TMP", str(base.state_root() / "device-tmp")
-        )) / "phnix_ota_status.json",
-    ]
-    try:
-        candidates.append(base.root_path("/tmp/phnix_ota_status.json"))
-    except RuntimeError:
-        pass
-    for status_path in candidates:
+    for status_path in _runner_status_candidates():
         try:
             status = json.loads(status_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
@@ -709,16 +724,7 @@ def _runner_recovery_restart_requested() -> bool:
 
 def _runner_recovery_netns_pid() -> int | None:
     """Return the validated productive supervisor PID requesting recovery."""
-    candidates = [
-        Path(os.environ.get(
-            "FOXAIR_FAKE_ADB_TMP", str(base.state_root() / "device-tmp")
-        )) / "phnix_ota_status.json",
-    ]
-    try:
-        candidates.append(base.root_path("/tmp/phnix_ota_status.json"))
-    except RuntimeError:
-        pass
-    for status_path in candidates:
+    for status_path in _runner_status_candidates():
         try:
             status = json.loads(status_path.read_text(encoding="utf-8"))
             pid = int(status.get("runner_pid", 0))

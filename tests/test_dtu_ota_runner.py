@@ -317,6 +317,35 @@ class DtuOtaPackageTests(unittest.TestCase):
                 (), resume_boot=True, reuse_netns_pid=4300,
             )
 
+    def test_recovery_reads_status_from_exact_active_runner_lock(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runner = root / "data/foxair_ota_runner"
+            (runner / "active.lock").mkdir(parents=True)
+            (runner / "active.lock/run_id").write_text("run-42\n", encoding="utf-8")
+            run = runner / "runs/run-42"
+            run.mkdir(parents=True)
+            (run / "status.json").write_text(json.dumps({
+                "terminal": False,
+                "phase": "recovery-service-restart",
+                "original_service_authoritative": True,
+                "runner_pid": 4300,
+            }), encoding="utf-8")
+            with (
+                mock.patch.object(
+                    qemu_work_lab_backend.base, "root_path",
+                    side_effect=lambda remote: root / remote.lstrip("/"),
+                ),
+                mock.patch.object(
+                    qemu_work_lab_backend.base, "state_root", return_value=root,
+                ),
+            ):
+                candidates = qemu_work_lab_backend._runner_status_candidates()
+                self.assertEqual(candidates[0], run / "status.json")
+                self.assertTrue(
+                    qemu_work_lab_backend._runner_recovery_restart_requested()
+                )
+
         qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.set()
         try:
             with mock.patch.object(
