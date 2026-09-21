@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from dataclasses import asdict
@@ -309,9 +310,54 @@ class DtuOtaPackageTests(unittest.TestCase):
         for field in (
             "service_restart_requested", "service_restart_verified",
             "mqtt_isolation_requested", "mqtt_isolated", "boot_id",
+            "recovery_attempts", "resume_baseline_offset",
         ):
             self.assertIn(f'"{field}"', runner)
         self.assertIn("mqtt_guard_active", runner)
+
+    def test_resume_path_is_direct_minimal_and_non_destructive(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        direct = runner.split("start_service_direct() {", 1)[1].split(
+            "start_resume_hook() {", 1
+        )[0]
+        recovery = runner.split("recover_after_hook_loss() {", 1)[1].split(
+            "start_http() {", 1
+        )[0]
+        self.assertIn("exec ./phnixIot4G", direct)
+        self.assertNotIn("resume_watchdogs", direct)
+        self.assertIn("RECOVERY_MAX_ATTEMPTS=3", runner)
+        self.assertIn("RESUME_BASELINE_OFFSET=$OFFSET", recovery)
+        self.assertIn('test "$OFFSET" -gt "$RESUME_BASELINE_OFFSET"', recovery)
+        self.assertIn("/cache/phnixIot_device_OTA", recovery)
+        self.assertNotIn("cp /cache/phnixIot_device_OTA", recovery)
+
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(
+            encoding="utf-8"
+        )
+        resume = hook.split("resume_hook() {", 1)[1].split("run_hook() {", 1)[0]
+        resume_gdb = hook.split("make_resume_gdb_script() {", 1)[1].split(
+            "resume_hook() {", 1
+        )[0]
+        self.assertNotIn("backup_persistent_state", resume)
+        self.assertNotIn("restore_persistent_state", resume)
+        self.assertNotIn("0x19958", resume_gdb)
+        self.assertIn("break *0x1ba04", resume_gdb)
+        self.assertIn("set \\$r0 = 11", resume_gdb)
+
+    def test_runner_shell_payloads_parse_with_posix_sh(self):
+        for path in (
+            Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
+            Path("updater/dtu_ota/payload/phnix_ota_runtime_hook"),
+        ):
+            result = subprocess.run(
+                ["sh", "-n", str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, f"{path}: {result.stderr}")
 
 
 if __name__ == "__main__":
