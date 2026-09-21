@@ -391,6 +391,48 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertIn("roughly 15 minutes", supervisor)
         self.assertIn("safety timeout is 20 minutes", supervisor)
 
+    def test_c5a8_stall_watchdog_reuses_resume_path_without_extra_polling(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("C5A8_STALL_TIMEOUT=1200", runner)
+        self.assertIn("C5A8_STALL_LAST_OFFSET=0", runner)
+        self.assertIn("C5A8_STALL_ELAPSED=0", runner)
+
+        main_loop = runner.split("post_abort_logged=0", 1)[1].split(
+            "classify_action() {", 1
+        )[0]
+        stall_logic = main_loop.split(
+            "# No extra modem polling:", 1
+        )[1].split('detail="Autonomous DTU OTA is running."', 1)[0]
+        self.assertIn(
+            'C5A8_STALL_ELAPSED=$((C5A8_STALL_ELAPSED + 2))',
+            stall_logic,
+        )
+        self.assertIn(
+            'if test "$OFFSET" -gt "$C5A8_STALL_LAST_OFFSET"; then',
+            stall_logic,
+        )
+        self.assertIn("recover_after_transfer_stall", stall_logic)
+        self.assertNotIn("refresh_progress", stall_logic)
+
+        recovery = runner.split("recover_after_transfer_stall() {", 1)[1].split(
+            "recover_after_hook_loss() {", 1
+        )[0]
+        self.assertIn(
+            'test "$RECOVERY_ATTEMPTS" -lt "$RECOVERY_MAX_ATTEMPTS"',
+            recovery,
+        )
+        self.assertIn('kill -KILL "$SERVICE_PID"', recovery)
+        self.assertIn("recover_after_hook_loss", recovery)
+        self.assertIn("transfer_stalled", recovery)
+
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('reason == "transfer_stalled"', enduser)
+        self.assertIn("Seit 20 Minuten", enduser)
+
     def test_recovery_deadline_is_exported_once_and_counted_down_only_on_windows(self):
         runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
             encoding="utf-8"
