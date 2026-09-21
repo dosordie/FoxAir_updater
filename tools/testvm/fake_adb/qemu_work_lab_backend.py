@@ -450,7 +450,16 @@ def _start_runner_impl(
     if not runner.is_file() or not os.access(runner, os.X_OK):
         return False, f"Work-Lab Runner fehlt oder ist nicht ausführbar: {runner}"
     _stop_runner()
-    if original_ota:
+    if original_ota or (
+        kind == "scenario"
+        and extra_env.get("AUTONOMOUS_DTU_RUNNER") == "1"
+    ):
+        # The original OTA callback invokes small shell commands (for example
+        # removing the previous cache image) after the parser accepts the
+        # injected JSON. The imported modem rootfs has BusyBox available in
+        # the runtime backup but not mounted under /bin by default. Without
+        # these ARM applets qemu reports execve('/bin/sh') = ENOENT and the
+        # autonomous runner appears to stall at C350.
         shell_ok, shell_message = _ensure_rootfs_busybox()
         if not shell_ok:
             return False, shell_message

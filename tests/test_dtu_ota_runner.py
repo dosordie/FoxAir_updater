@@ -517,6 +517,16 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertIn("continue", commands)
         self.assertIn("commands 2", qemu)
 
+    def test_autonomous_qemu_runner_installs_arm_shell_overlay(self):
+        backend = Path(
+            "tools/testvm/fake_adb/qemu_work_lab_backend.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'kind == "scenario"\n        and extra_env.get("AUTONOMOUS_DTU_RUNNER") == "1"',
+            backend,
+        )
+        self.assertIn("shell_ok, shell_message = _ensure_rootfs_busybox()", backend)
+
     def test_runner_p0_guards_are_persistent_and_side_effect_free(self):
         runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
             encoding="utf-8"
