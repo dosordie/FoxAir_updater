@@ -349,6 +349,13 @@ class MainWindow(user_gui.MainWindow):
         reason = str(status.get("reason") or "")
         detail = str(status.get("detail") or "").strip()
 
+        if phase == "recovery-service-restart" and reason == "transfer_stalled":
+            return (
+                "Seit 20 Minuten wurde kein bestätigter Fortschritt der Firmwareübertragung erkannt. "
+                "Der LTE-Kommunikationsdienst wird kontrolliert neu gestartet und anschließend über "
+                "den vorhandenen PHNIX-Wiederaufnahmezustand fortgesetzt."
+            )
+
         phase_text = {
             "dry-run-complete": (
                 "Die Vorprüfung ist abgeschlossen. Das Firmwareupdate ist vorbereitet, aber noch nicht gestartet."
