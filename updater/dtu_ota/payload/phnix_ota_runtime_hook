@@ -824,27 +824,35 @@ if \$pc != 0x1ba04 || *(unsigned char *)(\$r0+1) != 0x63
   detach
   quit
 end
-if \$resume_mode == 1 && *(unsigned char *)(\$r0+3) != 1
-  shell echo '{"phase":"resume-handshake-rejected","terminal":false,"recovery_required":true}' > $STATUS
-  detach
-  quit
+if \$resume_mode == 1
+  # Re-attach may happen before C36E1 or after it. Any active OTA status 1..6
+  # is safe to observe; the original PHNIX state machine remains authoritative.
+  if *(unsigned char *)(\$r0+3) == 0 || *(unsigned char *)(\$r0+3) > 6
+    shell echo '{"phase":"resume-handshake-rejected","terminal":false,"recovery_required":true}' > $STATUS
+    detach
+    quit
+  end
+  set \$local_ota_active = 1
+  shell touch $ORIGINAL_SERVICE_OWNS
+  shell echo '{"phase":"resume-observing","terminal":false,"armed":true,"active":true,"c36e_seen":true}' > $STATUS
+else
+  if *(unsigned char *)(\$r0+3) == 0
+    set \$launcher_armed = 0
+    shell $0 _restore-state --status $STATUS
+    shell echo '{"phase":"same-version","terminal":true,"c350_sent":true,"c36e_seen":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
+    detach
+    quit
+  end
+  if *(unsigned char *)(\$r0+3) != 1
+    shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false,"c350_sent":true,"c36e_seen":true,"recovery_required":true}' > $STATUS
+    shell $0 _restore-state --status $STATUS
+    detach
+    quit
+  end
+  set \$local_ota_active = 1
+  shell touch $ORIGINAL_SERVICE_OWNS
+  shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c350_sent":true,"c36e_seen":true,"c36e_status":1}' > $STATUS
 end
-if *(unsigned char *)(\$r0+3) == 0
-  set \$launcher_armed = 0
-  shell $0 _restore-state --status $STATUS
-  shell echo '{"phase":"same-version","terminal":true,"c350_sent":true,"c36e_seen":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
-  detach
-  quit
-end
-if *(unsigned char *)(\$r0+3) != 1
-  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false,"c350_sent":true,"c36e_seen":true,"recovery_required":true}' > $STATUS
-  shell $0 _restore-state --status $STATUS
-  detach
-  quit
-end
-set \$local_ota_active = 1
-shell touch $ORIGINAL_SERVICE_OWNS
-shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c350_sent":true,"c36e_seen":true,"c36e_status":1}' > $STATUS
 break *0x1cea0
 break *0x1c7cc
 break *0x1d2f8
@@ -980,6 +988,8 @@ resume_hook() {
     test "$BUILD_ID" = af4dcae12639bedce833ee5efa5da009777b6319 || fail "requested Build-ID mismatch"
     test "$ALLOW" = 0023,0053,0083 || fail "publish allow-list mismatch"
     test ! -f "$SAFE_TO_CLEAN" || fail "OTA session is already terminal"
+    test -f "$RUN_ACTIVE" || fail "active OTA marker missing"
+    test -f "$ORIGINAL_SERVICE_OWNS" || test -f "$TRANSFER_STARTED" || fail "authoritative OTA marker missing"
     clear_saved_debugger
     verify
     touch "$RUN_ACTIVE" "$ORIGINAL_SERVICE_OWNS"
