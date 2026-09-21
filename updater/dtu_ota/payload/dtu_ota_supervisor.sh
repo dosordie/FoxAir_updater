@@ -15,6 +15,7 @@ EXPECTED_SERVICE_FIXED=7C573431F0A67620D473419644A83A4F4DC04B8A91BDE5923C74A63BA
 SERVICE_READY_TIMEOUT=120
 SERVICE_READY_CONFIRM_DELAY=3
 RECOVERY_RESUME_TIMEOUT=1200
+C5A8_STALL_TIMEOUT=1200
 RECOVERY_MAX_ATTEMPTS=3
 DTU_RUN_STEP_ADDR=624899
 DTU_STA_ADDR=624900
@@ -93,6 +94,8 @@ BOOT_ID=
 RECOVERY_ATTEMPTS=0
 RESUME_BASELINE_OFFSET=0
 RECOVERY_DEADLINE_AT=0
+C5A8_STALL_LAST_OFFSET=0
+C5A8_STALL_ELAPSED=0
 RECOVERY_ERROR=
 
 load_status_state() {
@@ -487,6 +490,79 @@ start_resume_hook() {
     kill -0 "$HOOK_PID" 2>/dev/null
 }
 
+recover_after_transfer_stall() {
+    refresh_progress
+    RECOVERY_ERROR=
+
+    # Fail closed before deliberately stopping the original service.  The
+    # persisted PHNIX resume state must already describe a real partial transfer
+    # and an automatic recovery slot must still be available.
+    test -r /cache/phnixIot_device_OTA || { RECOVERY_ERROR="Cached PHNIX firmware is missing."; return 1; }
+    test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220 || {
+        RECOVERY_ERROR="Persistent OTA_INFO is unavailable."
+        return 1
+    }
+    test "$LENGTH" -gt 0 && test "$OFFSET" -lt "$LENGTH" || {
+        RECOVERY_ERROR="No partial OTA transfer is available for stalled-transfer recovery."
+        return 1
+    }
+    test "$RECOVERY_ATTEMPTS" -lt "$RECOVERY_MAX_ATTEMPTS" || {
+        RECOVERY_ERROR="Automatic resume limit reached."
+        return 1
+    }
+
+    SERVICE_PID=$(single_service_pid) || {
+        RECOVERY_ERROR="Service state is ambiguous during stalled-transfer recovery."
+        return 1
+    }
+    case "$SERVICE_PID" in ''|*[!0-9]*)
+        RECOVERY_ERROR="Service PID is invalid during stalled-transfer recovery."
+        return 1
+        ;;
+    esac
+
+    log_event "C5A8 transfer stalled offset=$OFFSET length=$LENGTH for ${C5A8_STALL_TIMEOUT}s; forcing tested crash-resume path"
+    must_write_status running recovery-service-restart false transfer_stalled "No confirmed C5A8 offset progress for 20 minutes. Restarting phnixIot4G through the existing persistent resume path; watchdogs remain paused."
+
+    # Use an abrupt stop deliberately: the proven crash-resume path relies on
+    # the already persisted OTA_INFO offset.  A graceful service shutdown could
+    # execute unrelated PHNIX cleanup code and mutate that state.
+    kill -KILL "$SERVICE_PID" 2>/dev/null || {
+        RECOVERY_ERROR="Stalled phnixIot4G could not be stopped."
+        return 1
+    }
+
+    elapsed=0
+    while test "$elapsed" -lt 10; do
+        test -z "$(service_pids)" && break
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    test -z "$(service_pids)" || {
+        RECOVERY_ERROR="Stalled phnixIot4G did not exit."
+        return 1
+    }
+
+    # The runtime hook normally exits as soon as its traced target disappears.
+    # If it needs longer, terminate only our own helper; its post-C5A8 cleanup
+    # intentionally keeps watchdogs paused and persistent OTA state untouched.
+    elapsed=0
+    while kill -0 "$HOOK_PID" 2>/dev/null && test "$elapsed" -lt 10; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if kill -0 "$HOOK_PID" 2>/dev/null; then
+        kill -TERM "$HOOK_PID" 2>/dev/null || true
+        sleep 1
+    fi
+    kill -0 "$HOOK_PID" 2>/dev/null && {
+        RECOVERY_ERROR="Runtime hook did not stop after stalled service restart."
+        return 1
+    }
+
+    recover_after_hook_loss
+}
+
 recover_after_hook_loss() {
     refresh_progress
     RECOVERY_ERROR=
@@ -722,6 +798,8 @@ run_action() {
             wait "$HOOK_PID" 2>/dev/null; hook_rc=$?
             if test "$ORIGINAL_AUTH" = true; then
                 if recover_after_hook_loss; then
+                    C5A8_STALL_LAST_OFFSET=$OFFSET
+                    C5A8_STALL_ELAPSED=0
                     continue
                 fi
                 RECOVERY=required
@@ -735,6 +813,32 @@ run_action() {
             STATE_RESTORED=false
             guarded_result recovery-required hook-ended-before-authority "$hook_rc" restore_unconfirmed "Hook ended before authority and restore was not unambiguously confirmed."
         fi
+
+        # No extra modem polling: refresh_progress() above already read the
+        # persisted PHNIX offset.  Count existing two-second monitor iterations
+        # only while a partial C5A8 transfer is authoritative.
+        if test "$TRANSFER_STARTED" = true && test "$LENGTH" -gt 0 && test "$OFFSET" -lt "$LENGTH"; then
+            if test "$OFFSET" -gt "$C5A8_STALL_LAST_OFFSET"; then
+                C5A8_STALL_LAST_OFFSET=$OFFSET
+                C5A8_STALL_ELAPSED=0
+            else
+                C5A8_STALL_ELAPSED=$((C5A8_STALL_ELAPSED + 2))
+            fi
+            if test "$C5A8_STALL_ELAPSED" -ge "$C5A8_STALL_TIMEOUT"; then
+                if recover_after_transfer_stall; then
+                    C5A8_STALL_LAST_OFFSET=$OFFSET
+                    C5A8_STALL_ELAPSED=0
+                    continue
+                fi
+                RECOVERY=required
+                log_event "automatic stalled-transfer recovery failed: $RECOVERY_ERROR"
+                guarded_result recovery-required recovery-required 96 transfer_stalled "$RECOVERY_ERROR Persistent OTA state, HTTP staging and lock remain retained for diagnostics."
+            fi
+        else
+            C5A8_STALL_LAST_OFFSET=$OFFSET
+            C5A8_STALL_ELAPSED=0
+        fi
+
         detail="Autonomous DTU OTA is running."
         test -f "$ABORT" && test "$ABORT_ALLOWED" = false && detail="Abort request recorded but refused after point-of-no-return; original service continues."
         must_write_status running "$phase" false "" "$detail"
