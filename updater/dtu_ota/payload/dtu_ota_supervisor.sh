@@ -520,6 +520,7 @@ recover_after_hook_loss() {
     must_write_status running recovery-hook-attach false "" "Reattaching update monitoring without changing OTA state."
     start_resume_hook || { RECOVERY_ERROR="Resume monitoring could not be attached."; return 1; }
     log_event "resume monitoring attached pid=$SERVICE_PID baseline_offset=$RESUME_BASELINE_OFFSET"
+    log_event "mainboard resume can take roughly 15 minutes after an interrupted V3.4 transfer; safety timeout is 20 minutes"
     elapsed=0
     while test "$elapsed" -lt "$RECOVERY_RESUME_TIMEOUT"; do
         sleep 2
@@ -538,7 +539,7 @@ recover_after_hook_loss() {
         kill -0 "$HOOK_PID" 2>/dev/null || { RECOVERY_ERROR="Resume monitoring ended before progress."; return 1; }
         remaining=$(( (RECOVERY_RESUME_TIMEOUT - elapsed + 59) / 60 ))
         test "$elapsed" = 2 || test $((elapsed % 60)) != 0 || log_event "waiting for mainboard resume; about $remaining minute(s) remain"
-        must_write_status running recovery-wait-mainboard false "" "Update service is running; waiting for mainboard resume (about $remaining minute(s) remaining)."
+        must_write_status running recovery-wait-mainboard false "" "Update service is running. After an interrupted V3.4 transfer the mainboard may need roughly 15 minutes before requesting resume; safety timeout is 20 minutes (about $remaining minute(s) remaining)."
     done
     RECOVERY_ERROR="Mainboard resume timed out."
     return 1
