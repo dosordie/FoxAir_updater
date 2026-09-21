@@ -303,6 +303,14 @@ single_service_pid() {
     printf '%s\n' "$pids"
 }
 
+process_live_non_zombie() {
+    pid=$1
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    state=$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)
+    test "$state" != Z
+}
+
 load_package() {
     test -r "$PACKAGE" || return 30
     test -r "$PACKAGE_SHA_FILE" || return 31
@@ -547,15 +555,15 @@ recover_after_transfer_stall() {
     # If it needs longer, terminate only our own helper; its post-C5A8 cleanup
     # intentionally keeps watchdogs paused and persistent OTA state untouched.
     elapsed=0
-    while kill -0 "$HOOK_PID" 2>/dev/null && test "$elapsed" -lt 10; do
+    while process_live_non_zombie "$HOOK_PID" && test "$elapsed" -lt 10; do
         sleep 1
         elapsed=$((elapsed + 1))
     done
-    if kill -0 "$HOOK_PID" 2>/dev/null; then
+    if process_live_non_zombie "$HOOK_PID"; then
         kill -TERM "$HOOK_PID" 2>/dev/null || true
         sleep 1
     fi
-    kill -0 "$HOOK_PID" 2>/dev/null && {
+    process_live_non_zombie "$HOOK_PID" && {
         RECOVERY_ERROR="Runtime hook did not stop after stalled service restart."
         return 1
     }
