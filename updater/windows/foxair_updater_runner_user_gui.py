@@ -221,7 +221,7 @@ class MainWindow(runner.MainWindow):
             "service-restart": "LTE-Kommunikationsdienst wird für das Update neu gestartet",
             "recovery-service-restart": "Update-Dienst ist ausgefallen und wird automatisch neu gestartet",
             "recovery-hook-attach": "Update-Überwachung wird nach dem Dienstausfall wieder verbunden",
-            "recovery-wait-mainboard": "Warte auf die erneute Antwort des Mainboards",
+            "recovery-wait-mainboard": "Warte auf das Mainboard – Wiederaufnahme kann rund 15 Minuten dauern",
             "recovery-resumed": "Firmwareübertragung wurde nach dem Dienstausfall fortgesetzt",
             "staging": "Firmwaredatei wird für das Update geprüft",
             "hook-started": "Update-Überwachung wurde gestartet",
