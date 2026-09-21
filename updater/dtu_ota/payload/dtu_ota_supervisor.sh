@@ -822,8 +822,8 @@ run_action() {
             guarded_result recovery-required hook-ended-before-authority "$hook_rc" restore_unconfirmed "Hook ended before authority and restore was not unambiguously confirmed."
         fi
 
-        # No extra modem polling: refresh_progress() above already read the
-        # persisted PHNIX offset.  Count existing two-second monitor iterations
+        # No extra modem polling: the persisted PHNIX offset was already
+        # refreshed at the top of this existing monitor iteration. Count only
         # only while a partial C5A8 transfer is authoritative.
         if test "$TRANSFER_STARTED" = true && test "$LENGTH" -gt 0 && test "$OFFSET" -lt "$LENGTH"; then
             if test "$OFFSET" -gt "$C5A8_STALL_LAST_OFFSET"; then
