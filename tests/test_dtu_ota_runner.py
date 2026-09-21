@@ -336,15 +336,14 @@ class DtuOtaPackageTests(unittest.TestCase):
         hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(
             encoding="utf-8"
         )
-        resume = hook.split("resume_hook() {", 1)[1].split("run_hook() {", 1)[0]
-        resume_gdb = hook.split("make_resume_gdb_script() {", 1)[1].split(
-            "resume_hook() {", 1
-        )[0]
+        resume = hook.split("resume_hook() {", 1)[1].split("hold_hook() {", 1)[0]
+        shared_gdb = hook.split("make_gdb_script() {", 1)[1].split("run_hook() {", 1)[0]
         self.assertNotIn("backup_persistent_state", resume)
         self.assertNotIn("restore_persistent_state", resume)
-        self.assertNotIn("0x19958", resume_gdb)
-        self.assertIn("break *0x1ba04", resume_gdb)
-        self.assertIn("set \\$r0 = 11", resume_gdb)
+        self.assertIn("RESUME_MODE", shared_gdb)
+        self.assertIn("resume-wait-mainboard", shared_gdb)
+        self.assertIn("break *0x1ba04", shared_gdb)
+        self.assertIn("set \\$r0 = 11", shared_gdb)
 
     def test_runner_shell_payloads_parse_with_posix_sh(self):
         for path in (
