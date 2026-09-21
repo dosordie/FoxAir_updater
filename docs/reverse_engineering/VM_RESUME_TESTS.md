@@ -35,7 +35,7 @@ Die Analyse vom 21.09.2026 ergibt für V3.4 zwei aufeinanderfolgende Timer:
 | Profil | Interblock-Timeout | Fallback bis C544 | Gesamt ab letztem gültigen Block |
 |---|---:|---:|---:|
 | resume-original | 466,667 s | 466,667 s | 933,333 s (15:33 min) |
-| resume-fast | 10 s | 10 s | 20 s |
+| resume-fast | 40 s | 40 s | 80 s |
 
 Die Übertragung selbst verwendet bei beiden Szenarien das schnelle bestehende
 Profil. `original` bezeichnet hier ausschließlich die Resume-Wartezeiten.
@@ -64,13 +64,20 @@ terminalen Status prüfen. Nach vollständigem Empfang ist der Resume-Timer aus.
 
 ## Grenzen und Prüfung
 
-Aktuell startet der vorhandene **Simulator-Watchdog** QEMU nach dem Crash neu.
-Er erhält die OTA-Dateien und startet in diesen Szenarien den Originaldienst
-ohne den initialen GDB-Halt. Die Board-Teilposition und verstrichene Wartezeit
-werden beim Neuaufbau des Laborprozesses geladen. Dies prüft DTU-/Board-Resume,
-beweist aber nicht die Restart-Policy eines neuen produktiven OTA-Runners.
-Insbesondere der Neuaufbau des QEMU-Netzraums ist nicht identisch mit einem
-einfachen Dienstneustart auf echter Hardware.
+Während eines aktiven OTA startet der allgemeine **Simulator-Watchdog** QEMU
+nicht mehr allein aufgrund des Prozessverlusts neu. Der produktive Runner muss
+den Verlust zuerst erkennen und ausdrücklich die Phase
+`recovery-service-restart` setzen. Erst dann bildet eine VM-spezifische Brücke
+den direkten ARM-Dienststart durch genau eine neue, am GDB-Einstieg wartende
+QEMU-Instanz ab. Cache, OTA_INFO, Board-Teilposition und bereits verstrichene
+Wartezeit bleiben erhalten. Anschließend muss der produktive Runner selbst den
+Resume-Hook anbinden und den Fortschritt überwachen.
+
+Diese Brücke ersetzt ausschließlich den auf x86 nicht originalgetreu möglichen
+direkten Start von `/data/phnixIot4G`. Sie verändert weder den produktiven
+Runner noch dessen Hook-Semantik. Ein Leerlauf-Crash wird weiterhin vom
+normalen Simulator-Watchdog neu gestartet; ein aktiver OTA-Crash wird dagegen
+nicht verborgen.
 
 Linux-PTY-Tests prüfen echte C544-Frames samt CRC, erhaltene Blockposition,
 Originalzeit ohne vorzeitiges C544 und bereits abgelaufene Originalzeit.

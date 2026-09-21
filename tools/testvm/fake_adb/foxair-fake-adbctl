@@ -49,7 +49,7 @@ Simulator und ADB:
 
 Board und OTA-Szenarien:
   reset resume-original          C5A8-Pause: 466.667s Interblock + 466.667s Fallback bis C544
-  reset resume-fast              Gleicher Ablauf mit 10s + 10s (Lab-Testzeit)
+  reset resume-fast              Gleicher Ablauf mit 40s + 40s (Lab-Testzeit)
                                  Update starten, dann service-crash bei Teilfortschritt
   scenario NAME                  Runner mit passender RS485-Störung neu starten
                                  im DTU_runner-Branch bleibt QEMU-GDB frei;

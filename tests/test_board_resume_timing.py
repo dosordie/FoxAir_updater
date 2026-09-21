@@ -57,10 +57,13 @@ class ResumeTimingTests(unittest.TestCase):
                 os.close(slave)
 
     def test_fast_elapsed_pause_sends_c544_after_identity(self):
-        self.exercise("fast", 21, True)
+        self.exercise("fast", 81, True)
+
+    def test_fast_first_stage_does_not_send_c544(self):
+        self.exercise("fast", 41, False)
 
     def test_original_does_not_use_fast_deadline(self):
-        self.exercise("original", 21, False)
+        self.exercise("original", 81, False)
 
     def test_original_elapsed_deadline_sends_c544(self):
         self.exercise("original", 934, True)

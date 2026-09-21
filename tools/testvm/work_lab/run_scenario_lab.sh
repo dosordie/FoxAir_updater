@@ -95,7 +95,17 @@ done
 cp "$TOOLS/at_rules.json" "$RUN_DIR/at_rules.json"
 
 set +e
-unshare --net --mount --fork bash -c '
+if [[ -n "${REUSE_NETNS_PID:-}" ]]; then
+  [[ "$REUSE_NETNS_PID" =~ ^[0-9]+$ && -e "/proc/$REUSE_NETNS_PID/ns/net" ]] ||
+    fail "invalid REUSE_NETNS_PID=$REUSE_NETNS_PID"
+  # The productive recovery supervisor still owns the former QEMU network
+  # namespace.  Reuse only that namespace so its resume hook can reach the new
+  # 127.0.0.1:12345 endpoint; retain a fresh mount namespace for lab binds.
+  lab_namespace=(unshare --mount --fork nsenter -t "$REUSE_NETNS_PID" -n --)
+else
+  lab_namespace=(unshare --net --mount --fork)
+fi
+"${lab_namespace[@]}" bash -c '
   set -Eeuo pipefail
   rootfs="$1"; tools="$2"; run_dir="$3"; run_secs="$4"; tls_dir="$5"; mqtt_host="$6"; v33_fixture="$7"
   cleanup() {

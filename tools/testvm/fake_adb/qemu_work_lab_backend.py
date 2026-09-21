@@ -407,7 +407,7 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
 
 def _start_runner_impl(
     kind: str, value: str, *, original_ota: bool = False,
-    resume_boot: bool = False,
+    resume_boot: bool = False, reuse_netns_pid: int | None = None,
 ) -> tuple[bool, str]:
     translated = _scenario_to_lab_env(kind, value)
     if translated is None:
@@ -435,10 +435,11 @@ def _start_runner_impl(
         extra_env["CREDENTIAL_STUB"] = "1"
         extra_env["DYNAMIC_LOCAL_OTA"] = "1"
         label = f"foxair-adb-original-ota-{value}"
-    elif kind == "scenario" and not resume_boot:
-        # DTU_runner owns the first and only GDB connection. qemu-user's
-        # remote stub is not reliable after detach/re-attach, unlike gdbserver
-        # on the physical DTU.
+    elif kind == "scenario":
+        # DTU_runner owns the first and only GDB connection. This also applies
+        # to the replacement QEMU created for an explicit recovery request:
+        # it must wait at the remote stub until the runner's resume hook is
+        # ready, rather than booting past the only attach opportunity.
         extra_env["AUTONOMOUS_DTU_RUNNER"] = "1"
         # qemu-user is stopped at its GDB entry point, so it cannot establish
         # MQTT before the production supervisor performs its new pre-hook
@@ -460,6 +461,8 @@ def _start_runner_impl(
         )
     env = os.environ.copy()
     env.update(extra_env)
+    if reuse_netns_pid is not None:
+        env["REUSE_NETNS_PID"] = str(reuse_netns_pid)
     env["LAB_ROOT"] = str(lab_root())
     duration = max(5, min(DEFAULT_RUN_SECONDS, MAX_RUN_SECONDS))
     log_path = _runner_log()
@@ -603,13 +606,14 @@ def _start_runner_impl(
 
 def _start_runner(
     kind: str, value: str, *, original_ota: bool = False,
-    resume_boot: bool = False,
+    resume_boot: bool = False, reuse_netns_pid: int | None = None,
 ) -> tuple[bool, str]:
     """Start one scenario while suppressing death detection for its replacement gap."""
     already_suppressed = _begin_intentional_stop()
     try:
         return _start_runner_impl(
             kind, value, original_ota=original_ota, resume_boot=resume_boot,
+            reuse_netns_pid=reuse_netns_pid,
         )
     finally:
         _end_intentional_stop(already_suppressed)
@@ -651,11 +655,86 @@ def stop_runner() -> None:
 
 
 def _ota_restart_blocked() -> bool:
-    hook = base.root_path("/tmp/phnix_ota_hook")
+    # The autonomous supervisor runs in bubblewrap with a dedicated /tmp,
+    # while older lab paths used ROOTFS/tmp.  Inspect both without changing
+    # either one so an active OTA can never be mistaken for an idle crash.
+    hooks = [
+        Path(os.environ.get(
+            "FOXAIR_FAKE_ADB_TMP", str(base.state_root() / "device-tmp")
+        )) / "phnix_ota_hook",
+    ]
+    try:
+        hooks.append(base.root_path("/tmp/phnix_ota_hook"))
+    except RuntimeError:
+        pass
     return any(
         (hook / marker).exists()
+        for hook in hooks
         for marker in ("run.active", "transfer-started", "original-service-owns")
     )
+
+
+def _runner_recovery_restart_requested() -> bool:
+    """Recognize only the productive runner's explicit crash-recovery phase.
+
+    A native ARM binary cannot be exec'd on the x86 VM with the QEMU remote
+    debugger semantics required by the runtime hook.  This narrow adapter is
+    the VM equivalent of the runner's direct service start: it keeps the
+    board/cache state and creates one stopped QEMU service for the runner's
+    subsequent resume-hook attach.  No generic OTA watchdog restart is
+    inferred from process death alone.
+    """
+    candidates = [
+        Path(os.environ.get(
+            "FOXAIR_FAKE_ADB_TMP", str(base.state_root() / "device-tmp")
+        )) / "phnix_ota_status.json",
+    ]
+    try:
+        candidates.append(base.root_path("/tmp/phnix_ota_status.json"))
+    except RuntimeError:
+        pass
+    for status_path in candidates:
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if (
+            status.get("terminal") is False
+            and status.get("phase") == "recovery-service-restart"
+            and status.get("original_service_authoritative") is True
+        ):
+            return True
+    return False
+
+
+def _runner_recovery_netns_pid() -> int | None:
+    """Return the validated productive supervisor PID requesting recovery."""
+    candidates = [
+        Path(os.environ.get(
+            "FOXAIR_FAKE_ADB_TMP", str(base.state_root() / "device-tmp")
+        )) / "phnix_ota_status.json",
+    ]
+    try:
+        candidates.append(base.root_path("/tmp/phnix_ota_status.json"))
+    except RuntimeError:
+        pass
+    for status_path in candidates:
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            pid = int(status.get("runner_pid", 0))
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if (
+            pid > 1
+            and status.get("terminal") is False
+            and status.get("phase") == "recovery-service-restart"
+            and status.get("original_service_authoritative") is True
+            and b"dtu_ota_supervisor.sh" in cmdline
+            and Path(f"/proc/{pid}/ns/net").exists()
+        ):
+            return pid
+    return None
 
 
 def _restart_context() -> tuple[str, str]:
@@ -671,7 +750,10 @@ def _restart_context() -> tuple[str, str]:
     return kind, value
 
 
-def _schedule_idle_service_restart(dead_pids: tuple[int, ...] = ()) -> bool:
+def _schedule_idle_service_restart(
+    dead_pids: tuple[int, ...] = (), *, resume_boot: bool = False,
+    reuse_netns_pid: int | None = None,
+) -> bool:
     """Emulate the host-side modem supervisor after an external QEMU death.
 
     This is simulator infrastructure.  It deliberately restarts the same lab
@@ -685,8 +767,10 @@ def _schedule_idle_service_restart(dead_pids: tuple[int, ...] = ()) -> bool:
 
     def restart() -> None:
         try:
-            resume_boot = value in {"resume-original", "resume-fast"} and root_path("/data/foxair_board_ota_resume.json").is_file()
-            ok, message = _start_runner(kind, value, resume_boot=resume_boot)
+            ok, message = _start_runner(
+                kind, value, resume_boot=resume_boot,
+                reuse_netns_pid=reuse_netns_pid,
+            )
             new_pids: tuple[int, ...] = ()
             if ok:
                 stable = 0
@@ -757,8 +841,19 @@ def _service_watchdog_transition(
     """Apply one deterministic watchdog sample; split out for unit tests."""
     if len(current) == 1:
         return current
-    if not current and observed:
-        if not _intentional_stop_active():
+    if not current:
+        # Once the original service owns the OTA, process death alone must not
+        # trigger the VM's idle watchdog.  Wait until the productive runner
+        # has classified the loss and explicitly entered its recovery phase.
+        if _ota_restart_blocked():
+            if _runner_recovery_restart_requested():
+                recovery_pid = _runner_recovery_netns_pid()
+                if recovery_pid is not None:
+                    _schedule_idle_service_restart(
+                        observed, resume_boot=True,
+                        reuse_netns_pid=recovery_pid,
+                    )
+        elif observed and not _intentional_stop_active():
             _schedule_idle_service_restart(observed)
         return ()
     return observed

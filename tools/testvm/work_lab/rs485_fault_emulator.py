@@ -172,7 +172,7 @@ def main():
     last_c5a8_seen_at = None
     resume_last_block = resume.get("last_block_at")
     resume_stage = resume.get("resume_stage", "receiving")
-    resume_interval = 1400.0 / 3 if args.resume_timing == "original" else 10.0
+    resume_interval = 1400.0 / 3 if args.resume_timing == "original" else 40.0
 
     def persist_resume():
         if not args.resume_state:
