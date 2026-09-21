@@ -336,7 +336,7 @@ class DtuOtaPackageTests(unittest.TestCase):
         hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(
             encoding="utf-8"
         )
-        resume = hook.split("resume_hook() {", 1)[1].split("hold_hook() {", 1)[0]
+        resume = hook.split("\nresume_hook() {\n", 1)[1].split("\nhold_hook() {\n", 1)[0]
         shared_gdb = hook.split("make_gdb_script() {", 1)[1].split("run_hook() {", 1)[0]
         self.assertNotIn("backup_persistent_state", resume)
         self.assertNotIn("restore_persistent_state", resume)
