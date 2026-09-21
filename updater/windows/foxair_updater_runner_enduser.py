@@ -403,6 +403,45 @@ class MainWindow(user_gui.MainWindow):
         recovery = str(status.get("recovery") or "")
         recovery_attempts = int(status.get("recovery_attempts") or 0)
 
+        # Transient warning rows describe the currently active preparation
+        # step.  If a later step is already visible, turn the earlier row green
+        # even when the short intermediate "completed" phase was missed by the
+        # GUI polling interval.
+        if phase not in {"hook-starting", "attaching"}:
+            current = self._flow_steps.get("runner-monitor")
+            if current and current[0] == "warn":
+                self._set_step(
+                    "runner-monitor", "ok",
+                    "Update-Überwachung auf dem LTE-Modem wurde gestartet.",
+                )
+
+        yield_completed = (
+            phase not in {
+                "",
+                "hook-started",
+                "hook-starting",
+                "attaching",
+                "waiting-for-yield-loop",
+            }
+            or status.get("c350_sent") is True
+            or status.get("c357_sent") is True
+            or status.get("c5a8_sent") is True
+            or transfer_started
+        )
+        if yield_completed:
+            current = self._flow_steps.get("runner-yield")
+            if current and current[0] == "warn":
+                self._set_step(
+                    "runner-yield", "ok",
+                    "Sicherer Start des Firmwareupdates wurde erreicht.",
+                )
+            current = self._flow_steps.get("runner-parser")
+            if current and current[0] == "warn" and status.get("c350_sent") is True:
+                self._set_step(
+                    "runner-parser", "ok",
+                    "Firmwareupdate wurde an das Mainboard übergeben.",
+                )
+
         if recovery_attempts > 0:
             if recovery == "completed":
                 self._set_step(
