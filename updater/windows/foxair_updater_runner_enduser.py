@@ -278,7 +278,7 @@ class MainWindow(user_gui.MainWindow):
             "post-restart-preflight": "LTE-Dienst wird nach dem Neustart erneut geprüft",
             "recovery-service-restart": "Update-Dienst ist ausgefallen und wird automatisch neu gestartet",
             "recovery-hook-attach": "Update-Überwachung wird wieder mit dem LTE-Dienst verbunden",
-            "recovery-wait-mainboard": "Warte auf die erneute Antwort des Mainboards",
+            "recovery-wait-mainboard": "Warte auf das Mainboard – Wiederaufnahme kann rund 15 Minuten dauern",
             "recovery-resumed": "Firmwareübertragung wurde automatisch fortgesetzt",
             "local-http": "Firmwaredatei wird für das LTE-Modem bereitgestellt",
             "invalid-success-boundary": "Abschluss des Firmwareupdates konnte noch nicht sicher bestätigt werden",
@@ -354,7 +354,9 @@ class MainWindow(user_gui.MainWindow):
                 "Der Update-Dienst läuft wieder. Die lokale Update-Überwachung wird erneut verbunden."
             ),
             "recovery-wait-mainboard": (
-                "Der Update-Dienst läuft wieder und wartet auf die erneute Antwort des Mainboards."
+                "Der Update-Dienst läuft wieder. Nach einer unterbrochenen Übertragung kann das Mainboard "
+                "erst nach rund 15 Minuten die Wiederaufnahme anfordern. Das ist normal; der Runner wartet "
+                "vorsichtshalber bis zu 20 Minuten auf die Fortsetzung."
             ),
             "recovery-resumed": (
                 "Das Mainboard hat die bestehende Firmwareübertragung fortgesetzt."
