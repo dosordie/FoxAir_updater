@@ -384,6 +384,12 @@ class DtuOtaPackageTests(unittest.TestCase):
             self.assertIn(f'"{phase}":', gui)
         self.assertIn('"service-ready-wait": (', enduser)
         self.assertIn('"runner-lost": (', enduser)
+        self.assertIn("rund 15 Minuten", enduser)
+        supervisor = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("roughly 15 minutes", supervisor)
+        self.assertIn("safety timeout is 20 minutes", supervisor)
 
     def test_runner_shell_payloads_parse_with_posix_sh(self):
         for path in (
