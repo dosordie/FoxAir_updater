@@ -40,7 +40,14 @@ write_status_json() {
 }
 
 service_pid() {
-    PID=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
+    PID=
+    for candidate in $(pidof phnixIot4G 2>/dev/null || true); do
+        state=$(awk '{print $3}' "/proc/$candidate/stat" 2>/dev/null || true)
+        if test "$state" != Z; then
+            PID=$candidate
+            break
+        fi
+    done
     if test -z "$PID" && test -f /data/phnixIot4G.tls-lab; then
         for proc in /proc/[0-9]*; do
             cmd=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
@@ -89,6 +96,31 @@ start_debug_server() {
     fi
     gdbserver --attach 127.0.0.1:12345 "$PID" > "$LOG_PATH" 2>&1 &
     echo $! > "$GDBSERVER_PID"
+}
+
+clear_stale_debugger() {
+    if test -f "$GDB_PID"; then
+        old=$(cat "$GDB_PID" 2>/dev/null || true)
+        case "$old" in
+            ''|*[!0-9]*) ;;
+            *)
+                cmd=$(tr '\000' ' ' < "/proc/$old/cmdline" 2>/dev/null || true)
+                case "$cmd" in *gdb*) kill -INT "$old" 2>/dev/null || true ;; esac
+                ;;
+        esac
+    fi
+    if test -f "$GDBSERVER_PID"; then
+        old=$(cat "$GDBSERVER_PID" 2>/dev/null || true)
+        case "$old" in
+            ''|*[!0-9]*) ;;
+            *)
+                cmd=$(tr '\000' ' ' < "/proc/$old/cmdline" 2>/dev/null || true)
+                case "$cmd" in *gdbserver*) kill -TERM "$old" 2>/dev/null || true ;; esac
+                ;;
+        esac
+    fi
+    rm -f "$GDB_PID" "$GDBSERVER_PID"
+    sleep 1
 }
 
 resume_watchdogs() {
@@ -896,6 +928,150 @@ end
 EOF
 }
 
+
+make_resume_gdb_script() {
+    RESUME_SIGFPE_POLICY=pass
+    test -f /data/phnixIot4G.tls-lab && RESUME_SIGFPE_POLICY=nopass
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+set print thread-events off
+set auto-load safe-path /
+set libthread-db-search-path /lib
+handle SIGILL nostop noprint pass
+handle SIGFPE nostop noprint $RESUME_SIGFPE_POLICY
+file /data/phnixIot4G
+target remote 127.0.0.1:12345
+set \$launcher_armed = 1
+set \$local_ota_active = 1
+set \$terminal_pending = 0
+
+break *0x1ba04
+break *0x1cea0
+break *0x1c7cc
+break *0x1d2f8
+break *0x18d04
+break *0x191c0
+break *0x19264
+break *0x1da3c
+break *0x1d748
+shell echo '{"phase":"resume-wait-mainboard","terminal":false}' > $STATUS
+while \$local_ota_active == 1
+  set \$ota_event_handled = 0
+  continue
+  printf "PHNIX resume-event pc=0x%x step=%u pending=%u\n", \$pc, *(unsigned char *)0x98a94, \$terminal_pending
+  if \$pc == 0x1ba04
+    set \$ota_event_handled = 1
+    printf "PHNIX resume-c36e status=%u\n", *(unsigned char *)(\$r0+3)
+    shell echo '{"phase":"resume-handshake","terminal":false}' > $STATUS
+  end
+  if \$pc == 0x1cea0
+    set \$ota_event_handled = 1
+    disable 2
+    shell echo '{"phase":"c357","terminal":false,"c357_sent":true}' > $STATUS
+  end
+  if \$pc == 0x1c7cc
+    set \$ota_event_handled = 1
+    disable 3
+    shell touch $TRANSFER_STARTED
+    shell echo '{"phase":"c5a8","terminal":false,"c5a8_sent":true}' > $STATUS
+  end
+  if \$pc == 0x1d2f8
+    set \$ota_event_handled = 1
+    if \$launcher_armed == 1 && \$r0 == 7
+      set \$r0 = 11
+    end
+  end
+  if \$pc == 0x18d04
+    set \$ota_event_handled = 1
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x191c0
+    set \$ota_event_handled = 1
+    set \$terminal_pending = 1
+    shell echo '{"phase":"success-report","terminal":false}' > $STATUS
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x19264
+    set \$ota_event_handled = 1
+    set \$terminal_pending = 2
+    shell echo '{"phase":"failure-report","terminal":false}' > $STATUS
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x1da3c
+    set \$ota_event_handled = 1
+    if *(unsigned char *)0x98a94 == 12
+      set \$local_ota_active = 0
+      set \$launcher_armed = 0
+      shell echo '{"phase":"success","terminal":true,"board_ota_step":12}' > $STATUS
+      shell touch $SAFE_TO_CLEAN
+      detach
+      quit
+    else
+      shell echo '{"phase":"invalid-success-boundary","terminal":false,"recovery_required":true}' > $STATUS
+      shell kill -STOP $PID
+      detach
+      quit
+    end
+  end
+  if \$pc == 0x1d748
+    set \$ota_event_handled = 1
+    if *(unsigned char *)0x98a94 == 12
+      set \$local_ota_active = 0
+      set \$launcher_armed = 0
+      shell echo '{"phase":"failed","terminal":true,"board_ota_step":12}' > $STATUS
+      shell touch $SAFE_TO_CLEAN
+      detach
+      quit
+    else
+      shell echo '{"phase":"invalid-failure-boundary","terminal":false,"recovery_required":true}' > $STATUS
+      shell kill -STOP $PID
+      detach
+      quit
+    end
+  end
+  if \$ota_event_handled == 0
+    shell echo '{"phase":"debugger-unexpected-stop","terminal":false,"recovery_required":true}' > $STATUS
+    shell kill -STOP $PID
+    detach
+    quit
+  end
+end
+EOF
+}
+
+resume_hook() {
+    test "$BUILD_ID" = af4dcae12639bedce833ee5efa5da009777b6319 || fail "requested Build-ID mismatch"
+    test "$ALLOW" = 0023,0053,0083 || fail "publish allow-list mismatch"
+    test ! -f "$SAFE_TO_CLEAN" || fail "OTA session is already terminal"
+    clear_stale_debugger
+    verify
+    mkdir -p "$STATE_DIR"
+    touch "$RUN_ACTIVE" "$ORIGINAL_SERVICE_OWNS"
+    echo $$ > "$HELPER_PID"
+    trap cleanup EXIT INT TERM
+    PID=$(service_pid)
+    watchdog_pids > "$WATCHDOG_PIDS"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    make_resume_gdb_script
+    printf '{"phase":"resume-attaching","terminal":false}\n' > "$STATUS"
+    start_debug_server "$STATE_DIR/gdbserver-resume.log"
+    sleep 1
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/gdb-resume.log" 2>&1 &
+    echo $! > "$GDB_PID"
+    GDB_RC=0
+    wait "$(cat "$GDB_PID")" || GDB_RC=$?
+    if ! grep -q '"terminal":true' "$STATUS" 2>/dev/null; then
+        printf '{"phase":"debugger-ended-before-terminal","terminal":false,"recovery_required":true,"gdb_exit_code":%s}\n' "$GDB_RC" > "$STATUS"
+        fail "resume debugger ended before a terminal OTA state (gdb exit $GDB_RC)"
+    fi
+    test "$GDB_RC" = 0 || fail "resume debugger failed after terminal OTA state (gdb exit $GDB_RC)"
+}
+
 run_hook() {
     test "$BUILD_ID" = af4dcae12639bedce833ee5efa5da009777b6319 || fail "requested Build-ID mismatch"
     test "$ALLOW" = 0023,0053,0083 || fail "publish allow-list mismatch"
@@ -982,8 +1158,9 @@ case "$ACTION" in
     restore-original) restore_original_hook ;;
     cancel-probe-resume) cancel_probe_resume_hook ;;
     run) run_hook ;;
+    resume) resume_hook ;;
     hold) hold_hook ;;
     cancel) echo "ERROR: live cancel is disabled until C36A/C36C runtime hooks are validated" >&2; exit 2 ;;
     stop) stop_hook ;;
-    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|c350-breakpoint-test|c350-probe|cancel-probe|cancel-probe-resume|run|hold|cancel|stop|restore-original [options]" >&2; exit 2 ;;
+    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|c350-breakpoint-test|c350-probe|cancel-probe|cancel-probe-resume|run|resume|hold|cancel|stop|restore-original [options]" >&2; exit 2 ;;
 esac
