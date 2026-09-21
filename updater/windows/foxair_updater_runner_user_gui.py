@@ -247,6 +247,7 @@ class MainWindow(runner.MainWindow):
     def _recovery_text(value: str) -> str:
         return {
             "not-required": "nicht erforderlich",
+            "attempting": "automatische Wiederaufnahme läuft",
             "completed": "abgeschlossen",
             "required": "manuelle Prüfung erforderlich",
             "?": "noch nicht bestimmt",
