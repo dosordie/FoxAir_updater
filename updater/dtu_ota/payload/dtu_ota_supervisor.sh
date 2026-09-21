@@ -92,6 +92,7 @@ MQTT_ISOLATED=false
 BOOT_ID=
 RECOVERY_ATTEMPTS=0
 RESUME_BASELINE_OFFSET=0
+RECOVERY_DEADLINE_AT=0
 RECOVERY_ERROR=
 
 load_status_state() {
@@ -114,6 +115,7 @@ load_status_state() {
     v=$(status_string boot_id); test -n "$v" && BOOT_ID=$v
     v=$(status_number recovery_attempts); test -n "$v" && RECOVERY_ATTEMPTS=$v
     v=$(status_number resume_baseline_offset); test -n "$v" && RESUME_BASELINE_OFFSET=$v
+    v=$(status_number recovery_deadline_at); test -n "$v" && RECOVERY_DEADLINE_AT=$v
     v=$(sed -n 's/.*"c36e_status":\([0-9][0-9]*\).*/\1/p' "$STATUS" 2>/dev/null | head -n 1)
     test -n "$v" && C36E_STATUS=$v
 }
@@ -124,9 +126,9 @@ write_status() {
     test "$STARTED_AT" != 0 || STARTED_AT=$now
     tmp=$STATUS.tmp.$$
     case "$SERVICE_PID" in ''|*[!0-9]*) SERVICE_PID=0 ;; esac
-    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","recovery_attempts":%s,"resume_baseline_offset":%s,"reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s,"service_restart_requested":%s,"service_restart_verified":%s,"mqtt_isolation_requested":%s,"mqtt_isolated":%s,"boot_id":"%s"}\n' \
+    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","recovery_attempts":%s,"resume_baseline_offset":%s,"recovery_deadline_at":%s,"reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s,"service_restart_requested":%s,"service_restart_verified":%s,"mqtt_isolation_requested":%s,"mqtt_isolated":%s,"boot_id":"%s"}\n' \
         "$SCHEMA" "$RUN_ID" "$state" "$phase" "$terminal" "$PROGRESS" "$OFFSET" "$LENGTH" \
-        "$TRANSFER_STARTED" "$ORIGINAL_AUTH" "$ABORT_ALLOWED" "$RECOVERY" "$RECOVERY_ATTEMPTS" "$RESUME_BASELINE_OFFSET" \
+        "$TRANSFER_STARTED" "$ORIGINAL_AUTH" "$ABORT_ALLOWED" "$RECOVERY" "$RECOVERY_ATTEMPTS" "$RESUME_BASELINE_OFFSET" "$RECOVERY_DEADLINE_AT" \
         "$(json_escape "$reason")" "$(json_escape "$detail")" "$RESULT_TYPE" "$$" "$HOOK_PID" "$SERVICE_PID" \
         "$STARTED_AT" "$now" "$now" "$PACKAGE_SHA" "$FIRMWARE_SHA" "$BOARD_STEP" "$C36E_SEEN" "$C36E_STATUS" \
         "$C350_SENT" "$C357_SENT" "$C5A8_SENT" "$STATE_RESTORED" \
@@ -520,6 +522,7 @@ recover_after_hook_loss() {
     must_write_status running recovery-hook-attach false "" "Reattaching update monitoring without changing OTA state."
     start_resume_hook || { RECOVERY_ERROR="Resume monitoring could not be attached."; return 1; }
     log_event "resume monitoring attached pid=$SERVICE_PID baseline_offset=$RESUME_BASELINE_OFFSET"
+    RECOVERY_DEADLINE_AT=$(( $(date +%s) + RECOVERY_RESUME_TIMEOUT ))
     log_event "mainboard resume can take roughly 15 minutes after an interrupted V3.4 transfer; safety timeout is 20 minutes"
     elapsed=0
     while test "$elapsed" -lt "$RECOVERY_RESUME_TIMEOUT"; do
