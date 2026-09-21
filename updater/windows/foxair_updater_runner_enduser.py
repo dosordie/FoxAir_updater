@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 import foxair_updater_gui as base
 import foxair_updater_runner_user_gui as user_gui
@@ -34,6 +34,8 @@ class MainWindow(user_gui.MainWindow):
         self._passive_runner_poll = False
         self._runner_started_epoch: int | None = None
         self._runner_terminal_epoch: int | None = None
+        self._recovery_deadline_at = 0
+        self._recovery_wait_active = False
         self._manual_status_direct_attempt = False
         self._manual_status_reconnect_pending = False
         super().__init__()
@@ -41,6 +43,9 @@ class MainWindow(user_gui.MainWindow):
         # cadence so the Windows fallback display does not lag several seconds
         # behind the autonomous runner state.
         self._runner_timer.setInterval(2000)
+        self._recovery_countdown_timer = QTimer(self)
+        self._recovery_countdown_timer.setInterval(1000)
+        self._recovery_countdown_timer.timeout.connect(self._update_recovery_countdown)
         self.setWindowTitle(f"FoxAir Updater {base.APP_VERSION}")
         self.dry.setText("Vorprüfung")
         self.update_btn.setText("Firmwareupdate starten")
@@ -62,6 +67,17 @@ class MainWindow(user_gui.MainWindow):
         # prepare/start controls.
         layout.removeWidget(self.ota_reattach_btn)
         layout.insertWidget(max(0, layout.count() - 1), self.ota_reattach_btn)
+
+        self.recovery_wait_label = QLabel("")
+        self.recovery_wait_label.setWordWrap(True)
+        self.recovery_wait_label.setStyleSheet(
+            "QLabel{background:#fff8e1;border:1px solid #e0c36a;padding:7px;}"
+        )
+        self.recovery_wait_label.hide()
+        if hasattr(self, "progress_sources"):
+            layout.insertWidget(layout.indexOf(self.progress_sources) + 1, self.recovery_wait_label)
+        else:
+            layout.insertWidget(layout.indexOf(self.progress) + 1, self.recovery_wait_label)
         return widget
 
     def _reattach_ota(self):
@@ -154,6 +170,41 @@ class MainWindow(user_gui.MainWindow):
         elapsed = max(0, int(end_epoch - self._runner_started_epoch))
         minutes, seconds = divmod(elapsed, 60)
         self.ota_elapsed_label.setText(f"Verstrichen: {minutes:02d}:{seconds:02d}")
+
+    def _update_recovery_countdown(self) -> None:
+        if not self._recovery_wait_active or self._recovery_deadline_at <= 0:
+            if hasattr(self, "recovery_wait_label"):
+                self.recovery_wait_label.hide()
+            return
+
+        remaining = max(0, self._recovery_deadline_at - int(time.time()))
+        minutes, seconds = divmod(remaining, 60)
+        if remaining > 0:
+            text = (
+                f"Wiederaufnahme: Sicherheits-Timeout in {minutes:02d}:{seconds:02d}. "
+                "Das Mainboard kann sich nach einer Unterbrechung erst nach rund 15 Minuten wieder melden."
+            )
+        else:
+            text = "Wiederaufnahme: Sicherheits-Timeout erreicht – der Abschlussstatus wird geprüft."
+        if hasattr(self, "recovery_wait_label"):
+            self.recovery_wait_label.setText(text)
+            self.recovery_wait_label.show()
+
+    def _sync_recovery_countdown(self, status: dict) -> None:
+        phase = str(status.get("phase") or "")
+        deadline = status.get("recovery_deadline_at")
+        active = phase == "recovery-wait-mainboard" and isinstance(deadline, int) and deadline > 0
+
+        self._recovery_wait_active = active
+        self._recovery_deadline_at = deadline if active else 0
+        if active:
+            self._update_recovery_countdown()
+            if not self._recovery_countdown_timer.isActive():
+                self._recovery_countdown_timer.start()
+        else:
+            self._recovery_countdown_timer.stop()
+            if hasattr(self, "recovery_wait_label"):
+                self.recovery_wait_label.hide()
 
     def _sync_runner_elapsed(self, status: dict) -> None:
         state = str(status.get("state") or "")
@@ -734,6 +785,7 @@ class MainWindow(user_gui.MainWindow):
         length = status.get("length")
 
         self._sync_runner_elapsed(status)
+        self._sync_recovery_countdown(status)
         self._log_runner_id_once(run_id)
         self._update_flow_from_runner(status)
         if terminal and result_type == "success":
