@@ -33,28 +33,38 @@ def patch_script(text: str) -> tuple[str, bool]:
     # inferior's forked children.  The original 0033 parser executes two
     # system() calls here (cache removal and OTA_INFO truncation), causing the
     # otherwise healthy remote target to disappear before C350.  Reproduce
-    # those two file mutations in the VM namespace and temporarily NOP only
-    # the matching BL instructions.  Restore the original instructions at the
-    # already guarded parser-return breakpoint.  This is strictly a QEMU
-    # transport workaround; the uploaded production hook remains unchanged.
+    # those two file mutations in the VM namespace and step over exactly the
+    # two BL instructions with one-shot hardware breakpoints.  This is
+    # strictly a QEMU transport workaround; the uploaded production hook
+    # remains unchanged.
+    c36e_anchor = "hbreak *0x1ba04\n"
+    system_guards = """hbreak *0x1ba04
+thbreak *0x190e8
+commands 4
+  silent
+  set $pc = 0x190ec
+  continue
+end
+thbreak *0x190f4
+commands 5
+  silent
+  set $pc = 0x190f8
+  continue
+end
+"""
+    patched = patched.replace(c36e_anchor, system_guards, 1)
     yield_anchor = "  set $return_pc = $pc\n"
     yield_patch = (
-        "  set $foxair_system_rm = *(unsigned int *)0x190e8\n"
-        "  set $foxair_system_info = *(unsigned int *)0x190f4\n"
-        "  set *(unsigned int *)0x190e8 = 0xe1a00000\n"
-        "  set *(unsigned int *)0x190f4 = 0xe1a00000\n"
         "  shell rm -f /cache/phnixIot_device_OTA\n"
         "  shell : > /data/phnixIot_device_OTA_INFO\n"
         + yield_anchor
     )
     patched = patched.replace(yield_anchor, yield_patch, 1)
-    post_anchor = '  printf "PHNIX post-parser pc=0x%x\\n", $pc\n'
-    post_patch = (
-        "  set *(unsigned int *)0x190e8 = $foxair_system_rm\n"
-        "  set *(unsigned int *)0x190f4 = $foxair_system_info\n"
-        + post_anchor
-    )
-    patched = patched.replace(post_anchor, post_patch, 1)
+    # Breakpoints 4/5 are now the two temporary system guards.  Keep the
+    # production script's later one-shot C357/C5A8 disables aligned with their
+    # shifted QEMU-only breakpoint numbers.
+    patched = patched.replace("    disable 4\n", "    disable 6\n", 1)
+    patched = patched.replace("    disable 5\n", "    disable 7\n", 1)
     return patched, patched != text
 
 

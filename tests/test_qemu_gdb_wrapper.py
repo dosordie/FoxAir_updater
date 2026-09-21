@@ -34,12 +34,12 @@ break *0x1cea0
         self.assertNotIn("disable 1", patched)
         self.assertIn("break *0x1cea0", patched)
         self.assertNotIn("file /data/phnixIot4G", patched)
-        self.assertIn("set *(unsigned int *)0x190e8 = 0xe1a00000", patched)
-        self.assertIn("set *(unsigned int *)0x190f4 = 0xe1a00000", patched)
+        self.assertIn("thbreak *0x190e8", patched)
+        self.assertIn("set $pc = 0x190ec", patched)
+        self.assertIn("thbreak *0x190f4", patched)
+        self.assertIn("set $pc = 0x190f8", patched)
         self.assertIn("shell rm -f /cache/phnixIot_device_OTA", patched)
         self.assertIn("shell : > /data/phnixIot_device_OTA_INFO", patched)
-        self.assertIn("set *(unsigned int *)0x190e8 = $foxair_system_rm", patched)
-        self.assertIn("set *(unsigned int *)0x190f4 = $foxair_system_info", patched)
 
     def test_ignores_unrelated_gdb_script(self):
         source = "target remote 127.0.0.1:12345\nbreak *0x1fe40\n"
