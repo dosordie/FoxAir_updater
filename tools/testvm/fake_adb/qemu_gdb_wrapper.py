@@ -33,22 +33,25 @@ def patch_script(text: str) -> tuple[str, bool]:
     # inferior's forked children.  The original 0033 parser executes two
     # system() calls here (cache removal and OTA_INFO truncation), causing the
     # otherwise healthy remote target to disappear before C350.  Reproduce
-    # those two file mutations in the VM namespace and step over exactly the
-    # two BL instructions with one-shot hardware breakpoints.  This is
-    # strictly a QEMU transport workaround; the uploaded production hook
-    # remains unchanged.
+    # those two file mutations in the VM namespace and temporarily intercept
+    # system@plt while the injected parser is active.  One guarded hardware
+    # breakpoint also stays within qemu-user's four-slot limit; two separate
+    # call-site breakpoints exceeded it and made GDB fall back to an impossible
+    # text-memory write.  This is strictly a QEMU transport workaround; the
+    # uploaded production hook remains unchanged.
+    patched = patched.replace(
+        "set $resume_mode = 0\n",
+        "set $resume_mode = 0\nset $foxair_parser_injected = 0\n",
+        1,
+    )
     c36e_anchor = "hbreak *0x1ba04\n"
     system_guards = """hbreak *0x1ba04
-thbreak *0x190e8
+hbreak *0x9a98
+condition 4 $foxair_parser_injected == 1
 commands 4
   silent
-  set $pc = 0x190ec
-  continue
-end
-thbreak *0x190f4
-commands 5
-  silent
-  set $pc = 0x190f8
+  set $r0 = 0
+  set $pc = $lr
   continue
 end
 """
@@ -57,14 +60,21 @@ end
     yield_patch = (
         "  shell rm -f /cache/phnixIot_device_OTA\n"
         "  shell : > /data/phnixIot_device_OTA_INFO\n"
+        "  set $foxair_parser_injected = 1\n"
         + yield_anchor
     )
     patched = patched.replace(yield_anchor, yield_patch, 1)
-    # Breakpoints 4/5 are now the two temporary system guards.  Keep the
+    patched = patched.replace(
+        '  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
+        '  set $foxair_parser_injected = 0\n  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
+        1,
+    )
+    # Breakpoint 4 is now the temporary parser system() guard.  Keep the
     # production script's later one-shot C357/C5A8 disables aligned with their
     # shifted QEMU-only breakpoint numbers.
-    patched = patched.replace("    disable 4\n", "    disable 6\n", 1)
-    patched = patched.replace("    disable 5\n", "    disable 7\n", 1)
+    patched = patched.replace("    disable 4\n", "    disable 4004\n", 1)
+    patched = patched.replace("    disable 5\n", "    disable 6\n", 1)
+    patched = patched.replace("    disable 4004\n", "    disable 5\n", 1)
     return patched, patched != text
 
 
