@@ -12,6 +12,11 @@ on:
         required: true
         default: false
         type: boolean
+      build_only:
+        description: "Build only: use selected branch, upload artifacts, do not commit/tag/release"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -26,11 +31,19 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout main
+      - name: Checkout selected ref
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: main
+          ref: ${{ github.ref }}
+
+      - name: Validate release branch
+        if: ${{ !inputs.build_only }}
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_name }}" -ne "main") {
+            throw "Publishing a Windows release is only allowed from main. Use build_only=true for branch builds."
+          }
 
       - name: Validate version and tag
         shell: pwsh
@@ -41,10 +54,12 @@ jobs:
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
             throw "Version must use x.y.z, for example 0.4.0"
           }
-          git fetch origin main --tags
-          $tag = "windows-v$env:VERSION"
-          if (git tag --list $tag) {
-            throw "Tag $tag already exists. Choose a new version."
+          if ("${{ inputs.build_only }}" -ne "true") {
+            git fetch origin main --tags
+            $tag = "windows-v$env:VERSION"
+            if (git tag --list $tag) {
+              throw "Tag $tag already exists. Choose a new version."
+            }
           }
 
       - name: Set Windows release version
@@ -187,7 +202,24 @@ jobs:
           & (Join-Path $portableCheck 'runtime/python.exe') (Join-Path $portableCheck 'backend/updater/common/phnix_statistics_counters.py') --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Packaged statistics counter core did not start with private runtime' }
 
+      - name: Upload build-only portable ZIP
+        if: ${{ inputs.build_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: FoxAir_Updater_Portable_v${{ inputs.version }}_${{ github.ref_name }}
+          path: dist/FoxAir_Updater_Portable_v${{ inputs.version }}.zip
+          if-no-files-found: error
+
+      - name: Upload build-only Windows setup
+        if: ${{ inputs.build_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: FoxAir_Updater_Setup_v${{ inputs.version }}_${{ github.ref_name }}
+          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ inputs.version }}.exe
+          if-no-files-found: error
+
       - name: Commit release version and push tag
+        if: ${{ !inputs.build_only }}
         shell: pwsh
         env:
           VERSION: ${{ inputs.version }}
@@ -211,6 +243,7 @@ jobs:
           git push origin $tag
 
       - name: Create GitHub Release
+        if: ${{ !inputs.build_only }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-v${{ inputs.version }}
