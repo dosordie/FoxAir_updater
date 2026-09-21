@@ -89,6 +89,25 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
         self.assertIn("self._auto_cleanup_retry_visible", self.source)
         self.assertIn("Gespeicherte Updatedaten erneut löschen", self.source)
 
+    def test_firmware_toolbar_has_lte_dtu_debug_shortcut_left_of_diagnostics(self):
+        self.assertIn(
+            'self.update_debug_monitor_btn = QPushButton("LTE DTU Debug öffnen")',
+            self.source,
+        )
+        self.assertIn(
+            "self.update_debug_monitor_btn.clicked.connect(self._open_debug_monitor)",
+            self.source,
+        )
+        self.assertIn(
+            "toolbar.insertWidget(insert_at, self.update_debug_monitor_btn)",
+            self.source,
+        )
+        self.assertIn(
+            "toolbar.insertWidget(insert_at + 1, self.diagnostics_button)",
+            self.source,
+        )
+        self.assertIn("denselben read-only PHNIX-Debugmonitor", self.source)
+
     def test_technical_runner_log_opens_a_read_only_dialog(self):
         self.assertIn("def _show_runner_log_dialog(self, output: str)", self.source)
         self.assertIn("QPlainTextEdit", self.source)
