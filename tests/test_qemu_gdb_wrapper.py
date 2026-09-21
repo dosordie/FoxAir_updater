@@ -20,6 +20,7 @@ printf \"PHNIX yield pc=0x%x\\n\", $pc
         self.assertIn("hbreak *0x1fe40", patched)
         self.assertIn("hbreak *0x1ba04", patched)
         self.assertIn("break *0x1cea0", patched)
+        self.assertNotIn("file /data/phnixIot4G", patched)
 
     def test_ignores_unrelated_gdb_script(self):
         source = "target remote 127.0.0.1:12345\nbreak *0x1fe40\n"

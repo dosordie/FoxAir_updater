@@ -19,6 +19,11 @@ def patch_script(text: str) -> tuple[str, bool]:
         return text, False
     patched = text.replace("break *0x1fe40", "hbreak *0x1fe40", 1)
     patched = patched.replace("break *0x1ba04", "hbreak *0x1ba04", 1)
+    # The proven Work-QEMU script deliberately operates on absolute
+    # addresses without loading the ARM ELF into host GDB.  Loading it is not
+    # required for this hook and makes GDB 16.3 internally crash while qemu
+    # reports the service's many fork/exec events during parser continuation.
+    patched = patched.replace("file /data/phnixIot4G\n", "", 1)
     return patched, patched != text
 
 
