@@ -441,10 +441,38 @@ start_service_direct() {
     test -z "$(service_pids)" || return 1
     log_event "update service crashed; starting /data/phnixIot4G directly"
     (cd /data || exit 1; exec ./phnixIot4G) >> "$RUN_DIR/phnix-resume-service.log" 2>&1 &
-    sleep 3
-    SERVICE_PID=$(single_service_pid) || return 1
-    test "$(awk '/^TracerPid:/ {print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null)" = 0 || return 1
-    log_event "phnixIot4G restarted successfully pid=$SERVICE_PID"
+
+    # Do not involve the paused helloworld watchdogs. Allow the original
+    # service a short startup window instead of requiring an arbitrary fixed
+    # three-second boundary.
+    elapsed=0
+    stable_pid=
+    stable_count=0
+    while test "$elapsed" -lt 30; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+        current=$(service_pids)
+        count=$(printf '%s\n' "$current" | awk '{print NF}')
+        if test "$count" = 1; then
+            tracer=$(awk '/^TracerPid:/ {print $2}' "/proc/$current/status" 2>/dev/null || true)
+            test "$tracer" = 0 || return 1
+            if test "$stable_pid" = "$current"; then
+                stable_count=$((stable_count + 1))
+            else
+                stable_pid=$current
+                stable_count=1
+            fi
+            if test "$stable_count" -ge 3; then
+                SERVICE_PID=$current
+                log_event "phnixIot4G restarted successfully pid=$SERVICE_PID"
+                return 0
+            fi
+        else
+            stable_pid=
+            stable_count=0
+        fi
+    done
+    return 1
 }
 
 start_resume_hook() {
