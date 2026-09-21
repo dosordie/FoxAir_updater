@@ -391,6 +391,37 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertIn("roughly 15 minutes", supervisor)
         self.assertIn("safety timeout is 20 minutes", supervisor)
 
+    def test_recovery_deadline_is_exported_once_and_counted_down_only_on_windows(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        recovery = runner.split("recover_after_hook_loss() {", 1)[1].split(
+            "start_http() {", 1
+        )[0]
+        self.assertIn('"recovery_deadline_at":%s', runner)
+        self.assertIn("RECOVERY_DEADLINE_AT=0", runner)
+        self.assertIn(
+            'RECOVERY_DEADLINE_AT=$(( $(date +%s) + RECOVERY_RESUME_TIMEOUT ))',
+            recovery,
+        )
+        self.assertLess(
+            recovery.index("RECOVERY_DEADLINE_AT=$(("),
+            recovery.index('while test "$elapsed" -lt "$RECOVERY_RESUME_TIMEOUT"'),
+        )
+
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        countdown = enduser.split("def _update_recovery_countdown", 1)[1].split(
+            "def _sync_runner_elapsed", 1
+        )[0]
+        self.assertIn("setInterval(1000)", enduser)
+        self.assertIn("recovery_deadline_at", countdown)
+        self.assertIn("Sicherheits-Timeout in", countdown)
+        self.assertIn("rund 15 Minuten", countdown)
+        self.assertNotIn("_run_runner(", countdown)
+        self.assertNotIn("_poll_runner_status(", countdown)
+
     def test_windows_completes_transient_flow_warnings_after_next_step(self):
         enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
             encoding="utf-8"
