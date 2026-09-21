@@ -702,7 +702,7 @@ make_gdb_script() {
     RESUME_MODE=${RESUME_MODE:-0}
     if test "$RESUME_MODE" = 1; then
         SIGFPE_POLICY=pass
-        test -f /data/phnixIot4G.tls-lab && SIGFPE_POLICY=nopass
+        test -f /data/phnixIot4G.tls-lab && SIGFPE_POLICY="nopass"
         # Keep breakpoint numbering identical to the normal path so the shared
         # monitor can keep disabling C357/C5A8 breakpoints 4 and 5.
         START_TO_FIRST_C36E=$(cat <<EOF
