@@ -276,6 +276,10 @@ class MainWindow(user_gui.MainWindow):
                 "Firmwareupdate läuft auf dem LTE-Modem weiter – lokale Überwachung ist beendet"
             ),
             "post-restart-preflight": "LTE-Dienst wird nach dem Neustart erneut geprüft",
+            "recovery-service-restart": "Update-Dienst ist ausgefallen und wird automatisch neu gestartet",
+            "recovery-hook-attach": "Update-Überwachung wird wieder mit dem LTE-Dienst verbunden",
+            "recovery-wait-mainboard": "Warte auf die erneute Antwort des Mainboards",
+            "recovery-resumed": "Firmwareübertragung wurde automatisch fortgesetzt",
             "local-http": "Firmwaredatei wird für das LTE-Modem bereitgestellt",
             "invalid-success-boundary": "Abschluss des Firmwareupdates konnte noch nicht sicher bestätigt werden",
             "invalid-failure-boundary": "Fehlerstatus des Firmwareupdates konnte noch nicht sicher bestätigt werden",
@@ -294,6 +298,18 @@ class MainWindow(user_gui.MainWindow):
             ),
             "local-preparation": "Das LTE-Modem bereitet das Firmwareupdate vor.",
             "service-restart": "Der LTE-Kommunikationsdienst wird für die Update-Überwachung neu gestartet.",
+            "recovery-service-restart": (
+                "Der Update-Dienst wurde während der laufenden Übertragung beendet und wird automatisch neu gestartet."
+            ),
+            "recovery-hook-attach": (
+                "Der Update-Dienst läuft wieder. Die lokale Update-Überwachung wird erneut verbunden."
+            ),
+            "recovery-wait-mainboard": (
+                "Der Update-Dienst läuft wieder und wartet auf die erneute Antwort des Mainboards."
+            ),
+            "recovery-resumed": (
+                "Das Mainboard hat die bestehende Firmwareübertragung fortgesetzt."
+            ),
             "same-version": "Die gleiche Firmware ist bereits installiert. Es wurden keine Firmwaredaten übertragen.",
             "original-service-active-unmonitored": (
                 "Das Firmwareupdate läuft auf dem LTE-Modem weiter. Windows kann den aktuellen Stand "
@@ -370,6 +386,22 @@ class MainWindow(user_gui.MainWindow):
             "service-restart": (
                 "runner-service-restart", "warn",
                 "LTE-Kommunikationsdienst wird für die Update-Überwachung neu gestartet.",
+            ),
+            "recovery-service-restart": (
+                "runner-recovery-resume", "warn",
+                "Update-Dienst ist ausgefallen und wird automatisch neu gestartet.",
+            ),
+            "recovery-hook-attach": (
+                "runner-recovery-resume", "warn",
+                "Update-Dienst läuft wieder; Update-Überwachung wird neu verbunden.",
+            ),
+            "recovery-wait-mainboard": (
+                "runner-recovery-resume", "warn",
+                "Warte auf die erneute Antwort des Mainboards und die Fortsetzung der Übertragung.",
+            ),
+            "recovery-resumed": (
+                "runner-recovery-resume", "ok",
+                "Firmwareübertragung wurde nach dem Dienstausfall automatisch fortgesetzt.",
             ),
             "staging": (
                 "runner-staging", "ok",
@@ -450,6 +482,7 @@ class MainWindow(user_gui.MainWindow):
             "runner-yield": "Sicherer Start des Firmwareupdates wurde erreicht.",
             "runner-parser": "Firmwareupdate wurde an das Mainboard übergeben.",
             "runner-service-restart": "LTE-Kommunikationsdienst wurde kontrolliert neu gestartet.",
+            "runner-recovery-resume": "Automatische Wiederaufnahme der Firmwareübertragung war erfolgreich.",
             "runner-c350": "Update-Anfrage wurde an das Mainboard gesendet.",
             "runner-c357": "Firmwareübertragung wurde vorbereitet.",
             "runner-c5a8": "Firmware wurde vollständig an das Mainboard übertragen.",
