@@ -574,10 +574,10 @@ recover_after_hook_loss() {
             log_event "recovery hook reached terminal OTA state before another offset increment"
             return 0
         fi
-        if ! kill -0 "$HOOK_PID" 2>/dev/null; then
+        kill -0 "$HOOK_PID" 2>/dev/null || {
             RECOVERY_ERROR="Resume monitoring ended before transfer progress was confirmed."
             return 1
-        fi
+        }
 
         remaining=$(( (RECOVERY_RESUME_TIMEOUT - elapsed + 59) / 60 ))
         test "$remaining" -lt 0 && remaining=0
