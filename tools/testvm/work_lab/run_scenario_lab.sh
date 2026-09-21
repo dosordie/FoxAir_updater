@@ -270,6 +270,7 @@ unshare --net --mount --fork bash -c '
     if [[ -n "${BOARD_RESUME_STATE:-}" ]]; then
       rs485_args+=(--resume-state "${BOARD_RESUME_STATE}")
     fi
+    rs485_args+=(--resume-timing "${BOARD_RESUME_TIMING:-off}")
     if [[ "${CANCEL_ACK:-0}" == 1 ]]; then
       rs485_args+=(--cancel-ack)
     fi

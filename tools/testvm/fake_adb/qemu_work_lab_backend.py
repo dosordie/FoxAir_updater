@@ -336,6 +336,8 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
             "success": "success",
             "success-real-timing": "success",
             "restart-at-50-resume": "success",
+            "resume-original": "success",
+            "resume-fast": "success",
             "same-version": "c350-status0",
             "stall-c350": "no-c350-status",
             "stall-c5a8": "no-block-ack",
@@ -346,10 +348,12 @@ def _scenario_to_lab_env(kind: str, value: str) -> tuple[dict[str, str], str] | 
         env["FAULT_SCENARIO"] = fault
         if value == "success-real-timing":
             env["OTA_TIMING_PROFILE"] = "real-v34"
-        if value == "restart-at-50-resume":
+        if value in {"restart-at-50-resume", "resume-original", "resume-fast"}:
             env["BOARD_RESUME_STATE"] = str(
                 lab_root() / "rootfs/data/foxair_board_ota_resume.json"
             )
+        if value.startswith("resume-"):
+            env["BOARD_RESUME_TIMING"] = value.removeprefix("resume-")
         return env, label
 
     if kind == "handshake-scenario":
@@ -577,7 +581,7 @@ def _start_runner_impl(
                         f"Work-QEMU-Szenario {kind}={value} nach persistentem "
                         "C544/C5A8-Resume wieder aktiv"
                     )
-                if detached and board_ready:
+                if (detached or (resume_boot and value in {"resume-fast", "resume-original"})) and board_ready:
                     meta = json.loads(_runner_meta().read_text(encoding="utf-8"))
                     meta["run_dir"] = str(run_dir)
                     _runner_meta().write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -681,7 +685,8 @@ def _schedule_idle_service_restart(dead_pids: tuple[int, ...] = ()) -> bool:
 
     def restart() -> None:
         try:
-            ok, message = _start_runner(kind, value)
+            resume_boot = value in {"resume-original", "resume-fast"} and root_path("/data/foxair_board_ota_resume.json").is_file()
+            ok, message = _start_runner(kind, value, resume_boot=resume_boot)
             new_pids: tuple[int, ...] = ()
             if ok:
                 stable = 0
@@ -1148,6 +1153,7 @@ def main() -> int:
     sub.add_parser("online")
     sub.add_parser("offline")
     sub.add_parser("runner-stop")
+    crash = sub.add_parser("service-crash", help="SIGKILL only the simulated QEMU PHNIX process; preserve OTA files")
     mqtt = sub.add_parser("mqtt-send")
     mqtt.add_argument("kind", choices=MQTT_INJECTION_KINDS)
     mqtt.add_argument("payload_hex", nargs="?")
@@ -1175,6 +1181,18 @@ def main() -> int:
             return 0
         if args.command == "runner-stop":
             _stop_runner()
+            return 0
+        if args.command == "service-crash":
+            pids = service_pids()
+            if len(pids) != 1:
+                raise RuntimeError("service-crash requires exactly one simulated PHNIX process")
+            pid = pids[0]
+            exe = Path(f"/proc/{pid}/exe").resolve()
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+            if "qemu-arm" not in exe.name or b"/data/phnixIot4G.tls-lab" not in cmdline:
+                raise RuntimeError("refusing crash: target is not the lab QEMU process")
+            os.kill(pid, signal.SIGKILL)
+            print(f"Simulated PHNIX process {pid}: SIGKILL sent; persistent OTA state retained.")
             return 0
         if args.command == "mqtt-send":
             ok, message = inject_mqtt(args.kind, args.payload_hex)

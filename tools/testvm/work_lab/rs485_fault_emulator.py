@@ -90,6 +90,8 @@ def parse_args():
         help="fast developer timing or measured V3.4 live-update timing",
     )
     parser.add_argument("--resume-state", help="persist next confirmed C5A8 block across LTE restarts")
+    parser.add_argument("--resume-timing", choices=("off", "original", "fast"), default="off",
+                        help="C5A8 inactivity -> fallback -> unsolicited C544; original 2x466.667s, fast 2x10s")
     parser.add_argument(
         "--fault-scenario", default="success",
         choices=("success", "c350-status0", "no-c350-status", "no-c357-status",
@@ -157,6 +159,7 @@ def main():
     c350_done = False
     c357_done = False
     next_block = 1
+    resume = {}
     if args.resume_state and os.path.exists(args.resume_state):
         with open(args.resume_state, "r", encoding="utf-8") as state_file:
             resume = json.load(state_file)
@@ -167,6 +170,20 @@ def main():
     reconstructed = bytearray()
     completion_state = "transfer"
     last_c5a8_seen_at = None
+    resume_last_block = resume.get("last_block_at")
+    resume_stage = resume.get("resume_stage", "receiving")
+    resume_interval = 1400.0 / 3 if args.resume_timing == "original" else 10.0
+
+    def persist_resume():
+        if not args.resume_state:
+            return
+        state_tmp = args.resume_state + ".new"
+        with open(state_tmp, "w", encoding="utf-8") as state_file:
+            json.dump({"next_block": next_block, "confirmed_offset": (next_block - 1) * 168,
+                       "last_block_at": resume_last_block, "resume_stage": resume_stage}, state_file)
+            state_file.flush()
+            os.fsync(state_file.fileno())
+        os.replace(state_tmp, args.resume_state)
     with open(args.transcript, "a", encoding="utf-8", buffering=1) as transcript, \
          open(args.from_app, "ab", buffering=0) as from_app, \
          open(args.to_app, "ab", buffering=0) as to_app:
@@ -186,6 +203,20 @@ def main():
             f"promotion-total={timing['status_visible'] + timing['promotion']:.0f}s\n"
         )
         while True:
+            if args.resume_timing != "off" and resume_last_block is not None:
+                idle = time.time() - resume_last_block
+                if resume_stage == "receiving" and idle >= resume_interval:
+                    resume_stage = "fallback"
+                    c350_done = c357_done = False
+                    persist_resume()
+                    transcript.write(f"{time.time():.6f} RESUME interblock-timeout idle={idle:.3f}s staging-retained next_block={next_block}\n")
+                if resume_stage == "fallback" and idle >= 2 * resume_interval and product_key_sent:
+                    frame = board_software_info_frame(args.board_version)
+                    os.write(fd, frame)
+                    to_app.write(frame)
+                    resume_stage = "c544-sent"
+                    persist_resume()
+                    transcript.write(f"{time.time():.6f} BOARD -> DTU c544-resume-timeout idle={idle:.3f}s {frame.hex(' ')}\n")
             for _, _ in selector.select(timeout=0.25):
                 try:
                     # A C5A8 block is 183 bytes.  Capping reads at one frame
@@ -247,6 +278,10 @@ def main():
                     )
                     pending.clear()
                 elif SOFTWARE_INFO_REQUEST in pending:
+                    if args.resume_timing != "off" and resume_last_block is not None and resume_stage != "complete":
+                        transcript.write(f"{time.time():.6f} RESUME software-info-request deferred to timeout\n")
+                        pending.clear()
+                        continue
                     # Real V3.3 boards use the FC03 read only as a trigger and
                     # answer with a separate C544 FC10 software-info report.
                     # phnixIot4G needs this report after restart to compare the
@@ -472,6 +507,9 @@ def main():
                             + block.to_bytes(2, "big")
                         )
                         os.write(fd, duplicate_ack)
+                        resume_last_block = time.time()
+                        resume_stage = "receiving"
+                        persist_resume()
                         to_app.write(duplicate_ack)
                         transcript.write(
                             f"{time.time():.6f} BOARD -> DTU c371-ack repeated "
@@ -527,13 +565,10 @@ def main():
                     last_c5a8_seen_at = block_seen_at
                     os.write(fd, ack)
                     to_app.write(ack)
-                    if args.resume_state:
-                        state_tmp = args.resume_state + ".new"
-                        with open(state_tmp, "w", encoding="utf-8") as state_file:
-                            json.dump({"next_block": block + 1, "confirmed_offset": block * 168}, state_file)
-                            state_file.flush()
-                            os.fsync(state_file.fileno())
-                        os.replace(state_tmp, args.resume_state)
+                    next_block = block + 1
+                    resume_last_block = time.time()
+                    resume_stage = "complete" if block == total else "receiving"
+                    persist_resume()
                     if block == 1 or block % 100 == 0 or block == total:
                         transcript.write(
                             f"{time.time():.6f} BOARD -> DTU c371-ack block={block}/{total} "
@@ -565,7 +600,6 @@ def main():
                             f"{C36E_STATUS_3.hex(' ')}\n"
                         )
                         completion_state = "wait-status3-ack"
-                    next_block += 1
                 elif len(pending) > 8192:
                     del pending[:-256]
 

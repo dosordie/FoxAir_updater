@@ -44,9 +44,13 @@ Simulator und ADB:
   simulator-stop                 Alias für offline; beendet NICHT phnixIot4G/QEMU/OTA
   restart                        nur TCP-Fake-ADB-Dienst neu starten (nicht während OTA verwenden)
   runner-stop                    QEMU-/PHNIX-Runner beenden (bricht einen laufenden OTA-Test ab)
+  service-crash                  Nur QEMU-phnixIot4G per SIGKILL beenden; OTA-Dateien behalten
   reset [NAME]                   Zustand löschen und Runner mit NAME (Standard: success) starten
 
 Board und OTA-Szenarien:
+  reset resume-original          C5A8-Pause: 466.667s Interblock + 466.667s Fallback bis C544
+  reset resume-fast              Gleicher Ablauf mit 10s + 10s (Lab-Testzeit)
+                                 Update starten, dann service-crash bei Teilfortschritt
   scenario NAME                  Runner mit passender RS485-Störung neu starten
                                  im DTU_runner-Branch bleibt QEMU-GDB frei;
                                  nur der produktive Runtime-Hook verbindet sich
@@ -123,6 +127,10 @@ case "$cmd" in
         ;;
     reset)
         adapter reset "${1:-success}"
+        ;;
+    service-crash)
+        [ "$#" -eq 0 ] || { usage; exit 2; }
+        adapter service-crash
         ;;
     runner-stop)
         adapter runner-stop

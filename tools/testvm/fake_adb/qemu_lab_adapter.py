@@ -37,6 +37,8 @@ DEFAULT_STATE_ROOT = Path(os.environ.get("FOXAIR_FAKE_ADB_STATE", "/var/lib/foxa
 EXPECTED_SERVICE_SHA256 = "7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7"
 
 MAIN_SCENARIOS = {
+    "resume-original",
+    "resume-fast",
     "success",
     "success-real-timing",
     "parser-rejected",
