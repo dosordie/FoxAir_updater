@@ -652,7 +652,10 @@ def _service_watchdog_transition(
     if len(current) == 1:
         return current
     if not current and observed:
-        if not _INTENTIONAL_RUNNER_STOP.is_set():
+        # During an active OTA the production runtime hook has paused both
+        # helloworld watchdogs.  Do not let simulator infrastructure mask a
+        # phnixIot4G crash; the autonomous DTU supervisor must own recovery.
+        if not _INTENTIONAL_RUNNER_STOP.is_set() and not _ota_restart_blocked():
             _schedule_idle_service_restart(observed)
         return ()
     return observed
@@ -959,6 +962,7 @@ def main() -> int:
     sub.add_parser("online")
     sub.add_parser("offline")
     sub.add_parser("runner-stop")
+    sub.add_parser("service-crash")
     mqtt = sub.add_parser("mqtt-send")
     mqtt.add_argument("kind", choices=("status-request", "raw"))
     mqtt.add_argument("payload_hex", nargs="?")
@@ -986,6 +990,17 @@ def main() -> int:
             return 0
         if args.command == "runner-stop":
             _stop_runner()
+            return 0
+        if args.command == "service-crash":
+            pids = tuple(service_pids())
+            if len(pids) != 1:
+                print(
+                    f"FEHLER: service-crash erwartet genau eine phnixIot4G-PID, gefunden: {list(pids)}",
+                    file=sys.stderr,
+                )
+                return 3
+            os.kill(pids[0], signal.SIGKILL)
+            print(f"phnixIot4G Crash injiziert (PID {pids[0]}); OTA-Runner muss selbst recovern")
             return 0
         if args.command == "mqtt-send":
             ok, message = inject_mqtt(args.kind, args.payload_hex)
