@@ -29,6 +29,32 @@ def patch_script(text: str) -> tuple[str, bool]:
     # required for this hook and makes GDB 16.3 internally crash while qemu
     # reports the service's many fork/exec events during parser continuation.
     patched = patched.replace("file /data/phnixIot4G\n", "", 1)
+    # qemu-user's single GDB stub cannot survive an execve() in one of the
+    # inferior's forked children.  The original 0033 parser executes two
+    # system() calls here (cache removal and OTA_INFO truncation), causing the
+    # otherwise healthy remote target to disappear before C350.  Reproduce
+    # those two file mutations in the VM namespace and temporarily NOP only
+    # the matching BL instructions.  Restore the original instructions at the
+    # already guarded parser-return breakpoint.  This is strictly a QEMU
+    # transport workaround; the uploaded production hook remains unchanged.
+    yield_anchor = "  set $return_pc = $pc\n"
+    yield_patch = (
+        "  set $foxair_system_rm = *(unsigned int *)0x190e8\n"
+        "  set $foxair_system_info = *(unsigned int *)0x190f4\n"
+        "  set *(unsigned int *)0x190e8 = 0xe1a00000\n"
+        "  set *(unsigned int *)0x190f4 = 0xe1a00000\n"
+        "  shell rm -f /cache/phnixIot_device_OTA\n"
+        "  shell : > /data/phnixIot_device_OTA_INFO\n"
+        + yield_anchor
+    )
+    patched = patched.replace(yield_anchor, yield_patch, 1)
+    post_anchor = '  printf "PHNIX post-parser pc=0x%x\\n", $pc\n'
+    post_patch = (
+        "  set *(unsigned int *)0x190e8 = $foxair_system_rm\n"
+        "  set *(unsigned int *)0x190f4 = $foxair_system_info\n"
+        + post_anchor
+    )
+    patched = patched.replace(post_anchor, post_patch, 1)
     return patched, patched != text
 
 

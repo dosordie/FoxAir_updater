@@ -11,9 +11,21 @@ class QemuGdbWrapperTests(unittest.TestCase):
         source = """file /data/phnixIot4G
 target remote 127.0.0.1:12345
 break *0x1fe40
+thbreak *0x1c4bc
+commands 2
+  silent
+  printf \"PHNIX post-parser pc=0x%x\\n\", $pc
+  continue
+end
 break *0x1ba04
+commands 1
+  silent
+  printf \"PHNIX yield pc=0x%x\\n\", $pc
+  disable 1
+  set $return_pc = $pc
+  continue
+end
 break *0x1cea0
-printf \"PHNIX yield pc=0x%x\\n\", $pc
 """
         patched, changed = patch_script(source)
         self.assertTrue(changed)
@@ -22,6 +34,12 @@ printf \"PHNIX yield pc=0x%x\\n\", $pc
         self.assertNotIn("disable 1", patched)
         self.assertIn("break *0x1cea0", patched)
         self.assertNotIn("file /data/phnixIot4G", patched)
+        self.assertIn("set *(unsigned int *)0x190e8 = 0xe1a00000", patched)
+        self.assertIn("set *(unsigned int *)0x190f4 = 0xe1a00000", patched)
+        self.assertIn("shell rm -f /cache/phnixIot_device_OTA", patched)
+        self.assertIn("shell : > /data/phnixIot_device_OTA_INFO", patched)
+        self.assertIn("set *(unsigned int *)0x190e8 = $foxair_system_rm", patched)
+        self.assertIn("set *(unsigned int *)0x190f4 = $foxair_system_info", patched)
 
     def test_ignores_unrelated_gdb_script(self):
         source = "target remote 127.0.0.1:12345\nbreak *0x1fe40\n"
