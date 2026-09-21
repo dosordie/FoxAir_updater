@@ -298,6 +298,55 @@ class MainWindow(user_gui.MainWindow):
             ),
             "local-preparation": "Das LTE-Modem bereitet das Firmwareupdate vor.",
             "service-restart": "Der LTE-Kommunikationsdienst wird für die Update-Überwachung neu gestartet.",
+            "service-restart-wait": (
+                "Der LTE-Kommunikationsdienst wird kontrolliert neu gestartet. "
+                "Es wird auf genau eine neue, stabile Dienstinstanz gewartet."
+            ),
+            "service-restart-verified": (
+                "Der LTE-Kommunikationsdienst wurde erfolgreich neu gestartet und eindeutig geprüft."
+            ),
+            "service-ready-wait": (
+                "Der LTE-Kommunikationsdienst läuft. Vor dem Firmwareupdate wird noch gewartet, "
+                "bis seine interne Kommunikation vollständig bereit und inaktiv ist."
+            ),
+            "service-ready": (
+                "Der LTE-Kommunikationsdienst ist vollständig bereit. Das Firmwareupdate kann fortgesetzt werden."
+            ),
+            "post-restart-preflight": (
+                "Nach dem Neustart des LTE-Dienstes werden die Update-Voraussetzungen erneut geprüft."
+            ),
+            "failure-report": (
+                "Das Mainboard hat einen Fehler gemeldet. Der sichere Abschlusszustand wird noch geprüft."
+            ),
+            "precondition-rejected": (
+                "Die Voraussetzungen für den Start des Firmwareupdates wurden nicht erfüllt."
+            ),
+            "parser-rejected": (
+                "Die Update-Anfrage konnte nicht sicher an den LTE-Dienst übergeben werden."
+            ),
+            "c36e-rejected": (
+                "Das Mainboard hat die Update-Anfrage abgelehnt."
+            ),
+            "debugger-ended-before-terminal": (
+                "Die lokale Update-Überwachung wurde beendet, bevor ein sicherer Endzustand erreicht war."
+            ),
+            "debugger-unexpected-stop": (
+                "Die lokale Update-Überwachung wurde unerwartet unterbrochen."
+            ),
+            "runner-lost": (
+                "Der autonome Update-Runner auf dem LTE-Modem ist nicht mehr aktiv. "
+                "Der gespeicherte Updatezustand bleibt für die Diagnose erhalten."
+            ),
+            "recovery-required": (
+                "Die automatische Wiederaufnahme konnte nicht sicher abgeschlossen werden. "
+                "Eine manuelle Prüfung ist erforderlich."
+            ),
+            "same-version-restore": (
+                "Nach der Prüfung auf gleiche Firmware wird der ursprüngliche Zustand wiederhergestellt."
+            ),
+            "backup": (
+                "Die für einen sicheren Update-Start benötigten LTE-Statusdaten konnten nicht gesichert werden."
+            ),
             "recovery-service-restart": (
                 "Der Update-Dienst wurde während der laufenden Übertragung beendet und wird automatisch neu gestartet."
             ),
