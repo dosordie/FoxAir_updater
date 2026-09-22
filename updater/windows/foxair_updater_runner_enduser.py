@@ -854,6 +854,14 @@ class MainWindow(user_gui.MainWindow):
         if terminal and result_type == "success":
             self.progress_text.setText("Firmwareupdate erfolgreich abgeschlossen")
 
+        # The line below the progress bar is reserved for live transfer details
+        # (source percentage / byte counters). Once the run is terminal, the
+        # result is already shown prominently above the bar and in the flow box;
+        # do not repeat the same terminal message in the small progress-detail
+        # line.
+        if terminal and hasattr(self, "progress_sources"):
+            self.progress_sources.clear()
+
         # Re-render the status box without technical run/protocol details. The
         # complete runner JSON is still written to the technical log.
         if terminal:
