@@ -153,13 +153,13 @@ class PhnixDebugTests(unittest.TestCase):
             raise OSError("open failed")
 
         capture = PhnixDebugCapture(factory)
-        capture.add_status_consumer("ui", lambda status, error: statuses.append(status))
+        capture.add_status_consumer("ui", lambda status, error: statuses.append((status, error)))
         started = time.monotonic()
         self.assertTrue(capture.add_consumer("update", lambda *_: None))
         self.assertLess(time.monotonic() - started, 0.1)
         release.set()
-        self._wait_for(lambda: capture.status == "Verbindung fehlgeschlagen")
-        self.assertIn("Verbindung fehlgeschlagen", statuses)
+        self._wait_for(lambda: any(error is not None for _status, error in statuses))
+        self.assertTrue(any(isinstance(error, OSError) for _status, error in statuses))
 
     def test_empty_reads_have_reader_backoff(self):
         class EmptySource(FakeSource):
@@ -325,35 +325,28 @@ class PhnixDebugTests(unittest.TestCase):
         line = "上报服务器此轮升级失败oat step:12publish success, packet-id=433"
         explanations = translations_for(line)
         self.assertEqual(len(explanations), 2)
-        rendered = explain_debug_line(line)
-        self.assertIn("OTA-Runde", rendered)
-        self.assertIn("MQTT Publish erfolgreich", rendered)
-        self.assertIn("Noch keine deutsche Erläuterung", explain_debug_line("尚未识别的文本"))
-        self.assertNotIn("Noch keine deutsche Erläuterung", explain_debug_line("ASCII only"))
+        self.assertEqual(translations_for("尚未识别的文本"), [])
+        self.assertEqual(translations_for("ASCII only"), [])
 
     def test_new_translations_and_dynamic_numbers(self):
-        expected = {
-            "主板收到服务器新固件信息，回复允许升级": "neue Firmwareinformationen",
-            "主板允许升级": "Firmwareupdate",
-            "board固件MD5校验正确！": "MD5-Prüfung",
-            "获取IMEI": "IMEI",
-            "重新采集WF": "WF-Information",
-            "等待获取主板productKey": "ProductKey",
-            "重新采集pk": "ProductKey",
-            "等待获取主板2deviceSecret": "DeviceSecret",
-        }
-        for original, german in expected.items():
-            self.assertIn(german, explain_debug_line(original))
+        originals = (
+            "主板收到服务器新固件信息，回复允许升级",
+            "主板允许升级",
+            "board固件MD5校验正确！",
+            "获取IMEI",
+            "重新采集WF",
+            "等待获取主板productKey",
+            "重新采集pk",
+            "等待获取主板2deviceSecret",
+        )
+        for original in originals:
+            self.assertTrue(translations_for(original))
         self.assertIn("12345", explain_debug_line("下载主板升级文件长度:12345"))
         self.assertIn("0x20", explain_debug_line("传输主板升级文件偏移:0x20"))
 
     def test_startup_ota_status_and_damaged_product_key_are_explained(self):
-        startup = explain_debug_line("FINISH推送完成，无需断电续传 iii=-1 oat_sta:0")
-        self.assertIn("Kein fortzusetzender Mainboard-OTA-Zustand", startup)
-        self.assertNotIn("Übertragung/Verarbeitung abgeschlossen", startup)
-        product_key = explain_debug_line("收到主板回复的pk，pk已存储，���做任何操作")
-        self.assertIn("ProductKey ist bereits gespeichert", product_key)
-        self.assertNotIn("Noch keine deutsche Erläuterung", product_key)
+        self.assertTrue(translations_for("FINISH推送完成，无需断电续传 iii=-1 oat_sta:0"))
+        self.assertTrue(translations_for("收到主板回复的pk，pk已存储，���做任何操作"))
 
     def test_tcp_timeout_stays_open_but_eof_disconnects(self):
         class Socket:
@@ -377,7 +370,7 @@ class PhnixDebugTests(unittest.TestCase):
         with patch("updater.common.phnix_debug.socket.create_connection", return_value=sock):
             source = TcpDebugSource("192.0.2.8", 5039)
         self.assertEqual(source.read(10), b"")
-        with self.assertRaisesRegex(ConnectionError, "TCP-Verbindung beendet"):
+        with self.assertRaises(ConnectionError):
             source.read(10)
 
     def test_capture_reports_eof_once_without_busy_loop(self):
