@@ -12,9 +12,8 @@ Der Schwerpunkt liegt auf einer möglichst sicheren und nachvollziehbaren Bedien
 > - **V3.3 → V3.4**
 > - **V1.2 → V3.4**
 >
-> Die Firmware **V3.5** ist ebenfalls bekannt und vollständig analysierbar, wurde mit dem FoxAir Updater aber noch nicht als kompletter realer Updatevorgang getestet.
 >
-> Die vorliegende **V3.5 stammt von einer FoxAir BlueLine (BL)**. Sie verwendet denselben Mainboard-Softwarecode **`82400644`** wie die entsprechende GreenLine-/GL-Firmware. **BlueLine und GreenLine mit diesem Softwarecode verwenden dieselbe Mainboard-Firmwarelinie; V3.5 ist daher zwischen entsprechenden BL- und GL-Geräten der `82400644`-Familie kompatibel.**
+> Die **FoxAir BlueLine (BL)** und **FoxAir GreenLine(GL)** verwenden denselben Mainboard-Softwarecode **`82400644`** **BlueLine und GreenLine mit diesem Softwarecode verwenden dieselbe Mainboard-Firmwarelinie; die FW ist daher zwischen entsprechenden BL- und GL-Geräten der `82400644`-Familie kompatibel.**
 >
 > Wärmepumpe und LTE-Modul während eines laufenden Firmwareupdates nicht stromlos machen.
 >
