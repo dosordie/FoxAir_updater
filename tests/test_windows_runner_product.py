@@ -109,6 +109,26 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn("if terminal:", user_status)
         self.assertIn("self.progress_sources.clear()", user_status)
 
+    def test_confirmed_safe_recovery_outcomes_are_green(self):
+        flow = self.enduser.split("if terminal:", 1)[1].split(
+            "def _finalize_success_flow", 1
+        )[0]
+        self.assertIn('elif result_type == "recovery-completed":', flow)
+        self.assertIn(
+            '"runner-recovery-user", "ok"',
+            flow,
+        )
+        self.assertIn(
+            '"runner-terminal-user", "ok"',
+            flow,
+        )
+        self.assertIn('elif result_type == "aborted-before-transfer":', flow)
+        aborted = flow.split('elif result_type == "aborted-before-transfer":', 1)[1].split(
+            'elif result_type in {"recovery-required", "reboot-detected"}:', 1
+        )[0]
+        self.assertIn('"runner-terminal-user", "ok"', aborted)
+        self.assertNotIn('"runner-terminal-user", "warn"', aborted)
+
     def test_verified_service_restart_is_presented_as_completed(self):
         method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
         self.assertIn('status.get("service_restart_requested") is True', method)
