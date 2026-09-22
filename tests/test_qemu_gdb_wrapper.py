@@ -41,6 +41,10 @@ printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *
         self.assertIn("set $r0 = 0", patched)
         self.assertIn("set $pc = $lr", patched)
         self.assertIn("disable 4", patched)
+        self.assertIn(
+            'disable 4\n  printf "PHNIX post-parser pc=0x%x\\n", $pc',
+            patched,
+        )
         self.assertIn("shell rm -f /cache/phnixIot_device_OTA", patched)
         self.assertIn("shell : > /data/phnixIot_device_OTA_INFO", patched)
 

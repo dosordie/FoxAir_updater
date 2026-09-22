@@ -47,6 +47,11 @@ def patch_script(text: str) -> tuple[str, bool]:
         + yield_anchor
     )
     patched = patched.replace(yield_anchor, yield_patch, 1)
+    patched = patched.replace(
+        '  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
+        '  disable 4\n  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
+        1,
+    )
     c36e_flow = 'continue\nprintf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *)($r0+1), *(unsigned char *)($r0+3)\n'
     qemu_c36e_flow = '''continue
 while $pc == 0x9a98
