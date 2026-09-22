@@ -3,7 +3,9 @@
 Stand: 22. September 2026
 
 > [!CAUTION]
-> Vollständige Mainboard-Firmwarewechsel **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4** wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt. Die Firmware **V3.5** ist statisch als `82400644 / 0035` und damit als nächste Revision derselben untersuchten Firmwarelinie bestätigt; ein OTA **auf oder von V3.5** wurde mit diesem Updater jedoch noch nicht live validiert. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind nicht in gleicher Tiefe live validiert. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
+> Vollständige Mainboard-Firmwarewechsel **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4** wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt. Die Firmware **V3.5** ist als `82400644 / 0035` und damit als nächste Revision derselben untersuchten Firmwarelinie bestätigt; ein kompletter Updatevorgang **auf oder von V3.5** wurde mit diesem Updater jedoch noch nicht live validiert.
+>
+> Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. Für BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** handelt es sich um dieselbe Mainboard-Firmwarelinie. Die V3.5 ist damit zwischen entsprechenden BL- und GL-Geräten dieser Firmwarefamilie kompatibel. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind nicht in gleicher Tiefe live validiert. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
 
 Diese Seite fasst den normalen Endanwenderweg zusammen. Unter Windows ist die grafische Anwendung der empfohlene Weg. Die ausführliche Schritt-für-Schritt-Anleitung für Windows steht unter:
 
@@ -163,7 +165,7 @@ Real getestet bzw. bestätigt sind unter anderem:
 - V3.3 → V3.3 bis zur sicheren Gleichversionsablehnung ohne C5A8;
 - vollständiger V3.3 → V3.4-Transfer und terminaler Abschluss;
 - vollständiger V1.2 → V3.4-Versionswechsel;
-- V3.5 statisch als `82400644 / 0035` bestätigt, jedoch noch **ohne** real validierten V3.5-OTA-Lauf;
+- V3.5 als `82400644 / 0035` bestätigt; Quelle ist eine **BlueLine (BL)**, dieselbe Firmwarelinie wird bei entsprechenden **GreenLine-/GL-Geräten** mit `82400644` verwendet; ein real validierter kompletter V3.5-Updatevorgang mit dem Updater steht noch aus;
 - C36E Status 5 / Board-Step 12 als terminale Erfolgsgrenze;
 - Rückkehr in den normalen LTE-/Cloudzustand;
 - autonomer Runner auf realer Hardware einschließlich kontrolliertem Dienstneustart;
