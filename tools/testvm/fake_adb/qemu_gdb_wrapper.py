@@ -44,6 +44,7 @@ def patch_script(text: str) -> tuple[str, bool]:
         "  shell rm -f /cache/phnixIot_device_OTA\n"
         "  shell : > /data/phnixIot_device_OTA_INFO\n"
         "  hbreak *0x9a98\n"
+        "  condition 4 $r0 == 0x83a9c || $r0 == 0x83ac0\n"
         + yield_anchor
     )
     patched = patched.replace(yield_anchor, yield_patch, 1)

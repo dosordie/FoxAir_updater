@@ -37,6 +37,7 @@ printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *
         self.assertIn("break *0x1cea0", patched)
         self.assertNotIn("file /data/phnixIot4G", patched)
         self.assertIn("  hbreak *0x9a98", patched)
+        self.assertIn("condition 4 $r0 == 0x83a9c || $r0 == 0x83ac0", patched)
         self.assertIn("while $pc == 0x9a98", patched)
         self.assertIn("set $r0 = 0", patched)
         self.assertIn("set $pc = $lr", patched)
