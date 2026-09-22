@@ -59,7 +59,13 @@ class WindowsReleaseCheckTests(unittest.TestCase):
         self.assertRegex(app_version.group(1), r"^\d+\.\d+\.\d+$")
         self.assertEqual(app_version.group(1), base_version.group(1))
         self.assertIn("SIMCOM_Windows_USB_Drivers_V1.0.2.zip", base)
-        self.assertLess(base.index("SIMCom USB-Treiber"), base.index("Android Platform Tools"))
+        connection = base.split("def _connection(self):", 1)[1].split(
+            "def _backup(self):", 1
+        )[0]
+        self.assertLess(
+            connection.index("QUrl(MODEM_DRIVER_URL)"),
+            connection.index("QUrl(ADB_URL)"),
+        )
         self.assertIn('self.settings.setValue("adb"', source)
         self.assertIn('self.settings.setValue("backup"', source)
         self.assertIn('self.settings.setValue("remote_host"', source)
