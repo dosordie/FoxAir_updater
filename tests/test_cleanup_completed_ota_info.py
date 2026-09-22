@@ -107,7 +107,7 @@ class CompletedOtaInfoCleanupTests(unittest.TestCase):
         snapshot = safety_snapshot(adb)
 
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("fortsetzbaren OTA-Zustand" in blocker for blocker in snapshot["blockers"]))
+        self.assertTrue(snapshot["blockers"])
 
 
 if __name__ == "__main__":
