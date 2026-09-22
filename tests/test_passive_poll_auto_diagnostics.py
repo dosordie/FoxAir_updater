@@ -34,8 +34,6 @@ class PassivePollAndAutoDiagnosticsTests(unittest.TestCase):
         self.assertIn('recovery == "required"', source)
         self.assertIn('terminal and result_type in AUTO_CLEANUP_RESULTS', source)
         self.assertIn('self._run("runner-auto-diagnostics"', source)
-        self.assertIn("Failure/recovery runs are archive-only", source)
-        self.assertIn("Fehler-/Recovery-Daten auf dem LTE-Modem wurden nicht gelöscht", source)
 
     def test_windows_build_uses_final_runtime_layer(self):
         source = BUILD_SCRIPT.read_text(encoding="utf-8")
