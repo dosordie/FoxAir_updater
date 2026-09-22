@@ -1,99 +1,142 @@
 # FoxAir Updater
 
-Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
+Ein inoffizielles Werkzeug zum **Sichern, Prüfen und Aktualisieren der Mainboard-Firmware** von FoxAir-/PHNIX-Wärmepumpen.
+
+Der Schwerpunkt liegt auf einer möglichst sicheren und nachvollziehbaren Bedienung unter **Windows**. Für Diagnose und Entwicklung stehen zusätzlich Linux-/Raspberry-Pi-Werkzeuge zur Verfügung.
 
 > [!CAUTION]
-> ## V1.2 → V3.4 und V3.3 → V3.4 live validiert; V3.5 statisch bestätigt
+> ## Firmwareupdates erfolgen auf eigenes Risiko
 >
-> Ein vollständiges Firmwareupdate von Mainboard V3.3 auf V3.4 wurde auf realer Hardware **erfolgreich durchgeführt und anschließend über Status 5 / Board-Step 12 sowie die neue C544-Versionsmeldung `0034` bestätigt**.
+> Erfolgreich auf realer Hardware getestet wurden:
 >
-> Zusätzlich wurde auch ein direktes Update von **V1.2 (Auslieferungszustand) auf V3.4** auf realer Hardware erfolgreich durchgeführt.
+> - **V3.3 → V3.4**
+> - **V1.2 → V3.4**
 >
-> Die Mainboard-Firmware **V3.5** ist inzwischen statisch als nächste Revision derselben `82400644`-Firmwarelinie bestätigt (`824006440035`, gleiche Flash-Basis `0x08050000`). Ein reales Update **auf oder von V3.5** wurde mit dem FoxAir Updater jedoch noch **nicht** live validiert.
+> Die Firmware **V3.5** ist ebenfalls bekannt und vollständig analysierbar, wurde mit dem FoxAir Updater aber noch nicht als kompletter realer Updatevorgang getestet.
 >
-> **V3.3 → V3.3** wurde bis zur erwarteten Gleichversionsablehnung getestet. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht vollständig live validiert.
+> Die vorliegende **V3.5 stammt von einer FoxAir BlueLine (BL)**. Sie verwendet denselben Mainboard-Softwarecode **`82400644`** wie die entsprechende GreenLine-/GL-Firmware. **BlueLine und GreenLine mit diesem Softwarecode verwenden dieselbe Mainboard-Firmwarelinie; V3.5 ist daher zwischen entsprechenden BL- und GL-Geräten der `82400644`-Familie kompatibel.**
 >
-> Ein Firmwareupdate bleibt ein Eingriff in das Mainboard. Im ungünstigsten Fall können Mainboard, LTE-Modem oder der normale Betrieb der Wärmepumpe beeinträchtigt werden und ein manueller Recovery- oder Reparatureingriff erforderlich werden.
+> Wärmepumpe und LTE-Modul während eines laufenden Firmwareupdates nicht stromlos machen.
 >
-> **Nutzung ausschließlich auf eigenes Risiko.** Der Ersteller übernimmt keine Gewährleistung, Sachmängelhaftung oder Haftung für Schäden oder Folgeschäden, die aus der Verwendung oder Fehlfunktion dieses Tools entstehen.
+> **Nutzung ausschließlich auf eigenes Risiko.** Der Ersteller übernimmt keine Gewährleistung oder Haftung für Schäden oder Folgeschäden.
 
-Das Repository trennt Firmwareanalyse und Update-Werkzeuge bewusst vom Projekt [`FoxAir_Control`](https://github.com/dosordie/FoxAir_Control), das weiterhin für normale Steuerung, Modbus-Auswertung und Diagnose zuständig ist.
+FoxAir Updater ist kein offizielles FoxAir- oder PHNIX-Produkt.
+
+Für normale Steuerung, Modbus-Auswertung und Diagnose gibt es das Schwesterprojekt **[FoxAir Control](https://github.com/dosordie/FoxAir_Control)**.
 
 ## 💙 Unterstützung
 
-Ich bastle an diesem Tool in meiner Freizeit.  
-Wenn er dir gefällt oder dir weiterhilft, freue ich mich über eine kleine Spende:
+Ich entwickle dieses Tool in meiner Freizeit.  
+Wenn es dir hilft, freue ich mich über eine kleine Spende:
 
 [![Spenden via PayPal](https://img.shields.io/badge/Spenden-PayPal-blue.svg?logo=paypal)](https://www.paypal.com/paypalme/AuhuberD)
 
+---
 
-## Windows GUI v0.4.0
+## Windows-Version herunterladen
 
-Die Windows-Version ist der hauptsächliche Endanwenderweg des Projekts. Sie steht als **Portable-ZIP** und **Setup-EXE** auf der GitHub-Releases-Seite bereit:
+Die Windows-Version ist der empfohlene Weg für Endanwender.
+
+Sie steht als **Portable-ZIP** und **Setup-EXE** auf der Releases-Seite bereit:
 
 **[FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)**
 
-ADB wird weiterhin **nicht mitgeliefert**. Die GUI verlinkt den SIMCom-USB-Treiber, die offiziellen Android Platform Tools und die LTE-/USB-Anleitung. Eine vorhandene `adb.exe` kann ausgewählt und gespeichert werden.
+Eine separate Python-Installation ist nicht notwendig.
+
+Für die Verbindung zum LTE-Modul wird **ADB** benötigt. ADB selbst wird aus Lizenz- und Wartungsgründen nicht mitgeliefert; die Anwendung verlinkt die offiziellen Android Platform Tools und die passende USB-/LTE-Anleitung.
 
 > [!NOTE]
-> Die Windows-Builds sind derzeit nicht mit einem kommerziellen Code-Signing-Zertifikat signiert. Windows SmartScreen kann deshalb beim ersten Start **„Der Computer wurde durch Windows geschützt“** anzeigen. Wenn die Datei bewusst von der offiziellen GitHub-Releases-Seite geladen wurde, **Weitere Informationen** und anschließend **Trotzdem ausführen** wählen.
+> Die Windows-Builds sind derzeit nicht mit einem kommerziellen Code-Signing-Zertifikat signiert. Windows SmartScreen kann deshalb beim ersten Start **„Der Computer wurde durch Windows geschützt“** anzeigen.
+>
+> Wenn die Datei bewusst von der offiziellen GitHub-Releases-Seite geladen wurde, **Weitere Informationen** und anschließend **Trotzdem ausführen** wählen.
 
-### Was die Windows-Version bietet
+---
 
-- lokale ADB-Verbindung direkt per USB;
-- optional Remote-ADB über einen Raspberry Pi;
-- automatische bzw. manuelle ADB-Reconnect-Funktion;
-- read-only Backup/Firmware-Download per `adb pull`;
-- Sicherung von Firmware-Cache, `OTA_INFO`, Statistik und optional dem Originaldienst `phnixIot4G`;
-- Originalstatus- und Recovery-Prüfung;
-- Vorprüfung ohne Firmwareübertragung zum Mainboard;
-- Manifest-Erzeugung direkt aus einer Firmwaredatei;
-- Full-Abgleich von Manifest, Firmwareidentität, Größe, MD5 und SHA256;
-- autonomen DTU-OTA-Runner: nach dem Start führt das LTE-Modem den Mainboard-OTA selbstständig weiter;
-- persistenten Updatezustand auf dem LTE-Modem und erneutes read-only Einlesen über **Status prüfen**;
-- serielle und Runner-basierte Fortschrittsanzeige mit Fallback;
-- klare Trennung zwischen 100 % Datenübertragung und terminalem Mainboard-Erfolg;
-- optional kontrollierten Neustart von `phnixIot4G` vor dem Update mit Verifikation der neuen Dienstinstanz;
-- standardmäßig verbundene MQTT-Cloud während des Vollupdates;
-- optionale MQTT-Isolierung unter **Erweitert → MQTT bei Update aus** für besondere Testfälle;
-- read-only Modem-, SIM-, LTE-, Cloud-/MQTT- und Mainboarddiagnose;
-- optionale detaillierte Modem-/Traffic-Diagnose unter **Erweitert**;
-- Wartungsfunktion für ausgewählte persistente Statistikzähler;
-- Loganzeige, Logexport und automatische Update-/LTE-Protokolle;
-- Portable- und Setup-Build ohne notwendige Python-Installation beim Anwender.
+## Was kann der FoxAir Updater?
 
-### Neu bzw. maßgeblich in v0.4.0
+Die Windows-Anwendung bietet unter anderem:
 
-- Der produktive Mainboard-OTA läuft über den autonomen Runner unter `updater/dtu_ota`.
-- Nach erfolgreichem Start ist Windows nicht mehr Teil der eigentlichen OTA-Ausführung: ein kurzfristiger Windows-/ADB-Verbindungsverlust beendet den laufenden Updatevorgang nicht.
-- Der aktuelle Zustand wird auf dem LTE-Modem persistent gespeichert und kann über **Status prüfen** erneut eingelesen werden, ohne einen zweiten OTA zu starten.
-- Ein zweiter Start darf einen bereits aktiven Runner nicht verändern; aktive Runs werden über einen persistenten Lock geschützt.
-- Nach Übergabe der Autorität an den Originaldienst darf ein reiner Monitoringverlust keinen unsicheren Cleanup des laufenden OTA auslösen.
-- Ein Restore vor der Authority-Grenze gilt nur dann als erfolgreich, wenn der Originalzustand eindeutig bestätigt wurde.
-- Runner-Statusschreibfehler werden fail-closed behandelt; nach Authority werden Lock und lokaler Firmware-HTTP-Zugriff bei unklarem Zustand erhalten.
-- Ein DTU-Reboot wird anhand eines Boot-Fingerprints von einem reinen Runner-/Prozessverlust unterschieden.
-- Der optionale `phnixIot4G`-Neustart vor dem Update wird anhand einer neuen PID, einer einzelnen stabilen Dienstinstanz und `TracerPid=0` verifiziert.
-- Shell-Payloads des autonomen Runners werden vor Hashing und Übertragung robust auf LF-Zeilenenden normalisiert. Dadurch funktionieren Hook und Supervisor unabhängig von Windows-/Git-Checkout-Zeilenenden.
-- **100 % bedeutet weiterhin nur: alle C5A8-Firmwaredaten wurden übertragen.** Anschließend laufen Mainboard-Prüfung, Übernahme/Promotion und Abschluss weiter.
-- Erst **C36E Status 5 / Board-Step 12** gilt als terminaler Mainboard-Erfolg.
-- MQTT bleibt beim normalen Vollupdate **standardmäßig verbunden**. Die Firewall-Isolierung ist nur optional.
-- Die Wartungsoberfläche kann gezielt die bekannten persistenten Zähler **DTU-OTA-Vorgänge**, **Mainboard OTA-Vorgänge**, **Dienststarts (Power-Reset-t)** und **Aktive Modem-Neustarts (Active-Reset-t)** ändern. Die vollständige Statistikdatei wird vorher gesichert und Datei/RAM werden anschließend verifiziert.
+- Verbindung zum FoxAir-/PHNIX-LTE-Modul per USB;
+- alternativ Verbindung über einen Raspberry Pi im Netzwerk;
+- Firmware- und Diagnose-Backup vom LTE-Modul;
+- Prüfung einer Firmwaredatei vor dem Update;
+- automatische Prüfung von Dateigröße und Prüfsummen;
+- Anzeige des Updatefortschritts;
+- Fortsetzen der Statusanzeige nach einem kurzzeitigen Verbindungsverlust;
+- Diagnose von LTE, SIM, Cloud-Verbindung und Mainboard;
+- Export von Protokollen und Diagnosepaketen;
+- erweiterte Wartungs- und Diagnosefunktionen für erfahrene Anwender.
 
-### MQTT und der 30-Minuten-Rebootpfad
+Die Firmwaredatei wird vor dem Start geprüft. Ein Update wird nicht allein deshalb als erfolgreich betrachtet, weil die Datenübertragung 100 % erreicht hat: Das Programm wartet zusätzlich darauf, dass das Mainboard die neue Firmware vollständig geprüft und übernommen hat.
 
-Der Originaldienst besitzt einen eigenen Rebootmechanismus, wenn der Aliyun-MQTT-Client intern länger als 1800 Sekunden als offline gilt.
+---
 
-Der 1800-s-Zähler startet **nicht zwingend in dem Moment, in dem Netzwerkpakete per Firewall geblockt werden**. Bei einer stillen `iptables DROP`-Sperre kann der Aliyun-SDK mehrere 180-s-Keepalive-Zyklen benötigen, bevor sein interner Clientzustand von „connected“ auf „offline“ wechselt. Erst danach läuft der PHNIX-1800-s-Zähler.
+## Firmware-Versionen
 
-Damit ist der Rebootpfad weiterhin real vorhanden; es gibt keinen bekannten OTA-Sonderzweig, der ihn während eines Mainboardupdates deaktiviert. Für normale Updates ist es deshalb einfacher und risikoärmer, MQTT verbunden zu lassen.
+### Aktuell real getestet
 
-Details:
-[`PHNIX_phnixIot4G_watchdogs_reset_counters.md`](docs/reverse_engineering/PHNIX_phnixIot4G_watchdogs_reset_counters.md)
+| Ausgangsversion | Zielversion | Status |
+|---|---|---|
+| V3.3 | V3.4 | ✅ real erfolgreich getestet |
+| V1.2 | V3.4 | ✅ real erfolgreich getestet |
+| V3.3 | V3.3 | ✅ gleiche Version wird korrekt abgelehnt |
+| V3.4 / andere | V3.5 | ⚠️ Firmware bekannt, Update noch nicht real mit dem Updater getestet |
 
-### Screenshots
+### V3.5: BlueLine und GreenLine
+
+Die untersuchte V3.5 wurde von einer **FoxAir BlueLine (BL)** bezogen.
+
+Sie besitzt:
+
+- Mainboard-Softwarecode **`82400644`**
+- Firmwareversion **V3.5**
+- dieselbe Mainboard-Firmwarefamilie wie die entsprechenden FoxAir GreenLine-/GL-Geräte
+
+Der Softwarecode `82400644` ist unter anderem bei Geräten der GL- und BL-Reihen belegt. Damit gilt für Geräte dieser Firmwarefamilie:
+
+> **Die Mainboard-Firmware ist nicht grundsätzlich an die Bezeichnung BlueLine oder GreenLine gebunden. Entscheidend ist die gemeinsame Mainboard-Firmwarefamilie `82400644`.**
+
+Die vorliegende V3.5 aus einer BlueLine kann deshalb auch auf entsprechenden GreenLine-/GL-Geräten derselben `82400644`-Familie verwendet werden und umgekehrt.
+
+Bei einem unbekannten Modell sollte trotzdem immer zuerst der tatsächlich ausgelesene Mainboard-Softwarecode geprüft werden.
+
+---
+
+## Typischer Ablauf unter Windows
+
+1. FoxAir Updater herunterladen und starten.
+2. LTE-Modul per USB oder Remote-ADB verbinden.
+3. Unter **Verbindung** prüfen, ob das Gerät erreichbar ist.
+4. Optional vorher ein Backup erstellen.
+5. Unter **Firmwareupdate** die Update-Datei bzw. Firmware auswählen.
+6. **Vorprüfung** ausführen.
+7. Nur bei erfolgreicher Vorprüfung das Firmwareupdate starten.
+8. Wärmepumpe und LTE-Modul während des Updates eingeschaltet lassen.
+9. Warten, bis der Updater ausdrücklich meldet, dass das Mainboard-Firmwareupdate erfolgreich abgeschlossen wurde.
+10. Bei Bedarf anschließend Protokoll oder Diagnosepaket speichern.
+
+Die ausführliche Schritt-für-Schritt-Anleitung gibt es hier:
+
+**[Firmwareupdate unter Windows](docs/HowTo/firmware_update_windows.md)**
+
+---
+
+## Was passiert bei einem Verbindungsverlust?
+
+Nach dem Start läuft der eigentliche Firmwarevorgang auf dem LTE-Modul weiter.
+
+Ein kurzzeitiger Verlust der Windows- oder ADB-Verbindung beendet einen bereits laufenden Updatevorgang daher normalerweise nicht.
+
+Nach Wiederherstellung der Verbindung kann über **Status prüfen** der aktuelle Zustand erneut eingelesen werden. Dadurch wird **kein zweites Firmwareupdate gestartet**.
+
+Das LTE-Modul bzw. die Wärmepumpe sollte während eines laufenden Updates trotzdem nicht absichtlich neu gestartet oder stromlos gemacht werden.
+
+---
+
+## Screenshots
 
 > [!NOTE]
-> Die Screenshots zeigen den grundsätzlichen Aufbau der Windows-GUI. Einzelne Texte und Optionen können gegenüber v0.4.0 abweichen.
+> Die Screenshots zeigen den grundsätzlichen Aufbau der Windows-GUI. Einzelne Texte und Optionen können je nach Programmversion abweichen.
 
 | Verbindung | Backup |
 |---|---|
@@ -103,80 +146,63 @@ Details:
 |---|---|
 | <img src="docs/DTU_3_update.png" width="520" alt="FoxAir Updater Firmwareupdate"> | <img src="docs/DTU_4_info.png" width="520" alt="FoxAir Updater Modem Info"> |
 
-### Aktuell real bestätigt
+---
 
-Real getestet bzw. bestätigt sind unter anderem:
+## Firmwaredateien
 
-- lokale und Remote-ADB-Verbindung;
-- Originalstatus;
-- read-only LTE-Backup/Firmware-Download;
-- Vorprüfung;
-- normaler Windows-Firmware-Update-Aufruf mit **V3.3 → V3.3** bis zur sicheren Gleichversionsablehnung;
-- vollständiger realer Versionswechsel **V3.3 → V3.4**, einschließlich kompletter C5A8-Übertragung, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließender C544-Versionsbestätigung `0034`;
-- vollständiger realer Versionswechsel **V1.2 (Auslieferungszustand) → V3.4**;
-- **V3.5 statisch bestätigt** als `82400644 / 0035`; der OTA-Weg mit V3.5 ist noch nicht live validiert;
-- autonomer Runner-End-to-End-Ablauf auf realer Hardware einschließlich persistentem Status und kontrolliertem `phnixIot4G`-Neustart;
-- Mainboard-OTA-/Statistik-Wartung einschließlich Sicherung, kontrolliertem Dienstneustart und Datei-/RAM-Verifikation.
+Firmwaredateien werden **nicht über dieses öffentliche GitHub-Repository verteilt**.
 
-Beim V3.3→V3.3-Test erkannte das Mainboard die bereits installierte Firmware und beendete den Ablauf vor C357/C5A8. Es wurden keine Firmwaredaten übertragen.
+Der Updater lädt nicht automatisch irgendeine Mainboard-Firmware aus diesem Repository. Eine Firmwaredatei muss bewusst ausgewählt bzw. als passendes Updatepaket bereitgestellt werden.
 
-Beim dokumentierten V3.3→V3.4-Lauf dauerte die C5A8-Datenübertragung rund **28:56 Minuten**. Vom letzten Datenblock bis Status 5 vergingen weitere rund **5:16 Minuten**. Bis zur ersten neuen C544-Versionsmeldung dauerte der vollständige beobachtete Ablauf rund **35 Minuten**.
+Vor dem Update prüft der Updater unter anderem:
 
-Details zum dokumentierten V3.3→V3.4-Lauf stehen in:
-[`PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`](docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md)
+- Firmware-/Softwarecode;
+- Firmwareversion;
+- Dateigröße;
+- Prüfsummen;
+- Zusammengehörigkeit der ausgewählten Update-Dateien.
 
-### Windows-Architektur
+Die Firmwaredatei selbst wird dabei nicht verändert.
 
-Der normale Firmwareupdate-Pfad ist bewusst in Host- und DTU-Aufgaben getrennt:
+---
 
-```text
-FoxAir_Updater.exe
-        ↓
-Windows-GUI / Statusdarstellung
-        ↓
-private Python Runtime
-        ↓
-updater/dtu_ota (Host-Client)
-        ↓  ADB nur für Prepare/Start/Status/Log/Recovery-Kommandos
-PHNIX LTE-Modem
-        ↓
-/data/foxair_ota_runner/... (persistenter Run)
-        ↓
-dtu_ota_supervisor.sh
-        ↓
-phnix_ota_runtime_hook + originaler phnixIot4G
-        ↓
-Mainboard-OTA
-```
+## Firmware-Backup
 
-Nach erfolgreichem `start` läuft der Updatevorgang auf dem LTE-Modem weiter. Windows pollt nur den gespeicherten Status und kann nach einem Verbindungsverlust wieder an diesen Zustand anknüpfen.
+Unter Windows ist die grafische Backup-Funktion der empfohlene Weg.
 
-Der ältere PHNIX-Controller bleibt für Diagnose-/Bestandsfunktionen im Paket erhalten, ist aber nicht mehr der produktive Orchestrator des normalen autonomen Firmwareupdates.
+Damit lassen sich die für Diagnose und Wiederherstellung interessanten Daten des LTE-Moduls sichern, ohne sie zu verändern.
 
-### Remote ADB über Raspberry Pi
+Ausführliche Anleitung:
 
-Wenn das LTE-Modem per USB an einem Raspberry Pi hängt, kann der ADB-Server im lokalen LAN bereitgestellt werden:
+**[LTE-Modul verbinden und Firmware-Backup erstellen](docs/HowTo/firmware_backup_lte.md)**
 
-```bash
-adb kill-server
-adb -a -P 5038 nodaemon server
-```
+Firmware- und Gerätedateien aus dem LTE-Modul sollten nicht ungeprüft öffentlich geteilt werden.
 
-Zum Beenden auf dem Raspberry Pi **Strg+C** drücken. In der Windows-GUI werden IP-Adresse und Port eingetragen. Auch im Remote-Modus wird unter Windows eine lokale `adb.exe` als Client benötigt.
+---
 
-Der Remote-ADB-Port sollte nur in einem vertrauenswürdigen lokalen Netz freigegeben werden.
+## Erweiterte Diagnose
 
-### Windows-Firmwareupdate-Anleitung
+Im Programm gibt es zusätzliche Diagnose- und Wartungsfunktionen, die für ein normales Firmwareupdate nicht benötigt werden.
 
-Der normale Endanwenderablauf ist hier beschrieben:
+Dazu gehören unter anderem:
 
-**[`docs/HowTo/firmware_update_windows.md`](docs/HowTo/firmware_update_windows.md)**
+- LTE-/SIM-Informationen;
+- Cloud-/Verbindungsdiagnose;
+- Mainboard-Informationen;
+- LTE-DTU-Debugmonitor;
+- Diagnosepaket;
+- erweiterte Updateoptionen;
+- Wartung ausgewählter interner Statistikzähler.
+
+Für ein normales Update sollten diese Einstellungen unverändert bleiben.
+
+---
 
 ## Linux / Raspberry Pi
 
-Der Linux-/Raspberry-Pi-Weg bleibt weiterhin nutzbar.
+Für erfahrene Anwender gibt es weiterhin einen Linux-/Raspberry-Pi-Weg.
 
-Als normaler Benutzer ausführen, **nicht** mit `sudo` starten:
+Installation als normaler Benutzer:
 
 ```sh
 cd ~
@@ -185,7 +211,7 @@ wget -O install.sh \
 bash install.sh
 ```
 
-Danach stehen unter anderem zur Verfügung:
+Danach stehen unter anderem folgende Befehle zur Verfügung:
 
 ```text
 ./foxair-updater status
@@ -196,86 +222,42 @@ Danach stehen unter anderem zur Verfügung:
 ./foxair-updater version
 ```
 
-Der Installer:
+Für Endanwender unter Windows ist die grafische Anwendung normalerweise deutlich einfacher.
 
-- prüft bzw. installiert `python3`, `adb`, `usbutils`, `git` und CA-Zertifikate;
-- verlangt Python 3.10 oder neuer;
-- verwendet einen schlanken Git-Sparse-Checkout;
-- richtet den USB-Zugriff für das PHNIX-LTE-Modem `1e0e:9001` ein;
-- berücksichtigt ein kurzzeitig `offline` erscheinendes ADB-Gerät und versucht `adb reconnect`;
-- erstellt den lokalen Firmwareordner `~/FoxAir_updater/firmware`;
-- prüft die benötigten Updater-/Runner-Komponenten.
+---
 
-Ausführliche Updater-Anleitung:
-[`docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)
+## Weitere Dokumentation
 
-Anschluss des LTE-Modems, Micro-USB, Windows-/Linux-ADB und Backup:
-[`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)
+- **[Firmwareupdate unter Windows](docs/HowTo/firmware_update_windows.md)**
+- **[Endanwender-Anleitung](docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)**
+- **[LTE-Modul / Firmware-Backup](docs/HowTo/firmware_backup_lte.md)**
+- **[Technische Reverse-Engineering-Dokumentation](docs/reverse_engineering/)**
 
-## Firmware-Backup / Firmware-Download
+Die technischen Dokumente enthalten bewusst deutlich mehr interne Details als diese README.
 
-Unter Windows ist die grafische Backup-Funktion der empfohlene Weg. Sie verwendet ausschließlich read-only `adb pull`.
-
-Gesichert werden können:
-
-- `/cache/phnixIot_device_OTA` – aktuell im LTE-Cache vorhandene Firmware-/OTA-Datei;
-- `/data/phnixIot_device_OTA_INFO` – persistenter OTA-/Resume-Zustand;
-- `/data/phnixIot_device_statisic` – persistente Betriebs-, Reset-, Kommunikations- und OTA-Zähler;
-- `/data/phnixIot4G` – originaler PHNIX-LTE-Dienst.
-
-Die vollständige Anleitung steht unter:
-
-**[`docs/HowTo/firmware_backup_lte.md`](docs/HowTo/firmware_backup_lte.md)**
-
-Firmware- und Datendateien aus dem LTE-Modem werden nicht automatisch veröffentlicht und sollen insbesondere nicht in dieses öffentliche Repository eingecheckt werden.
-
-## Firmware und Manifest
-
-Firmwaredateien werden **nicht über dieses öffentliche GitHub-Repository verteilt**. Der Installer lädt keine Mainboard-Firmware herunter.
-
-Das Manifest beschreibt die zu übertragende Firmware eindeutig und enthält bzw. bindet unter anderem:
-
-- Software-/Produktcode;
-- Firmwareversion;
-- Ziel-/SSID;
-- Dateigröße;
-- MD5;
-- SHA256;
-- Referenz auf die zugehörige Firmwaredatei.
-
-Damit prüft der Updater vor dem eigentlichen OTA, dass die ausgewählte Firmwaredatei exakt zu den erwarteten Metadaten und Prüfsummen passt.
-
-Unter Windows ist die automatische Full-Variante der empfohlene Weg: Firmware auswählen, analysieren lassen und Manifest automatisch erzeugen. Die Firmwaredatei wird dabei nicht verändert und muss keine `.bin`-Endung besitzen.
-
-Unter Linux kann ein Manifest ebenfalls lokal erzeugt werden, zum Beispiel:
-
-```sh
-cd ~/FoxAir_updater
-./foxair-updater manifest FW3.4.bin \
-  --software-code 82400644 \
-  --display-version V3.4 \
-  --target-ssid 0063
-```
-
-## Projektstruktur
-
-Produktiver Updater-Code liegt unter `updater/`. Der autonome DTU-Runner befindet sich unter `updater/dtu_ota/`, gemeinsame Host-Komponenten unter `updater/common/`.
-
-`tools/` und insbesondere `tools/testvm/` enthalten Analyse-, Entwicklungs- und Simulatorwerkzeuge. Die QEMU-/Fake-ADB-Testumgebung bleibt bewusst vom produktiven Runner getrennt.
+---
 
 ## Projektumfang
 
-Enthalten sind unter anderem Firmware-Reverse-Engineering, PHNIX-LTE-Modem-/Runtime-Analyse, OTA-/IAP-Protokollanalyse, Firmwareupdate-, Recovery- und Validierungswerkzeuge, Manifest-/Hashprüfung sowie Simulatoren und Regressionstests.
+FoxAir Updater beschäftigt sich mit:
 
-Nicht Schwerpunkt dieses Repositorys sind die normale FoxAir-Control-GUI, normale Endanwender-Steuerlogik oder allgemeine Modbus-Werkzeuge ohne direkten Firmware-/Updater-Bezug.
+- Mainboard-Firmwareupdates;
+- Firmware-Backup;
+- Update- und Recovery-Verhalten;
+- LTE-DTU-/PHNIX-Kommunikation;
+- Firmwareanalyse und Reverse Engineering;
+- Diagnose- und Validierungswerkzeugen.
 
+Für normale Wärmepumpensteuerung, Registeranzeige und Modbus-Parametrierung ist **[FoxAir Control](https://github.com/dosordie/FoxAir_Control)** das passendere Projekt.
+
+---
 
 ## Lizenz
 
 Dieses Repository steht unter der **GNU General Public License v3.0**, SPDX-Kennung **`GPL-3.0-only`**.
 
-Siehe [`LICENSE`](LICENSE).
+Siehe [LICENSE](LICENSE).
 
-Weitergabe und Änderungen sind damit erlaubt, abgeleitete Werke müssen bei Weitergabe jedoch ebenfalls unter den Bedingungen der GPLv3 stehen und der zugehörige Quellcode muss gemäß den Lizenzbedingungen verfügbar gemacht werden.
+Weitergabe und Änderungen sind damit erlaubt. Abgeleitete Werke müssen bei Weitergabe ebenfalls unter den Bedingungen der GPLv3 stehen und der zugehörige Quellcode muss gemäß den Lizenzbedingungen verfügbar gemacht werden.
 
 Die GPL enthält ausdrücklich einen Gewährleistungs- und Haftungsausschluss.
