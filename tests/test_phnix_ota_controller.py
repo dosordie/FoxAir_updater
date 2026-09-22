@@ -239,17 +239,19 @@ class OtaInfoTests(unittest.TestCase):
                 "hook": {"phase": "c5a8"},
                 "ota_info": {"crc_ok": True, "offset": 71_899, "length": TEST_SIZE},
             })
+            after_first = output.tell()
             controller._human_event("status", {
                 "hook": {"phase": "c5a8"},
                 "ota_info": {"crc_ok": True, "offset": 71_899, "length": TEST_SIZE},
             })
+            after_duplicate = output.tell()
             controller._human_event("status", {
                 "hook": {"phase": "c5a8"},
                 "ota_info": {"crc_ok": True, "offset": 74_776, "length": TEST_SIZE},
             })
-        rendered = output.getvalue()
-        lines = [line for line in rendered.splitlines() if line.strip()]
-        self.assertEqual(len(lines), 2)
+            after_progress = output.tell()
+        self.assertEqual(after_duplicate, after_first)
+        self.assertGreater(after_progress, after_duplicate)
 
     def test_run_maintenance_switches_do_not_require_manifest(self):
         check = build_parser().parse_args(["run", "--check", "status"])
