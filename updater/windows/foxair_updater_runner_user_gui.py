@@ -342,10 +342,13 @@ class MainWindow(runner.MainWindow):
             + (f"<br><small>Lauf-ID: <code>{escape(run_id)}</code></small>" if run_id else "")
         )
         if hasattr(self, "progress_sources"):
-            text = self._phase_text(phase)
-            if isinstance(board_step, int) and board_step:
-                text += " | Mainboard verarbeitet das Update"
-            self.progress_sources.setText(text)
+            if terminal:
+                self.progress_sources.clear()
+            else:
+                text = self._phase_text(phase)
+                if isinstance(board_step, int) and board_step:
+                    text += " | Mainboard verarbeitet das Update"
+                self.progress_sources.setText(text)
 
     @staticmethod
     def _failed_run_id(output: str) -> str | None:
