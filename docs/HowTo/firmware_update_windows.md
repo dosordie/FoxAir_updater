@@ -11,7 +11,11 @@ Die Einrichtung der USB-/ADB-Verbindung zum LTE-Modem ist identisch mit dem Verb
 > [!CAUTION]
 > Ein Firmwareupdate verändert die Firmware des Mainboards und erfolgt **auf eigenes Risiko**. Während des laufenden Updates Wärmepumpe und LTE-Modem **nicht stromlos machen**.
 >
-> Real erfolgreich bestätigt sind inzwischen sowohl ein vollständiger Versionswechsel **V3.3 → V3.4** als auch ein direktes Update von **V1.2 (Auslieferungszustand) → V3.4**. **V3.5 (`82400644 / 0035`) ist statisch als nächste Revision derselben Firmwarelinie bestätigt, wurde mit dem FoxAir Updater aber noch nicht live als Updateziel oder Ausgangsversion validiert.** Diese realen Tests sind keine Garantie für beliebige andere Firmwarestände oder Hardwarevarianten.
+> Real erfolgreich bestätigt sind inzwischen sowohl ein vollständiger Versionswechsel **V3.3 → V3.4** als auch ein direktes Update von **V1.2 (Auslieferungszustand) → V3.4**. **V3.5 (`82400644 / 0035`) ist als nächste Revision derselben Firmwarelinie bestätigt, wurde mit dem FoxAir Updater aber noch nicht live als kompletter Updatevorgang validiert.**
+>
+> Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** verwenden dieselbe Mainboard-Firmwarelinie. Die V3.5 ist deshalb für entsprechende BL- und GL-Geräte dieser `82400644`-Familie untereinander kompatibel. Bei unbekannten Modellen sollte vor dem Update trotzdem immer der tatsächlich ausgelesene Mainboard-Softwarecode geprüft werden.
+>
+> Diese realen Tests sind keine Garantie für beliebige andere Firmwarestände oder Hardwarevarianten.
 
 ## 1. Updatepaket vorbereiten
 
@@ -140,4 +144,4 @@ Die Wartungsfunktionen für persistente Statistikzähler gehören **nicht** zum 
 11. Bei Verbindungsverlust nach Wiederherstellung **Status prüfen** verwenden; dadurch wird kein zweiter OTA gestartet.
 12. Anschließend bei Bedarf **Protokoll speichern…** und die automatischen Logs sichern.
 
-Real erfolgreich durchgeführt: **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4**. **V3.5 ist statisch bekannt, aber noch nicht Bestandteil der real validierten OTA-Matrix.**
+Real erfolgreich durchgeführt: **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4**. **V3.5 ist bekannt und stammt aus einer BlueLine; sie gehört zur selben `82400644`-Firmwarelinie wie die entsprechenden GreenLine-Geräte. Ein kompletter V3.5-Updatevorgang mit dem FoxAir Updater ist aber noch nicht real validiert.**
