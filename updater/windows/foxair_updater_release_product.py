@@ -90,8 +90,8 @@ class MainWindow(product.MainWindow):
         if hasattr(self, "status_cleanup_note"):
             self.status_cleanup_note.setText(
                 "Automatischer Normalfall: Update-Protokolle lokal sichern → Ergebnis bestätigen → "
-                "gespeicherte Laufdaten entfernen. Der normale PHNIX-Betrieb wird dabei nicht "
-                "erneut verändert."
+                "gespeicherte Laufdaten entfernen. "
+                "Der normale PHNIX-Betrieb wird dabei nicht erneut verändert."
             )
         return widget
 
