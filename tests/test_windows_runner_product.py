@@ -84,15 +84,30 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn("self.progress_sources.clear()", method)
 
     def test_terminal_result_does_not_repeat_below_progress_bar(self):
-        method = self.enduser.split("def _render_runner_status", 1)[1].split(
+        status_method = self.enduser.split("def _render_runner_status", 1)[1].split(
             "def _done", 1
         )[0]
         self.assertIn(
             'if terminal and hasattr(self, "progress_sources"):',
-            method,
+            status_method,
         )
-        self.assertIn("self.progress_sources.clear()", method)
-        self.assertIn("reserved for live transfer details", method)
+        self.assertIn("self.progress_sources.clear()", status_method)
+
+        transfer_method = self.enduser.split(
+            "def _render_transfer_progress", 1
+        )[1].split("def _show_terminal_result", 1)[0]
+        self.assertIn("if self._runner_terminal:", transfer_method)
+        self.assertIn("self.progress_sources.clear()", transfer_method)
+        self.assertIn("late PHNIX/debug events", transfer_method)
+
+        user = Path(
+            "updater/windows/foxair_updater_runner_user_gui.py"
+        ).read_text(encoding="utf-8")
+        user_status = user.split("def _render_runner_status", 1)[1].split(
+            "def _failed_run_id", 1
+        )[0]
+        self.assertIn("if terminal:", user_status)
+        self.assertIn("self.progress_sources.clear()", user_status)
 
     def test_verified_service_restart_is_presented_as_completed(self):
         method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
