@@ -628,13 +628,20 @@ class MainWindow(user_gui.MainWindow):
                     "Gleiche Firmware sicher erkannt; kein Firmwareupdate erforderlich.",
                 )
             elif result_type == "recovery-completed":
+                # A confirmed restore is a successful terminal safety outcome.
+                # Upgrade the earlier transient recovery warning to green as
+                # well as the terminal row.
                 self._set_step(
-                    "runner-terminal-user", "warn",
+                    "runner-recovery-user", "ok",
+                    "Update wurde vor Beginn der Übertragung beendet; Originalzustand wurde wiederhergestellt.",
+                )
+                self._set_step(
+                    "runner-terminal-user", "ok",
                     "Originalzustand wurde erfolgreich wiederhergestellt.",
                 )
             elif result_type == "aborted-before-transfer":
                 self._set_step(
-                    "runner-terminal-user", "warn",
+                    "runner-terminal-user", "ok",
                     "Firmwareupdate wurde sicher vor Beginn der Übertragung abgebrochen.",
                 )
             elif result_type in {"recovery-required", "reboot-detected"}:
