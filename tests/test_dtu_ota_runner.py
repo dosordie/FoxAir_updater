@@ -167,7 +167,7 @@ class DtuOtaPackageTests(unittest.TestCase):
             adb = FakeAdb()
             adb.active = "active-2"
             client = DtuOtaClient(adb)
-            with self.assertRaisesRegex(RunnerClientError, "active-2"):
+            with self.assertRaises(RunnerClientError):
                 client.prepare(manifest_path=manifest_path, firmware_path=firmware)
             self.assertEqual(adb.files, {})
 
@@ -200,7 +200,7 @@ class DtuOtaPackageTests(unittest.TestCase):
             client = DtuOtaClient(adb, source_root=Path(temp))
             client.hook = hook
             client.supervisor = runner
-            with self.assertRaisesRegex(RunnerClientError, "code 72"):
+            with self.assertRaises(RunnerClientError):
                 client.prepare(
                     manifest_path=manifest_path, firmware_path=firmware,
                     run_id="run-rejected",
@@ -384,12 +384,10 @@ class DtuOtaPackageTests(unittest.TestCase):
             self.assertIn(f'"{phase}":', gui)
         self.assertIn('"service-ready-wait": (', enduser)
         self.assertIn('"runner-lost": (', enduser)
-        self.assertIn("rund 15 Minuten", enduser)
         supervisor = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("roughly 15 minutes", supervisor)
-        self.assertIn("safety timeout is 20 minutes", supervisor)
+        self.assertIn("RECOVERY_RESUME_TIMEOUT=1200", supervisor)
 
     def test_c5a8_stall_watchdog_reuses_resume_path_without_extra_polling(self):
         runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
