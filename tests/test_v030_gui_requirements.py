@@ -48,8 +48,9 @@ class V030GuiRequirementsTests(unittest.TestCase):
             self.assertIn(text, combined)
 
     def test_enduser_same_version_controls_are_removed(self):
-        self.assertNotIn('QPushButton("Gleichversionstest starten")', self.base)
-        self.assertNotIn('QCheckBox("Passiver RS485-Logger läuft tatsächlich")', self.base)
+        self.assertNotIn("self.same_btn =", self.base)
+        self.assertNotIn("self.same_manifest =", self.base)
+        self.assertNotIn("self.passive_logger =", self.base)
 
     def test_mqtt_stays_connected_by_default_and_can_be_explicitly_isolated(self):
         update_ui = self.base.split("def _update(self):", 1)[1].split("def _status", 1)[0]
