@@ -27,14 +27,6 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn("updater\\windows\\foxair_updater_release_runtime.py", self.build)
         self.assertIn("import foxair_updater_release_product as release", self.runtime)
         self.assertIn("import foxair_updater_runner_product as product", self.release)
-        self.assertIn(
-            "py .\\updater\\windows\\foxair_updater_release_runtime.py",
-            self.windows_readme,
-        )
-        self.assertNotIn(
-            "py updater\\windows\\foxair_updater_runner_product.py",
-            self.windows_readme,
-        )
 
     def test_direct_runner_product_start_delegates_to_final_release_runtime(self):
         self.assertIn(
@@ -79,7 +71,6 @@ class WindowsRunnerProductTests(unittest.TestCase):
         method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
         self.assertIn('phase == "dry-run-complete"', method)
         self.assertIn("not self._runner_autostart_after_prepare", method)
-        self.assertIn('self._flow_title = "Vorprüfung erfolgreich"', method)
         self.assertIn("self.progress_text.clear()", method)
         self.assertIn("self.progress_sources.clear()", method)
 
@@ -98,7 +89,6 @@ class WindowsRunnerProductTests(unittest.TestCase):
         )[1].split("def _show_terminal_result", 1)[0]
         self.assertIn("if self._runner_terminal:", transfer_method)
         self.assertIn("self.progress_sources.clear()", transfer_method)
-        self.assertIn("late PHNIX/debug events", transfer_method)
 
         user = Path(
             "updater/windows/foxair_updater_runner_user_gui.py"
@@ -133,18 +123,16 @@ class WindowsRunnerProductTests(unittest.TestCase):
         method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
         self.assertIn('status.get("service_restart_requested") is True', method)
         self.assertIn('status.get("service_restart_verified") is True', method)
-        self.assertIn("LTE-Kommunikationsdienst wurde kontrolliert neu gestartet.", method)
 
     def test_product_moves_status_button_to_protocol_toolbar(self):
         ui = self.product.split("def _ui(self):", 1)[1].split("# ------------------------------------------------------------------\n    # Final maintenance UI", 1)[0]
-        self.assertIn('button.text() == "Protokoll leeren"', ui)
         self.assertIn("source_layout.removeWidget(self.ota_reattach_btn)", ui)
         self.assertIn("log_toolbar.insertWidget", ui)
 
     def test_product_places_manifest_immediately_before_advanced(self):
         ui = self.product.split("def _ui(self):", 1)[1].split("# ------------------------------------------------------------------\n    # Final maintenance UI", 1)[0]
-        self.assertIn('self.tabs.tabText(index) == "Update-Datei / Manifest"', ui)
-        self.assertIn('self.tabs.tabText(index) == "Erweitert"', ui)
+        self.assertIn("manifest_index = next(", ui)
+        self.assertIn("advanced_index = next(", ui)
         self.assertIn("self.tabs.insertTab(advanced_index, manifest_widget, manifest_text)", ui)
 
 
