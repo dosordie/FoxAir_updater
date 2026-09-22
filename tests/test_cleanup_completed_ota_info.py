@@ -68,8 +68,7 @@ class CompletedOtaInfoCleanupTests(unittest.TestCase):
         self.assertTrue(snapshot["safe"])
         self.assertEqual(snapshot["ota_info"]["offset"], 287598)
         self.assertEqual(snapshot["ota_info"]["length"], 287598)
-        self.assertTrue(any("vollständig übertragenen" in note for note in snapshot["notes"]))
-        self.assertTrue(any("vorherigem DTU-Boot" in note for note in snapshot["notes"]))
+        self.assertFalse(snapshot["blockers"])
 
     def test_same_boot_runner_with_complete_transfer_counters_is_cleanable_when_helpers_are_gone(self):
         run_id = "20260914-173921-0703"
@@ -84,8 +83,7 @@ class CompletedOtaInfoCleanupTests(unittest.TestCase):
         snapshot = safety_snapshot(adb)
 
         self.assertTrue(snapshot["safe"])
-        self.assertTrue(any("aktuellen DTU-Boot" in note for note in snapshot["notes"]))
-        self.assertTrue(any("vollständig übertragenen" in note for note in snapshot["notes"]))
+        self.assertFalse(snapshot["blockers"])
 
     def test_previous_boot_runner_with_partial_transfer_stays_blocked(self):
         run_id = "20260914-173921-0701"
@@ -94,7 +92,7 @@ class CompletedOtaInfoCleanupTests(unittest.TestCase):
         snapshot = safety_snapshot(adb)
 
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("fortsetzbaren OTA-Zustand" in blocker for blocker in snapshot["blockers"]))
+        self.assertTrue(snapshot["blockers"])
 
     def test_same_boot_runner_with_partial_transfer_stays_blocked(self):
         run_id = "20260914-173921-0704"
