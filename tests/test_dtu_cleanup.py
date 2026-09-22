@@ -231,7 +231,7 @@ class DtuCleanupTests(unittest.TestCase):
         adb = FakeAdb(ps="123 root /system/bin/sh /data/foxair_ota_runner/runs/x/payload/dtu_ota_supervisor.sh run x")
         snapshot = safety_snapshot(adb)
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("Hilfsprozesse" in item for item in snapshot["blockers"]))
+        self.assertTrue(snapshot["ota_helper_processes"])
         with self.assertRaises(CleanupError):
             clean(adb)
         self.assertEqual(adb.removed, [])
