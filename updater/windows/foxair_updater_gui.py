@@ -102,9 +102,9 @@ class MainWindow(QMainWindow):
         warning = QLabel(
             "<b>Firmwareupdate – Nutzung auf eigenes Risiko</b><br>"
             "Ein Firmwareupdate verändert die Mainboard-Firmware und erfolgt auf eigenes Risiko. "
-            "Firmwareupdates auf V3.4 wurden auf realer Hardware erfolgreich durchgeführt. "
-            "Andere Firmwareziele oder Hardwarevarianten sind möglicherweise noch nicht "
-            "vollständig validiert."
+            "Firmwareupdates wurden bereits auf mehreren Hardware- und Firmwarevarianten "
+            "erfolgreich durchgeführt. Nicht geprüfte Firmwareziele oder Hardwarevarianten "
+            "können trotzdem abweichendes Verhalten zeigen."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet("QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px}")
@@ -981,9 +981,10 @@ class MainWindow(QMainWindow):
                 self,
                 "Firmwareupdate starten",
                 "Ein Firmwareupdate verändert die Mainboard-Firmware und erfolgt auf eigenes "
-                "Risiko. Firmwareupdates auf V3.4 wurden auf realer Hardware erfolgreich "
-                "durchgeführt. Andere Firmwareziele oder Hardwarevarianten sind möglicherweise "
-                "noch nicht vollständig validiert.\n\nFirmwareupdate jetzt starten?",
+                "Risiko. Firmwareupdates wurden bereits auf mehreren Hardware- und "
+                "Firmwarevarianten erfolgreich durchgeführt. Nicht geprüfte Firmwareziele oder "
+                "Hardwarevarianten können trotzdem abweichendes Verhalten zeigen."
+                "\n\nFirmwareupdate jetzt starten?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
