@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 import foxair_updater_gui as base
 import foxair_updater_runner_user_gui as user_gui
@@ -34,6 +34,8 @@ class MainWindow(user_gui.MainWindow):
         self._passive_runner_poll = False
         self._runner_started_epoch: int | None = None
         self._runner_terminal_epoch: int | None = None
+        self._recovery_deadline_at = 0
+        self._recovery_wait_active = False
         self._manual_status_direct_attempt = False
         self._manual_status_reconnect_pending = False
         super().__init__()
@@ -41,6 +43,9 @@ class MainWindow(user_gui.MainWindow):
         # cadence so the Windows fallback display does not lag several seconds
         # behind the autonomous runner state.
         self._runner_timer.setInterval(2000)
+        self._recovery_countdown_timer = QTimer(self)
+        self._recovery_countdown_timer.setInterval(1000)
+        self._recovery_countdown_timer.timeout.connect(self._update_recovery_countdown)
         self.setWindowTitle(f"FoxAir Updater {base.APP_VERSION}")
         self.dry.setText("Vorprüfung")
         self.update_btn.setText("Firmwareupdate starten")
@@ -62,6 +67,17 @@ class MainWindow(user_gui.MainWindow):
         # prepare/start controls.
         layout.removeWidget(self.ota_reattach_btn)
         layout.insertWidget(max(0, layout.count() - 1), self.ota_reattach_btn)
+
+        self.recovery_wait_label = QLabel("")
+        self.recovery_wait_label.setWordWrap(True)
+        self.recovery_wait_label.setStyleSheet(
+            "QLabel{background:#fff8e1;border:1px solid #e0c36a;padding:7px;}"
+        )
+        self.recovery_wait_label.hide()
+        if hasattr(self, "progress_sources"):
+            layout.insertWidget(layout.indexOf(self.progress_sources) + 1, self.recovery_wait_label)
+        else:
+            layout.insertWidget(layout.indexOf(self.progress) + 1, self.recovery_wait_label)
         return widget
 
     def _reattach_ota(self):
@@ -140,6 +156,12 @@ class MainWindow(user_gui.MainWindow):
     def _reset_flow(self, title: str, *, transfer_expected: bool = False):
         self._runner_started_epoch = None
         self._runner_terminal_epoch = None
+        self._recovery_deadline_at = 0
+        self._recovery_wait_active = False
+        if hasattr(self, "_recovery_countdown_timer"):
+            self._recovery_countdown_timer.stop()
+        if hasattr(self, "recovery_wait_label"):
+            self.recovery_wait_label.hide()
         return super()._reset_flow(title, transfer_expected=transfer_expected)
 
     def _update_ota_elapsed(self) -> None:
@@ -154,6 +176,41 @@ class MainWindow(user_gui.MainWindow):
         elapsed = max(0, int(end_epoch - self._runner_started_epoch))
         minutes, seconds = divmod(elapsed, 60)
         self.ota_elapsed_label.setText(f"Verstrichen: {minutes:02d}:{seconds:02d}")
+
+    def _update_recovery_countdown(self) -> None:
+        if not self._recovery_wait_active or self._recovery_deadline_at <= 0:
+            if hasattr(self, "recovery_wait_label"):
+                self.recovery_wait_label.hide()
+            return
+
+        remaining = max(0, self._recovery_deadline_at - int(time.time()))
+        minutes, seconds = divmod(remaining, 60)
+        if remaining > 0:
+            text = (
+                f"Wiederaufnahme: Sicherheits-Timeout in {minutes:02d}:{seconds:02d}. "
+                "Das Mainboard kann sich nach einer Unterbrechung erst nach rund 15 Minuten wieder melden."
+            )
+        else:
+            text = "Wiederaufnahme: Sicherheits-Timeout erreicht – der Abschlussstatus wird geprüft."
+        if hasattr(self, "recovery_wait_label"):
+            self.recovery_wait_label.setText(text)
+            self.recovery_wait_label.show()
+
+    def _sync_recovery_countdown(self, status: dict) -> None:
+        phase = str(status.get("phase") or "")
+        deadline = status.get("recovery_deadline_at")
+        active = phase == "recovery-wait-mainboard" and isinstance(deadline, int) and deadline > 0
+
+        self._recovery_wait_active = active
+        self._recovery_deadline_at = deadline if active else 0
+        if active:
+            self._update_recovery_countdown()
+            if not self._recovery_countdown_timer.isActive():
+                self._recovery_countdown_timer.start()
+        else:
+            self._recovery_countdown_timer.stop()
+            if hasattr(self, "recovery_wait_label"):
+                self.recovery_wait_label.hide()
 
     def _sync_runner_elapsed(self, status: dict) -> None:
         state = str(status.get("state") or "")
@@ -276,6 +333,10 @@ class MainWindow(user_gui.MainWindow):
                 "Firmwareupdate läuft auf dem LTE-Modem weiter – lokale Überwachung ist beendet"
             ),
             "post-restart-preflight": "LTE-Dienst wird nach dem Neustart erneut geprüft",
+            "recovery-service-restart": "Update-Dienst ist ausgefallen und wird automatisch neu gestartet",
+            "recovery-hook-attach": "Update-Überwachung wird wieder mit dem LTE-Dienst verbunden",
+            "recovery-wait-mainboard": "Warte auf das Mainboard – Wiederaufnahme kann rund 15 Minuten dauern",
+            "recovery-resumed": "Firmwareübertragung wurde automatisch fortgesetzt",
             "local-http": "Firmwaredatei wird für das LTE-Modem bereitgestellt",
             "invalid-success-boundary": "Abschluss des Firmwareupdates konnte noch nicht sicher bestätigt werden",
             "invalid-failure-boundary": "Fehlerstatus des Firmwareupdates konnte noch nicht sicher bestätigt werden",
@@ -288,12 +349,82 @@ class MainWindow(user_gui.MainWindow):
         reason = str(status.get("reason") or "")
         detail = str(status.get("detail") or "").strip()
 
+        if phase == "recovery-service-restart" and reason == "transfer_stalled":
+            return (
+                "Seit 20 Minuten wurde kein bestätigter Fortschritt der Firmwareübertragung erkannt. "
+                "Der LTE-Kommunikationsdienst wird kontrolliert neu gestartet und anschließend über "
+                "den vorhandenen PHNIX-Wiederaufnahmezustand fortgesetzt."
+            )
+
         phase_text = {
             "dry-run-complete": (
                 "Die Vorprüfung ist abgeschlossen. Das Firmwareupdate ist vorbereitet, aber noch nicht gestartet."
             ),
             "local-preparation": "Das LTE-Modem bereitet das Firmwareupdate vor.",
             "service-restart": "Der LTE-Kommunikationsdienst wird für die Update-Überwachung neu gestartet.",
+            "service-restart-wait": (
+                "Der LTE-Kommunikationsdienst wird kontrolliert neu gestartet. "
+                "Es wird auf genau eine neue, stabile Dienstinstanz gewartet."
+            ),
+            "service-restart-verified": (
+                "Der LTE-Kommunikationsdienst wurde erfolgreich neu gestartet und eindeutig geprüft."
+            ),
+            "service-ready-wait": (
+                "Der LTE-Kommunikationsdienst läuft. Vor dem Firmwareupdate wird noch gewartet, "
+                "bis seine interne Kommunikation vollständig bereit und inaktiv ist."
+            ),
+            "service-ready": (
+                "Der LTE-Kommunikationsdienst ist vollständig bereit. Das Firmwareupdate kann fortgesetzt werden."
+            ),
+            "post-restart-preflight": (
+                "Nach dem Neustart des LTE-Dienstes werden die Update-Voraussetzungen erneut geprüft."
+            ),
+            "failure-report": (
+                "Das Mainboard hat einen Fehler gemeldet. Der sichere Abschlusszustand wird noch geprüft."
+            ),
+            "precondition-rejected": (
+                "Die Voraussetzungen für den Start des Firmwareupdates wurden nicht erfüllt."
+            ),
+            "parser-rejected": (
+                "Die Update-Anfrage konnte nicht sicher an den LTE-Dienst übergeben werden."
+            ),
+            "c36e-rejected": (
+                "Das Mainboard hat die Update-Anfrage abgelehnt."
+            ),
+            "debugger-ended-before-terminal": (
+                "Die lokale Update-Überwachung wurde beendet, bevor ein sicherer Endzustand erreicht war."
+            ),
+            "debugger-unexpected-stop": (
+                "Die lokale Update-Überwachung wurde unerwartet unterbrochen."
+            ),
+            "runner-lost": (
+                "Der autonome Update-Runner auf dem LTE-Modem ist nicht mehr aktiv. "
+                "Der gespeicherte Updatezustand bleibt für die Diagnose erhalten."
+            ),
+            "recovery-required": (
+                "Die automatische Wiederaufnahme konnte nicht sicher abgeschlossen werden. "
+                "Eine manuelle Prüfung ist erforderlich."
+            ),
+            "same-version-restore": (
+                "Nach der Prüfung auf gleiche Firmware wird der ursprüngliche Zustand wiederhergestellt."
+            ),
+            "backup": (
+                "Die für einen sicheren Update-Start benötigten LTE-Statusdaten konnten nicht gesichert werden."
+            ),
+            "recovery-service-restart": (
+                "Der Update-Dienst wurde während der laufenden Übertragung beendet und wird automatisch neu gestartet."
+            ),
+            "recovery-hook-attach": (
+                "Der Update-Dienst läuft wieder. Die lokale Update-Überwachung wird erneut verbunden."
+            ),
+            "recovery-wait-mainboard": (
+                "Der Update-Dienst läuft wieder. Nach einer unterbrochenen Übertragung kann das Mainboard "
+                "erst nach rund 15 Minuten die Wiederaufnahme anfordern. Das ist normal; der Runner wartet "
+                "vorsichtshalber bis zu 20 Minuten auf die Fortsetzung."
+            ),
+            "recovery-resumed": (
+                "Das Mainboard hat die bestehende Firmwareübertragung fortgesetzt."
+            ),
             "same-version": "Die gleiche Firmware ist bereits installiert. Es wurden keine Firmwaredaten übertragen.",
             "original-service-active-unmonitored": (
                 "Das Firmwareupdate läuft auf dem LTE-Modem weiter. Windows kann den aktuellen Stand "
@@ -333,6 +464,59 @@ class MainWindow(user_gui.MainWindow):
         result_type = str(status.get("result_type") or "")
         transfer_started = status.get("transfer_started") is True
         authoritative = status.get("original_service_authoritative") is True
+        recovery = str(status.get("recovery") or "")
+        recovery_attempts = int(status.get("recovery_attempts") or 0)
+
+        # Transient warning rows describe the currently active preparation
+        # step.  If a later step is already visible, turn the earlier row green
+        # even when the short intermediate "completed" phase was missed by the
+        # GUI polling interval.
+        if phase not in {"hook-starting", "attaching"}:
+            current = self._flow_steps.get("runner-monitor")
+            if current and current[0] == "warn":
+                self._set_step(
+                    "runner-monitor", "ok",
+                    "Update-Überwachung auf dem LTE-Modem wurde gestartet.",
+                )
+
+        yield_completed = (
+            phase not in {
+                "",
+                "hook-started",
+                "hook-starting",
+                "attaching",
+                "waiting-for-yield-loop",
+            }
+            or status.get("c350_sent") is True
+            or status.get("c357_sent") is True
+            or status.get("c5a8_sent") is True
+            or transfer_started
+        )
+        if yield_completed:
+            current = self._flow_steps.get("runner-yield")
+            if current and current[0] == "warn":
+                self._set_step(
+                    "runner-yield", "ok",
+                    "Sicherer Start des Firmwareupdates wurde erreicht.",
+                )
+            current = self._flow_steps.get("runner-parser")
+            if current and current[0] == "warn" and status.get("c350_sent") is True:
+                self._set_step(
+                    "runner-parser", "ok",
+                    "Firmwareupdate wurde an das Mainboard übergeben.",
+                )
+
+        if recovery_attempts > 0:
+            if recovery == "completed":
+                self._set_step(
+                    "runner-recovery-resume", "ok",
+                    "Firmwareübertragung wurde nach einem Dienstausfall automatisch fortgesetzt.",
+                )
+            elif recovery == "attempting":
+                self._set_step(
+                    "runner-recovery-resume", "warn",
+                    "Automatische Wiederaufnahme der laufenden Firmwareübertragung ist aktiv.",
+                )
 
         # Replace the technical protocol labels created by the lower runner
         # layer with end-user wording. Reusing the same flow keys updates the
@@ -370,6 +554,22 @@ class MainWindow(user_gui.MainWindow):
             "service-restart": (
                 "runner-service-restart", "warn",
                 "LTE-Kommunikationsdienst wird für die Update-Überwachung neu gestartet.",
+            ),
+            "recovery-service-restart": (
+                "runner-recovery-resume", "warn",
+                "Update-Dienst ist ausgefallen und wird automatisch neu gestartet.",
+            ),
+            "recovery-hook-attach": (
+                "runner-recovery-resume", "warn",
+                "Update-Dienst läuft wieder; Update-Überwachung wird neu verbunden.",
+            ),
+            "recovery-wait-mainboard": (
+                "runner-recovery-resume", "warn",
+                "Warte auf die erneute Antwort des Mainboards und die Fortsetzung der Übertragung.",
+            ),
+            "recovery-resumed": (
+                "runner-recovery-resume", "ok",
+                "Firmwareübertragung wurde nach dem Dienstausfall automatisch fortgesetzt.",
             ),
             "staging": (
                 "runner-staging", "ok",
@@ -428,13 +628,20 @@ class MainWindow(user_gui.MainWindow):
                     "Gleiche Firmware sicher erkannt; kein Firmwareupdate erforderlich.",
                 )
             elif result_type == "recovery-completed":
+                # A confirmed restore is a successful terminal safety outcome.
+                # Upgrade the earlier transient recovery warning to green as
+                # well as the terminal row.
                 self._set_step(
-                    "runner-terminal-user", "warn",
+                    "runner-recovery-user", "ok",
+                    "Update wurde vor Beginn der Übertragung beendet; Originalzustand wurde wiederhergestellt.",
+                )
+                self._set_step(
+                    "runner-terminal-user", "ok",
                     "Originalzustand wurde erfolgreich wiederhergestellt.",
                 )
             elif result_type == "aborted-before-transfer":
                 self._set_step(
-                    "runner-terminal-user", "warn",
+                    "runner-terminal-user", "ok",
                     "Firmwareupdate wurde sicher vor Beginn der Übertragung abgebrochen.",
                 )
             elif result_type in {"recovery-required", "reboot-detected"}:
@@ -450,6 +657,7 @@ class MainWindow(user_gui.MainWindow):
             "runner-yield": "Sicherer Start des Firmwareupdates wurde erreicht.",
             "runner-parser": "Firmwareupdate wurde an das Mainboard übergeben.",
             "runner-service-restart": "LTE-Kommunikationsdienst wurde kontrolliert neu gestartet.",
+            "runner-recovery-resume": "Automatische Wiederaufnahme der Firmwareübertragung war erfolgreich.",
             "runner-c350": "Update-Anfrage wurde an das Mainboard gesendet.",
             "runner-c357": "Firmwareübertragung wurde vorbereitet.",
             "runner-c5a8": "Firmware wurde vollständig an das Mainboard übertragen.",
@@ -470,14 +678,18 @@ class MainWindow(user_gui.MainWindow):
     # Dual transfer progress: serial PHNIX log + autonomous runner
     # ------------------------------------------------------------------
     def _render_transfer_progress(self) -> None:
-        """Restore the previous dual-source progress behavior.
+        """Render live transfer details while the runner is non-terminal.
 
         PHNIX serial progress is preferred for the bar while it is available.
-        If that source disappears, the inherited debug status handling clears
-        ``_phnix_transfer_event`` and the runner value automatically becomes the
-        displayed fallback.  Both values are listed below the bar whenever both
-        are available.
+        If that source disappears, the runner value becomes the fallback. Once
+        the runner is terminal, late PHNIX/debug events must not repopulate the
+        small detail line below the progress bar.
         """
+        if self._runner_terminal:
+            if hasattr(self, "progress_sources"):
+                self.progress_sources.clear()
+            return
+
         event = self._phnix_transfer_event
         runner_percent = self._runner_progress_value
         runner_offset = self._runner_progress_offset
@@ -597,6 +809,7 @@ class MainWindow(user_gui.MainWindow):
         length = status.get("length")
 
         self._sync_runner_elapsed(status)
+        self._sync_recovery_countdown(status)
         self._log_runner_id_once(run_id)
         self._update_flow_from_runner(status)
         if terminal and result_type == "success":
@@ -651,6 +864,14 @@ class MainWindow(user_gui.MainWindow):
 
         if terminal and result_type == "success":
             self.progress_text.setText("Firmwareupdate erfolgreich abgeschlossen")
+
+        # The line below the progress bar is reserved for live transfer details
+        # (source percentage / byte counters). Once the run is terminal, the
+        # result is already shown prominently above the bar and in the flow box;
+        # do not repeat the same terminal message in the small progress-detail
+        # line.
+        if terminal and hasattr(self, "progress_sources"):
+            self.progress_sources.clear()
 
         # Re-render the status box without technical run/protocol details. The
         # complete runner JSON is still written to the technical log.

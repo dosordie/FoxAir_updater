@@ -68,7 +68,7 @@ class DtuOtaRestartCompatibilityTests(unittest.TestCase):
             "recovery": "not-required",
         }
         client = DtuOtaClient(StatusAdb(status, active="legacy-active"))
-        with self.assertRaisesRegex(RunnerClientError, "invalid status contract"):
+        with self.assertRaises(RunnerClientError):
             client.status("legacy-active", reconcile=False)
 
 

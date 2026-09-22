@@ -15,11 +15,13 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QVBoxLayout,
 )
 
 import foxair_updater_gui as base
@@ -116,9 +118,12 @@ class MainWindow(base.MainWindow):
         widget = super()._connection()
         layout = widget.layout()
 
-        update_heading = QLabel("<b>Programmupdate</b>")
+        update_box = QGroupBox("Programmupdate")
+        update_layout = QVBoxLayout(update_box)
         self.release_status = QLabel(f"Installiert: v{APP_VERSION} – GitHub-Prüfung noch nicht ausgeführt.")
         self.release_status.setWordWrap(True)
+        update_layout.addWidget(self.release_status)
+
         update_row = QHBoxLayout()
         self.release_check_btn = QPushButton("Auf neue Version prüfen")
         self.release_check_btn.clicked.connect(lambda: self._check_for_updates(silent=False))
@@ -128,12 +133,12 @@ class MainWindow(base.MainWindow):
         update_row.addWidget(self.release_check_btn)
         update_row.addWidget(self.release_open_btn)
         update_row.addStretch()
+        update_layout.addLayout(update_row)
 
-        # Keep the existing explanatory note and final stretch at the bottom.
-        insert_at = max(0, layout.count() - 1)
-        layout.insertWidget(insert_at, update_heading)
-        layout.insertWidget(insert_at + 1, self.release_status)
-        layout.insertLayout(insert_at + 2, update_row)
+        # super()._connection() already ends with a stretch.  Adding the group
+        # after it keeps the program-update block visually separated and pushed
+        # to the lower edge of the page.
+        layout.addWidget(update_box)
         return widget
 
     def _backup(self):

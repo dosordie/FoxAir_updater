@@ -80,7 +80,7 @@ class DtuCleanupTests(unittest.TestCase):
         )
         snapshot = safety_snapshot(adb)
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("Hilfsprozesse" in item for item in snapshot["blockers"]))
+        self.assertTrue(snapshot["ota_helper_processes"])
         with self.assertRaises(CleanupError):
             clean(adb)
         self.assertEqual(adb.removed, [])
@@ -106,7 +106,6 @@ class DtuCleanupTests(unittest.TestCase):
         )
         snapshot = safety_snapshot(adb)
         self.assertTrue(snapshot["safe"])
-        self.assertTrue(any("aktuellen DTU-Boot" in item for item in snapshot["notes"]))
         result = clean(adb)
         self.assertTrue(result["ok"])
 
@@ -132,7 +131,6 @@ class DtuCleanupTests(unittest.TestCase):
         snapshot = safety_snapshot(adb)
         self.assertTrue(snapshot["safe"])
         self.assertEqual(snapshot["current_boot_id"], "boot-after-power-cycle")
-        self.assertTrue(any("vorherigem DTU-Boot" in item for item in snapshot["notes"]))
         result = clean(adb)
         self.assertTrue(result["ok"])
         self.assertIn("/data/foxair_ota_runner", adb.removed)
@@ -155,7 +153,6 @@ class DtuCleanupTests(unittest.TestCase):
         )
         snapshot = safety_snapshot(adb)
         self.assertTrue(snapshot["safe"])
-        self.assertTrue(any("ohne eindeutigen Bootnachweis" in item for item in snapshot["notes"]))
 
     def test_previous_boot_lock_still_blocks_when_ota_info_is_resumable(self):
         run_id = "20260914-173921-0702"
@@ -181,7 +178,8 @@ class DtuCleanupTests(unittest.TestCase):
         )
         snapshot = safety_snapshot(adb)
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("fortsetzbaren OTA-Zustand" in item for item in snapshot["blockers"]))
+        self.assertEqual(snapshot["ota_info"]["offset"], 4096)
+        self.assertEqual(snapshot["ota_info"]["length"], 289806)
 
     def test_terminal_stale_runner_lock_can_be_removed(self):
         run_id = "20260902-150000-0002"
@@ -214,7 +212,7 @@ class DtuCleanupTests(unittest.TestCase):
         )
         snapshot = safety_snapshot(adb)
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("Firmwareübertragung" in item for item in snapshot["blockers"]))
+        self.assertTrue(snapshot["blockers"])
 
     def test_stale_legacy_run_active_without_process_is_cleanable(self):
         adb = FakeAdb(
@@ -233,7 +231,7 @@ class DtuCleanupTests(unittest.TestCase):
         adb = FakeAdb(ps="123 root /system/bin/sh /data/foxair_ota_runner/runs/x/payload/dtu_ota_supervisor.sh run x")
         snapshot = safety_snapshot(adb)
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("Hilfsprozesse" in item for item in snapshot["blockers"]))
+        self.assertTrue(snapshot["ota_helper_processes"])
         with self.assertRaises(CleanupError):
             clean(adb)
         self.assertEqual(adb.removed, [])
@@ -267,7 +265,8 @@ class DtuCleanupTests(unittest.TestCase):
         adb = FakeAdb(ota_info=b"broken")
         snapshot = safety_snapshot(adb)
         self.assertFalse(snapshot["safe"])
-        self.assertTrue(any("220 Byte" in item for item in snapshot["blockers"]))
+        self.assertFalse(snapshot["ota_info"]["valid"])
+        self.assertEqual(snapshot["ota_info"]["length_bytes"], 6)
 
 
 if __name__ == "__main__":

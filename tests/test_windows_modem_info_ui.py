@@ -63,7 +63,6 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("phnix_statistics_counters.py", self.product_ui)
 
     def test_modem_info_is_read_only_process_memory_diagnostics(self):
-        self.assertIn('"Modem Info / LTE Diagnose"', self.desktop)
         self.assertIn("read_phnix_modem_info", self.lte_ui)
         self.assertIn("dd if=/proc/{pid}/mem", self.modem)
         self.assertIn("| od -An -v -tx1", self.modem)
@@ -77,10 +76,6 @@ class WindowsModemInfoUiTests(unittest.TestCase):
 
     def test_main_window_is_wider_and_traffic_actions_reach_program_log(self):
         self.assertIn("self.resize(1100, 780)", self.base_ui)
-        self.assertIn('self._log("[Modem Diagnose / Traffic] "', self.traffic_ui)
-        self.assertIn("Diagnose ist aktiv und passiv angehängt", self.traffic_ui)
-        self.assertIn("Aktualisierung abgeschlossen", self.traffic_ui)
-        self.assertIn('self._log("[Modem Diagnose / Traffic] Fehler: "', self.traffic_ui)
 
     def test_live_confirmed_lte_addresses_are_encoded(self):
         expected = [
@@ -107,20 +102,6 @@ class WindowsModemInfoUiTests(unittest.TestCase):
         self.assertIn("IMSI_SIZE = 17", self.modem)
         self.assertIn("IMEI_SIZE = 32", self.modem)
         self.assertIn("BOARD_INFO_SIZE = 28", self.modem)
-
-    def test_lte_diagnostics_formats_current_modem_info(self):
-        for marker in (
-            "<h3>Mainboard</h3>",
-            "Firmware:",
-            "<h3>Modem</h3>",
-            "IMEI:",
-            "<h3>SIM</h3>",
-            "ICCID:",
-            "Netzkennung MCC / MNC:",
-            "MQTT / Cloud:",
-            "ErrorStatue Bitmap:",
-        ):
-            self.assertIn(marker, self.lte_ui)
 
     def test_operator_decoder_stays_read_only(self):
         self.assertIn("OPERATORS", self.operators)

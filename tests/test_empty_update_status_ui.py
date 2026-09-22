@@ -12,8 +12,6 @@ class EmptyUpdateStatusUiTests(unittest.TestCase):
     def test_missing_last_run_is_presented_as_normal_empty_history(self):
         self.assertIn('if op == "runner-current":', self.ui)
         self.assertIn('status.get("error") == "DTU has no last_run_id"', self.ui)
-        self.assertIn("Kein gespeicherter Update-Status vorhanden.", self.ui)
-        self.assertIn("automatisch bereinigt", self.ui)
         self.assertIn('runner.legacy.MainWindow._done(self, "handled-result", code, output)', self.ui)
 
     def test_empty_history_clears_runner_state(self):

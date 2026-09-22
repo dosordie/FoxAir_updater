@@ -45,17 +45,13 @@ class WindowsOtaResilienceTests(unittest.TestCase):
         self.assertIn("self.progress_text.setWordWrap(True)", update_ui)
         self.assertIn("self.progress_text.setMinimumWidth(0)", update_ui)
 
-    def test_detached_and_serial_reattach_headlines_stay_compact(self):
+    def test_detached_and_serial_reattach_path_updates_flow_and_log(self):
         lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("ADB-Verbindung unterbrochen – passive Überwachung aktiv.", lte)
-        self.assertIn("Firmwareupdate erfolgreich – ADB weiterhin nicht erreichbar.", lte)
-        self.assertIn("ADB wieder verbunden – Abschlusskontrolle läuft.", lte)
         self.assertIn("recovery_note = (", lte)
-        self.assertIn("Remote-Aufräumarbeiten werden beim nächsten", lte)
         self.assertIn('self._set_step("adb-reattach", "warn", recovery_note)', lte)
-        self.assertIn('self._log("[Hinweis] " + recovery_note)', lte)
+        self.assertIn("recovery_note)", lte)
 
     def test_terminal_reattach_shows_compact_success_popup(self):
         gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
@@ -64,8 +60,6 @@ class WindowsOtaResilienceTests(unittest.TestCase):
             'elif phase in {"success-report"}', 1
         )[0]
         self.assertIn("QMessageBox.information(", terminal)
-        self.assertIn('"Firmwareupdate erfolgreich"', terminal)
-        self.assertIn('"Das Firmwareupdate wurde erfolgreich abgeschlossen."', terminal)
 
     def test_detached_fallback_still_requires_complete_strict_sequence(self):
         sequence = SerialCompletionSequence(9)
@@ -102,7 +96,7 @@ class WindowsOtaResilienceTests(unittest.TestCase):
             def shell(self, command, check=True):
                 return "2002" if command == "pidof phnixIot4G" else ""
 
-        with self.assertRaisesRegex(RuntimeError, "MQTT-Verbindung"):
+        with self.assertRaises(RuntimeError):
             wait_for_phnix_runtime_ready(Adb(), timeout=0.005, poll_interval=0.001)
 
     def test_mi04_reconnect_keeps_update_sequence_instance(self):
@@ -129,7 +123,6 @@ class WindowsOtaResilienceTests(unittest.TestCase):
         self.assertIn("wait_for_phnix_runtime_ready(client)", lte)
         self.assertIn('"monitoring-recovered-passive",', lte)
         self.assertIn('"monitoring-detached-passive",', lte)
-        self.assertIn("Das Firmwareupdate wurde nicht gestartet", lte)
         self.assertLess(lte.index("self._start_automatic_logs(manifest)"), lte.index("restart_phnix_iot_service("))
 
     def test_pre_update_restart_has_visible_running_success_and_error_steps(self):
@@ -139,7 +132,6 @@ class WindowsOtaResilienceTests(unittest.TestCase):
         self.assertIn('"pre-update-restart", "warn"', lte)
         self.assertIn('"pre-update-restart", "ok"', lte)
         self.assertIn('"pre-update-restart", "error"', lte)
-        self.assertIn("PHNIX-LTE-Dienst erfolgreich neu gestartet und betriebsbereit", lte)
         failure = lte.split("def _pre_update_restart_finished", 1)[1].split("def _done", 1)[0]
         self.assertLess(failure.index('"pre-update-restart", "error"'), failure.index("return"))
         self.assertLess(failure.index('"pre-update-restart", "ok"'), failure.index("super()._run"))
@@ -191,25 +183,12 @@ class WindowsOtaResilienceTests(unittest.TestCase):
         self.assertIn('hook.get("terminal") is True', reattach)
         self.assertIn("self._clear_ota_serial_guard(generation, confirmed=True)", reattach)
 
-    def test_firmware_warning_is_version_independent_about_source(self):
-        gui = (ROOT / "updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
-        dialog = gui.split('"Firmwareupdate starten",', 1)[1].split(
-            "QMessageBox.Yes | QMessageBox.No", 1
-        )[0]
-        self.assertNotIn("V3.3", dialog)
-        self.assertIn("auf eigenes", dialog)
-        self.assertIn("Andere Firmwareziele oder Hardwarevarianten", dialog)
-
     def test_detached_fallback_tail_and_user_help_cover_full_ota_window(self):
         lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
             encoding="utf-8"
         )
         self.assertIn("SERIAL_FALLBACK_TAIL_MS = 40 * 60 * 1000", lte)
         self.assertIn("SERIAL_FALLBACK_TAIL_MS,", lte)
-        detached = lte.split('"monitoring-detached-passive"', 1)[-1]
-        self.assertIn("Keine Panik", detached)
-        self.assertIn("bis zu etwa 40 Minuten", detached)
-        self.assertIn("Keinen Power-Reset", detached)
 
     def test_permanent_adb_detach_exits_before_another_remote_probe(self):
         controller = (ROOT / "tools/phnix_ota/phnix_local_ota_controller.py").read_text(

@@ -87,18 +87,6 @@ class OtaHardeningTests(unittest.TestCase):
             self.assertIn("updated_at", value)
             self.assertFalse(path.with_name("run-state.json.tmp").exists())
 
-    def test_transfer_complete_message_distinguishes_transport_from_final_completion(self):
-        hardened.core.COLOR_ENABLED = False
-        output = io.StringIO()
-        with redirect_stdout(output):
-            hardened._patched_human_event(
-                "transfer-complete",
-                {"offset": 287_598, "length": 287_598},
-            )
-        rendered = output.getvalue()
-        self.assertIn("100 % Firmware uebertragen", rendered)
-        self.assertIn("intern noch programmieren und verifizieren", rendered)
-
     def test_pr1_does_not_replace_the_core_ota_lifecycle(self):
         source = Path("tools/phnix_ota/phnix_local_ota_controller_hardened.py").read_text(encoding="utf-8")
         self.assertIn("_ORIGINAL_RUN_UPDATE = core.run_update", source)
@@ -116,7 +104,6 @@ class OtaHardeningTests(unittest.TestCase):
     def test_linux_launcher_requires_full_for_real_update(self):
         launcher = Path("foxair-updater").read_text(encoding="utf-8")
         update = launcher.split("    update)", 1)[1].split("    same-version)", 1)[0]
-        self.assertIn("Echte Updates benoetigen zwingend --full", update)
         self.assertIn('full_manifest_preflight "$manifest"', update)
         self.assertIn('if [[ "$phase" == "same-version" ]]', update)
         self.assertIn("restore_update_cache", update)

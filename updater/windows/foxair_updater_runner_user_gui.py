@@ -34,26 +34,77 @@ class MainWindow(runner.MainWindow):
         layout = QVBoxLayout(widget)
 
         intro = QLabel(
-            "Auf dieser Seite kannst du den normalen <b>Originalzustand des LTE-Modems</b> "
-            "prüfen und den gespeicherten Status eines <b>Firmwareupdates</b> anzeigen. "
-            "Die Statusprüfung verändert nichts. Während eines laufenden Firmwareupdates darf "
-            "der Originalzustand nicht erzwungen wiederhergestellt werden."
+            "Status lesen, einen noch sicheren Abbruch anfordern oder einen abgeschlossenen "
+            "Update-Lauf aufräumen. Die reine Statusprüfung verändert nichts."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet(
-            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
+            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:8px;}"
         )
         layout.addWidget(intro)
 
-        original_box = QGroupBox("LTE-Modem – Originalzustand")
-        original_layout = QVBoxLayout(original_box)
+        # 1) Current firmware-update state: the information users normally need.
+        current_box = QGroupBox("Aktueller Update-Status")
+        current_layout = QVBoxLayout(current_box)
+        self.runner_status_text = QLabel("Noch kein Update-Status gelesen.")
+        self.runner_status_text.setWordWrap(True)
+        self.runner_status_text.setStyleSheet(
+            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
+        )
+        current_layout.addWidget(self.runner_status_text)
+
+        row = QHBoxLayout()
+        self.runner_status_btn = QPushButton("Update-Status lesen")
+        self.runner_status_btn.clicked.connect(self._runner_status_run)
+        row.addWidget(self.runner_status_btn)
+        self.runner_log_btn = QPushButton("Technisches Laufprotokoll anzeigen")
+        self.runner_log_btn.clicked.connect(self._runner_log)
+        row.addWidget(self.runner_log_btn)
+        row.addStretch()
+        current_layout.addLayout(row)
+        layout.addWidget(current_box)
+
+        # 2) Actions that can affect an active/prepared run or restore normal
+        # LTE operation are kept together and clearly separated from cleanup.
+        recovery_box = QGroupBox("Sicherer Abbruch / Wiederherstellung")
+        recovery_layout = QVBoxLayout(recovery_box)
+
+        self.abort_summary_label = QLabel("<b>Sicherer Abbruch:</b> noch nicht bestimmt")
+        self.abort_summary_label.setWordWrap(True)
+        recovery_layout.addWidget(self.abort_summary_label)
+
+        abort_note = QLabel(
+            "Ein Firmwareupdate kann nur sicher abgebrochen werden, solange noch keine "
+            "Firmwaredaten an das Mainboard übertragen werden."
+        )
+        abort_note.setWordWrap(True)
+        recovery_layout.addWidget(abort_note)
+
+        self.runner_abort_btn = QPushButton("Firmwareupdate sicher abbrechen")
+        self.runner_abort_btn.setToolTip(
+            "Nur möglich, solange die Firmwareübertragung zum Mainboard noch nicht begonnen hat."
+        )
+        self.runner_abort_btn.clicked.connect(self._runner_abort)
+        recovery_layout.addWidget(self.runner_abort_btn)
+        # Compatibility with the runner implementation, which controls the old
+        # restore_btn attribute according to abort_allowed.
+        self.restore_btn = self.runner_abort_btn
+
+        original_heading = QLabel("<b>LTE-Modem – Originalzustand</b>")
+        recovery_layout.addWidget(original_heading)
         original_note = QLabel(
-            "Prüft, ob das LTE-Modem wieder im normalen Betriebszustand ist und keine "
-            "temporären Updatezustände mehr aktiv sind. Die Prüfung verändert nichts. "
-            "Falls nötig, kann der ursprüngliche Betriebszustand kontrolliert wiederhergestellt werden."
+            "Prüft den normalen Betriebszustand des LTE-Modems. Falls kein Firmwareupdate "
+            "mehr aktiv ist, kann der Originalzustand kontrolliert wiederhergestellt werden."
         )
         original_note.setWordWrap(True)
-        original_layout.addWidget(original_note)
+        recovery_layout.addWidget(original_note)
+
+        self.status_text = QLabel("Originalzustand wurde noch nicht geprüft.")
+        self.status_text.setWordWrap(True)
+        self.status_text.setStyleSheet(
+            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
+        )
+        recovery_layout.addWidget(self.status_text)
 
         row = QHBoxLayout()
         self.status_btn = QPushButton("Originalzustand prüfen")
@@ -64,53 +115,33 @@ class MainWindow(runner.MainWindow):
         self.original_restore_btn.clicked.connect(self._original_restore)
         row.addWidget(self.original_restore_btn)
         row.addStretch()
-        original_layout.addLayout(row)
+        recovery_layout.addLayout(row)
+        layout.addWidget(recovery_box)
 
-        # Keep this attribute for the established controller result renderer.
-        self.status_text = QLabel("Originalzustand wurde noch nicht geprüft.")
-        self.status_text.setWordWrap(True)
-        self.status_text.setStyleSheet(
-            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
+        # 3) Normal post-update housekeeping. The release layer appends the
+        # optional full DTU cleanup here as a visually separate advanced block.
+        finish_box = QGroupBox("Abschluss & Aufräumen")
+        self.status_finish_layout = QVBoxLayout(finish_box)
+
+        self.cleanup_summary_label = QLabel(
+            "<b>Automatisches Aufräumen:</b> nach erfolgreichem Abschluss oder gleicher Firmware"
         )
-        original_layout.addWidget(self.status_text)
-        layout.addWidget(original_box)
+        self.cleanup_summary_label.setWordWrap(True)
+        self.status_finish_layout.addWidget(self.cleanup_summary_label)
 
-        runner_box = QGroupBox("Firmwareupdate – gespeicherter Status")
-        runner_layout = QVBoxLayout(runner_box)
-        runner_note = QLabel(
-            "Nach dem Start läuft das Firmwareupdate auf dem LTE-Modem selbstständig weiter. "
-            "Windows liest hier nur den gespeicherten Zustand. Ein sicherer Abbruch ist nur "
-            "möglich, solange noch keine Firmwaredaten an das Mainboard übertragen werden."
+        self.status_cleanup_note = QLabel(
+            "Normalfall: Update-Protokolle lokal sichern → Ergebnis bestätigen → "
+            "gespeicherte Laufdaten entfernen. Der normale PHNIX-Betrieb wird dabei nicht erneut verändert."
         )
-        runner_note.setWordWrap(True)
-        runner_layout.addWidget(runner_note)
+        self.status_cleanup_note.setWordWrap(True)
+        self.status_finish_layout.addWidget(self.status_cleanup_note)
 
-        self.runner_status_text = QLabel("Noch kein Update-Status gelesen.")
-        self.runner_status_text.setWordWrap(True)
-        self.runner_status_text.setStyleSheet(
-            "QLabel{background:#f7f8fa;border:1px solid #d0d5dd;padding:9px;}"
+        fallback_note = QLabel(
+            "<b>Manueller Fallback:</b> Nur verwenden, wenn der automatische Abschluss nicht "
+            "vollständig durchgeführt werden konnte."
         )
-        runner_layout.addWidget(self.runner_status_text)
-
-        row = QHBoxLayout()
-        self.runner_status_btn = QPushButton("Update-Status lesen")
-        self.runner_status_btn.clicked.connect(self._runner_status_run)
-        row.addWidget(self.runner_status_btn)
-        self.runner_log_btn = QPushButton("Technisches Laufprotokoll anzeigen")
-        self.runner_log_btn.clicked.connect(self._runner_log)
-        row.addWidget(self.runner_log_btn)
-        row.addStretch()
-        runner_layout.addLayout(row)
-
-        self.runner_abort_btn = QPushButton("Firmwareupdate sicher abbrechen")
-        self.runner_abort_btn.setToolTip(
-            "Nur möglich, solange die Firmwareübertragung zum Mainboard noch nicht begonnen hat."
-        )
-        self.runner_abort_btn.clicked.connect(self._runner_abort)
-        runner_layout.addWidget(self.runner_abort_btn)
-        # Compatibility with the runner implementation, which controls the old
-        # restore_btn attribute according to abort_allowed.
-        self.restore_btn = self.runner_abort_btn
+        fallback_note.setWordWrap(True)
+        self.status_finish_layout.addWidget(fallback_note)
 
         row = QHBoxLayout()
         self.runner_ack_btn = QPushButton("Abgeschlossenes Ergebnis bestätigen")
@@ -127,17 +158,9 @@ class MainWindow(runner.MainWindow):
         self.runner_cleanup_btn.clicked.connect(self._runner_cleanup)
         row.addWidget(self.runner_cleanup_btn)
         row.addStretch()
-        runner_layout.addLayout(row)
+        self.status_finish_layout.addLayout(row)
 
-        lifecycle = QLabel(
-            "<b>Normaler Ablauf:</b> Vorprüfung → Firmwareupdate starten → LTE-Modem arbeitet "
-            "selbstständig weiter → Endergebnis wird gespeichert → Ergebnis bestätigen → "
-            "gespeicherte Updatedaten bei Bedarf löschen."
-        )
-        lifecycle.setWordWrap(True)
-        runner_layout.addWidget(lifecycle)
-        layout.addWidget(runner_box)
-
+        layout.addWidget(finish_box)
         layout.addStretch()
         return widget
 
@@ -219,6 +242,10 @@ class MainWindow(runner.MainWindow):
             "dry-run-complete": "Update-Datei und LTE-Modem vollständig geprüft",
             "local-preparation": "Firmwareupdate wird auf dem LTE-Modem vorbereitet",
             "service-restart": "LTE-Kommunikationsdienst wird für das Update neu gestartet",
+            "recovery-service-restart": "Update-Dienst ist ausgefallen und wird automatisch neu gestartet",
+            "recovery-hook-attach": "Update-Überwachung wird nach dem Dienstausfall wieder verbunden",
+            "recovery-wait-mainboard": "Warte auf das Mainboard – Wiederaufnahme kann rund 15 Minuten dauern",
+            "recovery-resumed": "Firmwareübertragung wurde nach dem Dienstausfall fortgesetzt",
             "staging": "Firmwaredatei wird für das Update geprüft",
             "hook-started": "Update-Überwachung wurde gestartet",
             "hook-starting": "Update-Überwachung wird gestartet",
@@ -243,6 +270,7 @@ class MainWindow(runner.MainWindow):
     def _recovery_text(value: str) -> str:
         return {
             "not-required": "nicht erforderlich",
+            "attempting": "automatische Wiederaufnahme läuft",
             "completed": "abgeschlossen",
             "required": "manuelle Prüfung erforderlich",
             "?": "noch nicht bestimmt",
@@ -291,6 +319,10 @@ class MainWindow(runner.MainWindow):
             headline = f"<b>Zustand:</b> {escape(state)}"
 
         abort_text = "möglich" if self._runner_abort_allowed else "nicht möglich"
+        if hasattr(self, "abort_summary_label"):
+            self.abort_summary_label.setText(
+                f"<b>Sicherer Abbruch:</b> {abort_text}"
+            )
         transfer_text = "gestartet" if transfer_started else "noch nicht gestartet"
         extra = ""
         if authoritative:
@@ -310,10 +342,13 @@ class MainWindow(runner.MainWindow):
             + (f"<br><small>Lauf-ID: <code>{escape(run_id)}</code></small>" if run_id else "")
         )
         if hasattr(self, "progress_sources"):
-            text = self._phase_text(phase)
-            if isinstance(board_step, int) and board_step:
-                text += " | Mainboard verarbeitet das Update"
-            self.progress_sources.setText(text)
+            if terminal:
+                self.progress_sources.clear()
+            else:
+                text = self._phase_text(phase)
+                if isinstance(board_step, int) and board_step:
+                    text += " | Mainboard verarbeitet das Update"
+                self.progress_sources.setText(text)
 
     @staticmethod
     def _failed_run_id(output: str) -> str | None:

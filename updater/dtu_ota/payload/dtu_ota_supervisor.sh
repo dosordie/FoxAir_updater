@@ -14,6 +14,9 @@ EXPECTED_BUILD_FIXED=af4dcae12639bedce833ee5efa5da009777b6319
 EXPECTED_SERVICE_FIXED=7C573431F0A67620D473419644A83A4F4DC04B8A91BDE5923C74A63BA1EAEDB7
 SERVICE_READY_TIMEOUT=120
 SERVICE_READY_CONFIRM_DELAY=3
+RECOVERY_RESUME_TIMEOUT=1200
+C5A8_STALL_TIMEOUT=1200
+RECOVERY_MAX_ATTEMPTS=3
 DTU_RUN_STEP_ADDR=624899
 DTU_STA_ADDR=624900
 BOARD_OTA_STEP_ADDR=625300
@@ -46,6 +49,7 @@ json_number() { sed -n "s/.*\"$1\":\([0-9][0-9]*\).*/\1/p" "$PACKAGE" | head -n 
 json_bool() { sed -n "s/.*\"$1\":\(true\|false\).*/\1/p" "$PACKAGE" | head -n 1; }
 status_string() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$STATUS" 2>/dev/null | head -n 1; }
 status_bool() { sed -n "s/.*\"$1\":\(true\|false\).*/\1/p" "$STATUS" 2>/dev/null | head -n 1; }
+status_number() { sed -n "s/.*\"$1\":\([0-9][0-9]*\).*/\1/p" "$STATUS" 2>/dev/null | head -n 1; }
 hook_string() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$HOOK_STATUS" 2>/dev/null | head -n 1; }
 hook_bool() { sed -n "s/.*\"$1\":\(true\|false\).*/\1/p" "$HOOK_STATUS" 2>/dev/null | head -n 1; }
 hook_number() { sed -n "s/.*\"$1\":\([0-9][0-9]*\).*/\1/p" "$HOOK_STATUS" 2>/dev/null | head -n 1; }
@@ -87,6 +91,12 @@ SERVICE_RESTART_VERIFIED=false
 MQTT_ISOLATION_REQUESTED=false
 MQTT_ISOLATED=false
 BOOT_ID=
+RECOVERY_ATTEMPTS=0
+RESUME_BASELINE_OFFSET=0
+RECOVERY_DEADLINE_AT=0
+C5A8_STALL_LAST_OFFSET=0
+C5A8_STALL_ELAPSED=0
+RECOVERY_ERROR=
 
 load_status_state() {
     test -r "$STATUS" || return 0
@@ -106,6 +116,9 @@ load_status_state() {
     v=$(status_bool mqtt_isolation_requested); test -n "$v" && MQTT_ISOLATION_REQUESTED=$v
     v=$(status_bool mqtt_isolated); test -n "$v" && MQTT_ISOLATED=$v
     v=$(status_string boot_id); test -n "$v" && BOOT_ID=$v
+    v=$(status_number recovery_attempts); test -n "$v" && RECOVERY_ATTEMPTS=$v
+    v=$(status_number resume_baseline_offset); test -n "$v" && RESUME_BASELINE_OFFSET=$v
+    v=$(status_number recovery_deadline_at); test -n "$v" && RECOVERY_DEADLINE_AT=$v
     v=$(sed -n 's/.*"c36e_status":\([0-9][0-9]*\).*/\1/p' "$STATUS" 2>/dev/null | head -n 1)
     test -n "$v" && C36E_STATUS=$v
 }
@@ -116,9 +129,9 @@ write_status() {
     test "$STARTED_AT" != 0 || STARTED_AT=$now
     tmp=$STATUS.tmp.$$
     case "$SERVICE_PID" in ''|*[!0-9]*) SERVICE_PID=0 ;; esac
-    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s,"service_restart_requested":%s,"service_restart_verified":%s,"mqtt_isolation_requested":%s,"mqtt_isolated":%s,"boot_id":"%s"}\n' \
+    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","recovery_attempts":%s,"resume_baseline_offset":%s,"recovery_deadline_at":%s,"reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s,"service_restart_requested":%s,"service_restart_verified":%s,"mqtt_isolation_requested":%s,"mqtt_isolated":%s,"boot_id":"%s"}\n' \
         "$SCHEMA" "$RUN_ID" "$state" "$phase" "$terminal" "$PROGRESS" "$OFFSET" "$LENGTH" \
-        "$TRANSFER_STARTED" "$ORIGINAL_AUTH" "$ABORT_ALLOWED" "$RECOVERY" \
+        "$TRANSFER_STARTED" "$ORIGINAL_AUTH" "$ABORT_ALLOWED" "$RECOVERY" "$RECOVERY_ATTEMPTS" "$RESUME_BASELINE_OFFSET" "$RECOVERY_DEADLINE_AT" \
         "$(json_escape "$reason")" "$(json_escape "$detail")" "$RESULT_TYPE" "$$" "$HOOK_PID" "$SERVICE_PID" \
         "$STARTED_AT" "$now" "$now" "$PACKAGE_SHA" "$FIRMWARE_SHA" "$BOARD_STEP" "$C36E_SEEN" "$C36E_STATUS" \
         "$C350_SENT" "$C357_SENT" "$C5A8_SENT" "$STATE_RESTORED" \
@@ -270,6 +283,7 @@ service_pids() {
     for pid in $(pidof phnixIot4G 2>/dev/null || true); do
         case "$pid" in ''|*[!0-9]*) continue ;; esac
         cmd=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+        test "$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)" = Z && continue
         case "$cmd" in *phnixIot4G*) found="$found $pid" ;; esac
     done
     if test -z "$found" && test -f /data/phnixIot4G.tls-lab; then
@@ -287,6 +301,14 @@ single_service_pid() {
     count=$(printf '%s\n' "$pids" | awk '{print NF}')
     test "$count" = 1 || return 1
     printf '%s\n' "$pids"
+}
+
+process_live_non_zombie() {
+    pid=$1
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    state=$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)
+    test "$state" != Z
 }
 
 load_package() {
@@ -424,6 +446,189 @@ restart_service() {
         fi
         count=$((count + 1))
     done
+    return 1
+}
+
+
+start_service_direct() {
+    test -z "$(service_pids)" || return 1
+    log_event "update service crashed; starting /data/phnixIot4G directly"
+    (cd /data || exit 1; exec ./phnixIot4G) >> "$RUN_DIR/phnix-resume-service.log" 2>&1 &
+
+    # Do not involve the paused helloworld watchdogs. Allow the original
+    # service a short startup window instead of requiring an arbitrary fixed
+    # three-second boundary.
+    elapsed=0
+    stable_pid=
+    stable_count=0
+    while test "$elapsed" -lt 30; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+        current=$(service_pids)
+        count=$(printf '%s\n' "$current" | awk '{print NF}')
+        if test "$count" = 1; then
+            tracer=$(awk '/^TracerPid:/ {print $2}' "/proc/$current/status" 2>/dev/null || true)
+            test "$tracer" = 0 || return 1
+            if test "$stable_pid" = "$current"; then
+                stable_count=$((stable_count + 1))
+            else
+                stable_pid=$current
+                stable_count=1
+            fi
+            if test "$stable_count" -ge 3; then
+                SERVICE_PID=$current
+                log_event "phnixIot4G restarted successfully pid=$SERVICE_PID"
+                return 0
+            fi
+        else
+            stable_pid=
+            stable_count=0
+        fi
+    done
+    return 1
+}
+
+start_resume_hook() {
+    test -f "$HOOK_STATUS" && cp "$HOOK_STATUS" "$RUN_DIR/hook-status.pre-recovery-$RECOVERY_ATTEMPTS.json" 2>/dev/null || true
+    rm -f "$HOOK_STATUS"
+    "$SHELL_BIN" "$HOOK" resume --build-id "$EXPECTED_BUILD" --status "$HOOK_STATUS" --allow-publish 0023,0053,0083 >> "$HOOK_LOG" 2>&1 &
+    HOOK_PID=$!
+    printf '%s\n' "$HOOK_PID" > "$RUN_DIR/hook.pid"
+    sleep 2
+    kill -0 "$HOOK_PID" 2>/dev/null
+}
+
+recover_after_transfer_stall() {
+    refresh_progress
+    RECOVERY_ERROR=
+
+    # Fail closed before deliberately stopping the original service.  The
+    # persisted PHNIX resume state must already describe a real partial transfer
+    # and an automatic recovery slot must still be available.
+    test -r /cache/phnixIot_device_OTA || { RECOVERY_ERROR="Cached PHNIX firmware is missing."; return 1; }
+    test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220 || {
+        RECOVERY_ERROR="Persistent OTA_INFO is unavailable."
+        return 1
+    }
+    test "$LENGTH" -gt 0 && test "$OFFSET" -lt "$LENGTH" || {
+        RECOVERY_ERROR="No partial OTA transfer is available for stalled-transfer recovery."
+        return 1
+    }
+    test "$RECOVERY_ATTEMPTS" -lt "$RECOVERY_MAX_ATTEMPTS" || {
+        RECOVERY_ERROR="Automatic resume limit reached."
+        return 1
+    }
+
+    SERVICE_PID=$(single_service_pid) || {
+        RECOVERY_ERROR="Service state is ambiguous during stalled-transfer recovery."
+        return 1
+    }
+    case "$SERVICE_PID" in ''|*[!0-9]*)
+        RECOVERY_ERROR="Service PID is invalid during stalled-transfer recovery."
+        return 1
+        ;;
+    esac
+
+    log_event "C5A8 transfer stalled offset=$OFFSET length=$LENGTH for ${C5A8_STALL_TIMEOUT}s; forcing tested crash-resume path"
+    must_write_status running recovery-service-restart false transfer_stalled "No confirmed C5A8 offset progress for 20 minutes. Restarting phnixIot4G through the existing persistent resume path; watchdogs remain paused."
+
+    # Use an abrupt stop deliberately: the proven crash-resume path relies on
+    # the already persisted OTA_INFO offset.  A graceful service shutdown could
+    # execute unrelated PHNIX cleanup code and mutate that state.
+    kill -KILL "$SERVICE_PID" 2>/dev/null || {
+        RECOVERY_ERROR="Stalled phnixIot4G could not be stopped."
+        return 1
+    }
+
+    elapsed=0
+    while test "$elapsed" -lt 10; do
+        test -z "$(service_pids)" && break
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    test -z "$(service_pids)" || {
+        RECOVERY_ERROR="Stalled phnixIot4G did not exit."
+        return 1
+    }
+
+    # The runtime hook normally exits as soon as its traced target disappears.
+    # If it needs longer, terminate only our own helper; its post-C5A8 cleanup
+    # intentionally keeps watchdogs paused and persistent OTA state untouched.
+    elapsed=0
+    while process_live_non_zombie "$HOOK_PID" && test "$elapsed" -lt 10; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if process_live_non_zombie "$HOOK_PID"; then
+        kill -TERM "$HOOK_PID" 2>/dev/null || true
+        sleep 1
+    fi
+    process_live_non_zombie "$HOOK_PID" && {
+        RECOVERY_ERROR="Runtime hook did not stop after stalled service restart."
+        return 1
+    }
+
+    recover_after_hook_loss
+}
+
+recover_after_hook_loss() {
+    refresh_progress
+    RECOVERY_ERROR=
+    test -r /cache/phnixIot_device_OTA || { RECOVERY_ERROR="Cached PHNIX firmware is missing."; return 1; }
+    test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220 || {
+        RECOVERY_ERROR="Persistent OTA_INFO is unavailable."
+        return 1
+    }
+    test "$LENGTH" -gt 0 && test "$OFFSET" -lt "$LENGTH" || {
+        RECOVERY_ERROR="No partial OTA transfer is available for resume."
+        return 1
+    }
+    test "$RECOVERY_ATTEMPTS" -lt "$RECOVERY_MAX_ATTEMPTS" || {
+        RECOVERY_ERROR="Automatic resume limit reached."
+        return 1
+    }
+
+    RECOVERY_ATTEMPTS=$((RECOVERY_ATTEMPTS + 1))
+    RESUME_BASELINE_OFFSET=$OFFSET
+    RECOVERY=attempting
+    current=$(service_pids)
+    if test -z "$current"; then
+        must_write_status running recovery-service-restart false "" "Update service crashed. Restarting phnixIot4G directly; watchdogs remain paused."
+        start_service_direct || { RECOVERY_ERROR="phnixIot4G could not be restarted."; return 1; }
+    else
+        SERVICE_PID=$(single_service_pid) || { RECOVERY_ERROR="Service state is ambiguous."; return 1; }
+        test "$(awk '/^TracerPid:/ {print $2}' "/proc/$SERVICE_PID/status" 2>/dev/null)" = 0 || {
+            RECOVERY_ERROR="Live phnixIot4G is traced by another process."
+            return 1
+        }
+    fi
+
+    must_write_status running recovery-hook-attach false "" "Reattaching update monitoring without changing OTA state."
+    start_resume_hook || { RECOVERY_ERROR="Resume monitoring could not be attached."; return 1; }
+    log_event "resume monitoring attached pid=$SERVICE_PID baseline_offset=$RESUME_BASELINE_OFFSET"
+    RECOVERY_DEADLINE_AT=$(( $(date +%s) + RECOVERY_RESUME_TIMEOUT ))
+    log_event "mainboard resume can take roughly 15 minutes after an interrupted V3.4 transfer; safety timeout is 20 minutes"
+    elapsed=0
+    while test "$elapsed" -lt "$RECOVERY_RESUME_TIMEOUT"; do
+        sleep 2
+        elapsed=$((elapsed + 2))
+        refresh_progress
+        if test "$OFFSET" -gt "$RESUME_BASELINE_OFFSET"; then
+            RECOVERY=completed
+            must_write_status running recovery-resumed false "" "Persisted firmware offset is advancing again."
+            log_event "resume confirmed baseline=$RESUME_BASELINE_OFFSET offset=$OFFSET"
+            return 0
+        fi
+        if test "$(hook_bool terminal)" = true; then
+            RECOVERY=completed
+            return 0
+        fi
+        kill -0 "$HOOK_PID" 2>/dev/null || { RECOVERY_ERROR="Resume monitoring ended before progress."; return 1; }
+        remaining=$(( (RECOVERY_RESUME_TIMEOUT - elapsed + 59) / 60 ))
+        test "$elapsed" = 2 || test $((elapsed % 60)) != 0 || log_event "waiting for mainboard resume; about $remaining minute(s) remain"
+        must_write_status running recovery-wait-mainboard false "" "Update service is running. After an interrupted V3.4 transfer the mainboard may need roughly 15 minutes before requesting resume; safety timeout is 20 minutes (about $remaining minute(s) remaining)."
+    done
+    RECOVERY_ERROR="Mainboard resume timed out."
     return 1
 }
 
@@ -600,7 +805,14 @@ run_action() {
         if ! kill -0 "$HOOK_PID" 2>/dev/null; then
             wait "$HOOK_PID" 2>/dev/null; hook_rc=$?
             if test "$ORIGINAL_AUTH" = true; then
-                guarded_result recovery-required original-service-active-unmonitored "$hook_rc" hook_monitor_lost "Hook ended after authority handoff; original service, HTTP and lock remain untouched."
+                if recover_after_hook_loss; then
+                    C5A8_STALL_LAST_OFFSET=$OFFSET
+                    C5A8_STALL_ELAPSED=0
+                    continue
+                fi
+                RECOVERY=required
+                log_event "automatic resume failed: $RECOVERY_ERROR"
+                guarded_result recovery-required recovery-required 95 hook_monitor_lost "$RECOVERY_ERROR Original service state, HTTP and lock remain untouched."
             fi
             if restore_original_confirmed "$RUN_DIR/recovery-status.json"; then
                 RECOVERY=completed STATE_RESTORED=true
@@ -609,6 +821,32 @@ run_action() {
             STATE_RESTORED=false
             guarded_result recovery-required hook-ended-before-authority "$hook_rc" restore_unconfirmed "Hook ended before authority and restore was not unambiguously confirmed."
         fi
+
+        # No extra modem polling: the persisted PHNIX offset was already
+        # refreshed at the top of this existing monitor iteration. Count only
+        # only while a partial C5A8 transfer is authoritative.
+        if test "$TRANSFER_STARTED" = true && test "$LENGTH" -gt 0 && test "$OFFSET" -lt "$LENGTH"; then
+            if test "$OFFSET" -gt "$C5A8_STALL_LAST_OFFSET"; then
+                C5A8_STALL_LAST_OFFSET=$OFFSET
+                C5A8_STALL_ELAPSED=0
+            else
+                C5A8_STALL_ELAPSED=$((C5A8_STALL_ELAPSED + 2))
+            fi
+            if test "$C5A8_STALL_ELAPSED" -ge "$C5A8_STALL_TIMEOUT"; then
+                if recover_after_transfer_stall; then
+                    C5A8_STALL_LAST_OFFSET=$OFFSET
+                    C5A8_STALL_ELAPSED=0
+                    continue
+                fi
+                RECOVERY=required
+                log_event "automatic stalled-transfer recovery failed: $RECOVERY_ERROR"
+                guarded_result recovery-required recovery-required 96 transfer_stalled "$RECOVERY_ERROR Persistent OTA state, HTTP staging and lock remain retained for diagnostics."
+            fi
+        else
+            C5A8_STALL_LAST_OFFSET=$OFFSET
+            C5A8_STALL_ELAPSED=0
+        fi
+
         detail="Autonomous DTU OTA is running."
         test -f "$ABORT" && test "$ABORT_ALLOWED" = false && detail="Abort request recorded but refused after point-of-no-return; original service continues."
         must_write_status running "$phase" false "" "$detail"

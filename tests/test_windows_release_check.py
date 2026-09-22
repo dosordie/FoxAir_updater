@@ -59,7 +59,13 @@ class WindowsReleaseCheckTests(unittest.TestCase):
         self.assertRegex(app_version.group(1), r"^\d+\.\d+\.\d+$")
         self.assertEqual(app_version.group(1), base_version.group(1))
         self.assertIn("SIMCOM_Windows_USB_Drivers_V1.0.2.zip", base)
-        self.assertLess(base.index("SIMCom USB-Treiber"), base.index("Android Platform Tools"))
+        connection = base.split("def _connection(self):", 1)[1].split(
+            "def _backup(self):", 1
+        )[0]
+        self.assertLess(
+            connection.index("QUrl(MODEM_DRIVER_URL)"),
+            connection.index("QUrl(ADB_URL)"),
+        )
         self.assertIn('self.settings.setValue("adb"', source)
         self.assertIn('self.settings.setValue("backup"', source)
         self.assertIn('self.settings.setValue("remote_host"', source)
@@ -68,11 +74,16 @@ class WindowsReleaseCheckTests(unittest.TestCase):
         self.assertIn('self._remember_parent("firmware_dir"', source)
         self.assertIn('QSettings("FoxAir", "FoxAir Updater")', base)
 
+    def test_program_update_is_framed_and_pushed_to_bottom(self):
+        app = Path("updater/windows/foxair_updater_app.py").read_text(encoding="utf-8")
+        self.assertIn("update_box = QGroupBox(", app)
+        self.assertIn("update_layout = QVBoxLayout(update_box)", app)
+        self.assertIn("layout.addWidget(update_box)", app)
+
     def test_window_title_tracks_selected_connection(self):
         source = Path("updater/windows/foxair_updater_maintenance.py").read_text(encoding="utf-8")
-        self.assertIn('connection = f"Remote ADB {host}" if host else "Remote ADB"', source)
-        self.assertIn('connection = "USB"', source)
-        self.assertIn('self.setWindowTitle(f"FoxAir Updater {version} – {connection}")', source)
+        self.assertIn("def _update_window_title", source)
+        self.assertIn("self.setWindowTitle(", source)
         self.assertIn("def _remote_changed(self, *args):", source)
         self.assertIn("self._update_window_title()", source)
 

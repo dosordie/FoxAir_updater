@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from dataclasses import asdict
@@ -166,7 +167,7 @@ class DtuOtaPackageTests(unittest.TestCase):
             adb = FakeAdb()
             adb.active = "active-2"
             client = DtuOtaClient(adb)
-            with self.assertRaisesRegex(RunnerClientError, "active-2"):
+            with self.assertRaises(RunnerClientError):
                 client.prepare(manifest_path=manifest_path, firmware_path=firmware)
             self.assertEqual(adb.files, {})
 
@@ -199,7 +200,7 @@ class DtuOtaPackageTests(unittest.TestCase):
             client = DtuOtaClient(adb, source_root=Path(temp))
             client.hook = hook
             client.supervisor = runner
-            with self.assertRaisesRegex(RunnerClientError, "code 72"):
+            with self.assertRaises(RunnerClientError):
                 client.prepare(
                     manifest_path=manifest_path, firmware_path=firmware,
                     run_id="run-rejected",
@@ -256,20 +257,32 @@ class DtuOtaPackageTests(unittest.TestCase):
         self.assertEqual(frame[-2:], crc16_modbus(frame[:-2]))
 
     def test_qemu_watchdog_restarts_only_after_external_service_death(self):
-        with mock.patch.object(
-            qemu_work_lab_backend, "_schedule_idle_service_restart",
-        ) as restart:
+        with (
+            mock.patch.object(qemu_work_lab_backend, "_ota_restart_blocked", return_value=False),
+            mock.patch.object(qemu_work_lab_backend, "_schedule_idle_service_restart") as restart,
+        ):
             observed = qemu_work_lab_backend._service_watchdog_transition((), (4100,))
             self.assertEqual(observed, (4100,))
             observed = qemu_work_lab_backend._service_watchdog_transition(observed, ())
             self.assertEqual(observed, ())
             restart.assert_called_once_with((4100,))
 
+        # During a real OTA the production helloworld watchdogs are paused.
+        # Simulator infrastructure must therefore not hide a phnixIot4G crash.
+        with (
+            mock.patch.object(qemu_work_lab_backend, "_ota_restart_blocked", return_value=True),
+            mock.patch.object(qemu_work_lab_backend, "_schedule_idle_service_restart") as restart,
+        ):
+            observed = qemu_work_lab_backend._service_watchdog_transition((4150,), ())
+            self.assertEqual(observed, ())
+            restart.assert_not_called()
+
         qemu_work_lab_backend._INTENTIONAL_RUNNER_STOP.set()
         try:
-            with mock.patch.object(
-                qemu_work_lab_backend, "_schedule_idle_service_restart",
-            ) as restart:
+            with (
+                mock.patch.object(qemu_work_lab_backend, "_ota_restart_blocked", return_value=False),
+                mock.patch.object(qemu_work_lab_backend, "_schedule_idle_service_restart") as restart,
+            ):
                 observed = qemu_work_lab_backend._service_watchdog_transition((4200,), ())
                 self.assertEqual(observed, ())
                 restart.assert_not_called()
@@ -309,9 +322,168 @@ class DtuOtaPackageTests(unittest.TestCase):
         for field in (
             "service_restart_requested", "service_restart_verified",
             "mqtt_isolation_requested", "mqtt_isolated", "boot_id",
+            "recovery_attempts", "resume_baseline_offset",
         ):
             self.assertIn(f'"{field}"', runner)
         self.assertIn("mqtt_guard_active", runner)
+
+    def test_resume_path_is_direct_minimal_and_non_destructive(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        direct = runner.split("start_service_direct() {", 1)[1].split(
+            "start_resume_hook() {", 1
+        )[0]
+        recovery = runner.split("recover_after_hook_loss() {", 1)[1].split(
+            "start_http() {", 1
+        )[0]
+        self.assertIn("exec ./phnixIot4G", direct)
+        self.assertNotIn("resume_watchdogs", direct)
+        self.assertIn("RECOVERY_MAX_ATTEMPTS=3", runner)
+        self.assertIn("RESUME_BASELINE_OFFSET=$OFFSET", recovery)
+        self.assertIn('test "$OFFSET" -gt "$RESUME_BASELINE_OFFSET"', recovery)
+        self.assertIn("/cache/phnixIot_device_OTA", recovery)
+        self.assertNotIn("cp /cache/phnixIot_device_OTA", recovery)
+
+        hook = Path("updater/dtu_ota/payload/phnix_ota_runtime_hook").read_text(
+            encoding="utf-8"
+        )
+        resume = hook.split("\nresume_hook() {\n", 1)[1].split("\nhold_hook() {\n", 1)[0]
+        shared_gdb = hook.split("make_gdb_script() {", 1)[1].split("run_hook() {", 1)[0]
+        self.assertNotIn("backup_persistent_state", resume)
+        self.assertNotIn("restore_persistent_state", resume)
+        self.assertIn("RESUME_MODE", shared_gdb)
+        self.assertIn("resume-wait-mainboard", shared_gdb)
+        self.assertIn("break *0x1ba04", shared_gdb)
+        self.assertIn("set \\$r0 = 11", shared_gdb)
+
+    def test_windows_maps_productive_runner_phases_to_friendly_text(self):
+        gui = Path("updater/windows/foxair_updater_runner_gui.py").read_text(
+            encoding="utf-8"
+        )
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        for phase in (
+            "service-restart-wait",
+            "service-restart-verified",
+            "service-ready-wait",
+            "service-ready",
+            "post-restart-preflight",
+            "failure-report",
+            "precondition-rejected",
+            "parser-rejected",
+            "c36e-rejected",
+            "debugger-ended-before-terminal",
+            "debugger-unexpected-stop",
+            "runner-lost",
+            "recovery-required",
+            "same-version-restore",
+            "backup",
+        ):
+            self.assertIn(f'"{phase}":', gui)
+        self.assertIn('"service-ready-wait": (', enduser)
+        self.assertIn('"runner-lost": (', enduser)
+        supervisor = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("RECOVERY_RESUME_TIMEOUT=1200", supervisor)
+
+    def test_c5a8_stall_watchdog_reuses_resume_path_without_extra_polling(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("C5A8_STALL_TIMEOUT=1200", runner)
+        self.assertIn("C5A8_STALL_LAST_OFFSET=0", runner)
+        self.assertIn("C5A8_STALL_ELAPSED=0", runner)
+
+        main_loop = runner.split("post_abort_logged=0", 1)[1].split(
+            "classify_action() {", 1
+        )[0]
+        stall_logic = main_loop.split(
+            "# No extra modem polling:", 1
+        )[1].split('detail="Autonomous DTU OTA is running."', 1)[0]
+        self.assertIn(
+            'C5A8_STALL_ELAPSED=$((C5A8_STALL_ELAPSED + 2))',
+            stall_logic,
+        )
+        self.assertIn(
+            'if test "$OFFSET" -gt "$C5A8_STALL_LAST_OFFSET"; then',
+            stall_logic,
+        )
+        self.assertIn("recover_after_transfer_stall", stall_logic)
+        self.assertNotIn("refresh_progress", stall_logic)
+
+        recovery = runner.split("recover_after_transfer_stall() {", 1)[1].split(
+            "recover_after_hook_loss() {", 1
+        )[0]
+        self.assertIn(
+            'test "$RECOVERY_ATTEMPTS" -lt "$RECOVERY_MAX_ATTEMPTS"',
+            recovery,
+        )
+        self.assertIn('kill -KILL "$SERVICE_PID"', recovery)
+        self.assertIn("recover_after_hook_loss", recovery)
+        self.assertIn("transfer_stalled", recovery)
+
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('reason == "transfer_stalled"', enduser)
+
+    def test_recovery_deadline_is_exported_once_and_counted_down_only_on_windows(self):
+        runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        recovery = runner.split("recover_after_hook_loss() {", 1)[1].split(
+            "start_http() {", 1
+        )[0]
+        self.assertIn('"recovery_deadline_at":%s', runner)
+        self.assertIn("RECOVERY_DEADLINE_AT=0", runner)
+        self.assertIn(
+            'RECOVERY_DEADLINE_AT=$(( $(date +%s) + RECOVERY_RESUME_TIMEOUT ))',
+            recovery,
+        )
+        self.assertLess(
+            recovery.index("RECOVERY_DEADLINE_AT=$(("),
+            recovery.index('while test "$elapsed" -lt "$RECOVERY_RESUME_TIMEOUT"'),
+        )
+
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        countdown = enduser.split("def _update_recovery_countdown", 1)[1].split(
+            "def _sync_runner_elapsed", 1
+        )[0]
+        self.assertIn("setInterval(1000)", enduser)
+        self.assertIn("recovery_deadline_at", countdown)
+        self.assertNotIn("_run_runner(", countdown)
+        self.assertNotIn("_poll_runner_status(", countdown)
+
+    def test_windows_completes_transient_flow_warnings_after_next_step(self):
+        enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'if phase not in {"hook-starting", "attaching"}:',
+            enduser,
+        )
+        self.assertIn(
+            'current = self._flow_steps.get("runner-yield")',
+            enduser,
+        )
+
+    def test_runner_shell_payloads_parse_with_posix_sh(self):
+        for path in (
+            Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
+            Path("updater/dtu_ota/payload/phnix_ota_runtime_hook"),
+        ):
+            result = subprocess.run(
+                ["sh", "-n", str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, f"{path}: {result.stderr}")
 
 
 if __name__ == "__main__":

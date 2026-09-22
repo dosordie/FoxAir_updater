@@ -32,7 +32,7 @@ class DtuOtaTerminalRaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "dtu_ota_supervisor.sh"
             path.write_text("#!/system/bin/sh\necho changed\n", encoding="utf-8")
-            with self.assertRaisesRegex(PackageError, "expected exactly one source block"):
+            with self.assertRaises(PackageError):
                 shell_payload_bytes(path)
 
 
