@@ -3,7 +3,7 @@
 Die Windows-Version ist der empfohlene Bedienweg für den FoxAir Updater. Seit v0.4.0 wird das eigentliche Mainboard-OTA nach der Vorbereitung **autonom auf dem LTE-Modem** ausgeführt. Windows startet und überwacht den Vorgang, ist nach dem Start aber nicht mehr die Instanz, die den Transfer am Leben hält.
 
 > [!IMPORTANT]
-> Real bestätigt sind lokale und Remote-ADB-Verbindung, Backup/Diagnose, Vorprüfung, V3.3→V3.3 bis zur sicheren Gleichversionsablehnung sowie vollständige reale Mainboard-Firmwarewechsel **V3.3 → V3.4** und **V1.2 → V3.4**. **V3.5 (`82400644 / 0035`) ist statisch als nächste Revision derselben Firmwarelinie bestätigt, aber noch nicht durch einen realen OTA-Lauf mit dem Updater validiert.** Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
+> Real bestätigt sind lokale und Remote-ADB-Verbindung, Backup/Diagnose, Vorprüfung, V3.3→V3.3 bis zur sicheren Gleichversionsablehnung sowie vollständige reale Mainboard-Firmwarewechsel **V3.3 → V3.4** und **V1.2 → V3.4**. **V3.5 (`82400644 / 0035`) ist als nächste Revision derselben Firmwarelinie bestätigt, aber noch nicht durch einen vollständigen realen Updatevorgang mit dem Updater validiert. Die untersuchte V3.5 stammt aus einer FoxAir BlueLine; entsprechende BlueLine- und GreenLine-Geräte mit Softwarecode `82400644` verwenden dieselbe Mainboard-Firmwarelinie und sind firmwareseitig untereinander kompatibel.** Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
 
 Öffentliche Windows-Versionen stehen als Portable-ZIP und Setup-EXE auf der GitHub-Releases-Seite bereit:
 
