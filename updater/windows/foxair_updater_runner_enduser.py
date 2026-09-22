@@ -671,23 +671,18 @@ class MainWindow(user_gui.MainWindow):
     # Dual transfer progress: serial PHNIX log + autonomous runner
     # ------------------------------------------------------------------
     def _render_transfer_progress(self) -> None:
-        """Restore the previous dual-source progress behavior.
+        """Render live transfer details while the runner is non-terminal.
 
-        Terminal results are already shown prominently above the bar and in the
-        flow history. Ignore any late PHNIX/debug progress events so they cannot
-        repopulate the small detail line after completion.
+        PHNIX serial progress is preferred for the bar while it is available.
+        If that source disappears, the runner value becomes the fallback. Once
+        the runner is terminal, late PHNIX/debug events must not repopulate the
+        small detail line below the progress bar.
         """
         if self._runner_terminal:
             if hasattr(self, "progress_sources"):
                 self.progress_sources.clear()
             return
 
-        """PHNIX serial progress is preferred for the bar while it is available.
-        If that source disappears, the inherited debug status handling clears
-        ``_phnix_transfer_event`` and the runner value automatically becomes the
-        displayed fallback.  Both values are listed below the bar whenever both
-        are available.
-        """
         event = self._phnix_transfer_event
         runner_percent = self._runner_progress_value
         runner_offset = self._runner_progress_offset
