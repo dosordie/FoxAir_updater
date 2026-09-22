@@ -6,6 +6,7 @@ class WindowsRunnerProductTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.product = Path("updater/windows/foxair_updater_runner_product.py").read_text(encoding="utf-8")
+        cls.enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(encoding="utf-8")
         cls.release = Path("updater/windows/foxair_updater_release_product.py").read_text(encoding="utf-8")
         cls.runtime = Path("updater/windows/foxair_updater_release_runtime.py").read_text(encoding="utf-8")
         cls.windows_readme = Path("updater/windows/README.md").read_text(encoding="utf-8")
@@ -81,6 +82,17 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn('self._flow_title = "Vorprüfung erfolgreich"', method)
         self.assertIn("self.progress_text.clear()", method)
         self.assertIn("self.progress_sources.clear()", method)
+
+    def test_terminal_result_does_not_repeat_below_progress_bar(self):
+        method = self.enduser.split("def _render_runner_status", 1)[1].split(
+            "def _done", 1
+        )[0]
+        self.assertIn(
+            'if terminal and hasattr(self, "progress_sources"):',
+            method,
+        )
+        self.assertIn("self.progress_sources.clear()", method)
+        self.assertIn("reserved for live transfer details", method)
 
     def test_verified_service_restart_is_presented_as_completed(self):
         method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
