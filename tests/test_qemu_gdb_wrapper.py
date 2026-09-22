@@ -26,6 +26,8 @@ commands 1
   continue
 end
 break *0x1cea0
+continue
+printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *)($r0+1), *(unsigned char *)($r0+3)
 """
         patched, changed = patch_script(source)
         self.assertTrue(changed)
@@ -34,12 +36,11 @@ break *0x1cea0
         self.assertNotIn("disable 1", patched)
         self.assertIn("break *0x1cea0", patched)
         self.assertNotIn("file /data/phnixIot4G", patched)
-        self.assertIn("hbreak *0x9a98", patched)
-        self.assertIn("condition 4 $foxair_parser_injected == 1", patched)
+        self.assertIn("  hbreak *0x9a98", patched)
+        self.assertIn("while $pc == 0x9a98", patched)
         self.assertIn("set $r0 = 0", patched)
         self.assertIn("set $pc = $lr", patched)
-        self.assertIn("set $foxair_parser_injected = 1", patched)
-        self.assertIn("set $foxair_parser_injected = 0", patched)
+        self.assertIn("disable 4", patched)
         self.assertIn("shell rm -f /cache/phnixIot_device_OTA", patched)
         self.assertIn("shell : > /data/phnixIot_device_OTA_INFO", patched)
 

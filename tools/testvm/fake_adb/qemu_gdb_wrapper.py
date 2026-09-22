@@ -39,37 +39,28 @@ def patch_script(text: str) -> tuple[str, bool]:
     # call-site breakpoints exceeded it and made GDB fall back to an impossible
     # text-memory write.  This is strictly a QEMU transport workaround; the
     # uploaded production hook remains unchanged.
-    patched = patched.replace(
-        "set $resume_mode = 0\n",
-        "set $resume_mode = 0\nset $foxair_parser_injected = 0\n",
-        1,
-    )
-    c36e_anchor = "hbreak *0x1ba04\n"
-    system_guards = """hbreak *0x1ba04
-hbreak *0x9a98
-condition 4 $foxair_parser_injected == 1
-commands 4
-  silent
-  set $r0 = 0
-  set $pc = $lr
-  continue
-end
-"""
-    patched = patched.replace(c36e_anchor, system_guards, 1)
     yield_anchor = "  set $return_pc = $pc\n"
     yield_patch = (
         "  shell rm -f /cache/phnixIot_device_OTA\n"
         "  shell : > /data/phnixIot_device_OTA_INFO\n"
-        "  set $foxair_parser_injected = 1\n"
+        "  hbreak *0x9a98\n"
         + yield_anchor
     )
     patched = patched.replace(yield_anchor, yield_patch, 1)
-    patched = patched.replace(
-        '  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
-        '  set $foxair_parser_injected = 0\n  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
-        1,
-    )
-    # Breakpoint 4 is now the temporary parser system() guard.  Keep the
+    c36e_flow = 'continue\nprintf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *)($r0+1), *(unsigned char *)($r0+3)\n'
+    qemu_c36e_flow = '''continue
+while $pc == 0x9a98
+  printf "FOXAIR_QEMU_SYSTEM_BYPASS command=%s\\n", (char *)$r0
+  set $r0 = 0
+  set $pc = $lr
+  continue
+end
+disable 4
+printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *)($r0+1), *(unsigned char *)($r0+3)
+'''
+    patched = patched.replace(c36e_flow, qemu_c36e_flow, 1)
+    # Breakpoint 4 is now the parser-only system() guard created after yield.
+    # Keep the
     # production script's later one-shot C357/C5A8 disables aligned with their
     # shifted QEMU-only breakpoint numbers.
     patched = patched.replace("    disable 4\n", "    disable 4004\n", 1)
