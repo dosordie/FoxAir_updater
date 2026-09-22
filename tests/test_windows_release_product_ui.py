@@ -8,30 +8,33 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
         cls.source = Path("updater/windows/foxair_updater_release_product.py").read_text(
             encoding="utf-8"
         )
+        cls.user_source = Path(
+            "updater/windows/foxair_updater_runner_user_gui.py"
+        ).read_text(encoding="utf-8")
 
-    def test_clean_dtu_checkbox_is_attached_to_original_restore_action(self):
+    def test_status_page_is_split_into_three_functional_sections(self):
+        self.assertIn('QGroupBox("Aktueller Update-Status")', self.user_source)
         self.assertIn(
-            "restore_parent = self.original_restore_btn.parentWidget()",
+            'QGroupBox("Sicherer Abbruch / Wiederherstellung")',
+            self.user_source,
+        )
+        self.assertIn('QGroupBox("Abschluss & Aufräumen")', self.user_source)
+        self.assertIn("self.abort_summary_label", self.user_source)
+        self.assertIn("self.cleanup_summary_label", self.user_source)
+        self.assertIn("self.status_finish_layout", self.user_source)
+
+    def test_clean_dtu_checkbox_is_in_advanced_cleanup_section(self):
+        self.assertIn(
+            'QGroupBox("Erweitert – vollständige DTU-Bereinigung")',
             self.source,
         )
         self.assertIn(
-            "restore_parent_layout = restore_parent.layout()",
+            "self.status_finish_layout.addWidget(advanced_box)",
             self.source,
         )
         self.assertIn(
-            "restore_row = self._layout_containing(",
-            self.source,
-        )
-        self.assertIn(
-            "restore_row.indexOf(self.original_restore_btn)",
-            self.source,
-        )
-        self.assertIn(
-            "restore_row.insertWidget(insert_at + 1, self.clean_dtu_after_restore)",
-            self.source,
-        )
-        self.assertIn(
-            "restore_parent_layout.insertWidget(status_index, self.full_cleanup_note)",
+            "wirkt beim Button "
+            "„Originalzustand wiederherstellen“",
             self.source,
         )
         self.assertIn("def _original_restore(self):", self.source)
@@ -43,18 +46,14 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
             "Danach FoxAir-Updater-Dateien vollständig vom LTE-Modem entfernen",
             self.source,
         )
-        self.assertIn("Normalerweise nicht erforderlich:", self.source)
+        self.assertIn("Normalerweise nicht erforderlich.", self.source)
         self.assertIn(
-            "Sie stellt zuerst den normalen PHNIX-Betrieb kontrolliert",
+            "alle bekannten FoxAir-Updater-Arbeitsdateien",
             self.source,
         )
-        self.assertIn(
-            "wieder her und entfernt anschließend alle bekannten FoxAir-Updater-Arbeitsdateien.",
-            self.source,
-        )
-        self.assertIn("Automatisches Aufräumen nach Firmwareupdate:", self.source)
+        self.assertIn("Automatischer Normalfall:", self.source)
         self.assertIn("Update-Protokolle lokal sichern", self.source)
-        self.assertIn("abgeschlossenes Ergebnis bestätigen", self.source)
+        self.assertIn("Ergebnis bestätigen", self.source)
         self.assertIn("gespeicherte Laufdaten entfernen", self.source)
         self.assertIn(
             "Der normale PHNIX-Betrieb wird dabei nicht erneut verändert.",
