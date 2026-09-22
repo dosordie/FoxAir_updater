@@ -220,6 +220,22 @@ class MainWindow(product.MainWindow):
                 not self.busy and self._adb_ready() and not self._runner_active
             )
         auto_finalize_active = bool(self._auto_finalize_run_id)
+        if hasattr(self, "cleanup_summary_label"):
+            retain_diagnostics = (
+                getattr(self, "_runner_recovery_state", "") == "required"
+                or getattr(self, "_runner_result_type", "") in {
+                    "recovery-required", "reboot-detected"
+                }
+            )
+            if retain_diagnostics:
+                cleanup_text = "Diagnosedaten werden beibehalten – manuelle Prüfung erforderlich"
+            elif auto_finalize_active:
+                cleanup_text = "läuft – Diagnose wird gesichert und der Abschluss verarbeitet"
+            else:
+                cleanup_text = "bereit – automatisch nach Erfolg oder gleicher Firmware"
+            self.cleanup_summary_label.setText(
+                f"<b>Automatisches Aufräumen:</b> {cleanup_text}"
+            )
         if hasattr(self, "runner_ack_btn"):
             self.runner_ack_btn.setVisible(True)
             if auto_finalize_active:
