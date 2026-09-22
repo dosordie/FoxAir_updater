@@ -197,8 +197,11 @@ class WindowsOtaResilienceTests(unittest.TestCase):
             "QMessageBox.Yes | QMessageBox.No", 1
         )[0]
         self.assertNotIn("V3.3", dialog)
+        self.assertNotIn("V3.4", dialog)
         self.assertIn("auf eigenes", dialog)
-        self.assertIn("Andere Firmwareziele oder Hardwarevarianten", dialog)
+        self.assertIn("mehreren Hardware- und Firmwarevarianten", dialog)
+        self.assertIn("Nicht geprüfte Firmwareziele oder", dialog)
+        self.assertIn("abweichendes Verhalten zeigen", dialog)
 
     def test_detached_fallback_tail_and_user_help_cover_full_ota_window(self):
         lte = (ROOT / "updater/windows/foxair_updater_lte_diagnostics.py").read_text(
