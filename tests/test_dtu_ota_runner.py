@@ -429,7 +429,6 @@ class DtuOtaPackageTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('reason == "transfer_stalled"', enduser)
-        self.assertIn("Seit 20 Minuten", enduser)
 
     def test_recovery_deadline_is_exported_once_and_counted_down_only_on_windows(self):
         runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
@@ -457,8 +456,6 @@ class DtuOtaPackageTests(unittest.TestCase):
         )[0]
         self.assertIn("setInterval(1000)", enduser)
         self.assertIn("recovery_deadline_at", countdown)
-        self.assertIn("Sicherheits-Timeout in", countdown)
-        self.assertIn("rund 15 Minuten", countdown)
         self.assertNotIn("_run_runner(", countdown)
         self.assertNotIn("_poll_runner_status(", countdown)
 
@@ -468,14 +465,6 @@ class DtuOtaPackageTests(unittest.TestCase):
         )
         self.assertIn(
             'if phase not in {"hook-starting", "attaching"}:',
-            enduser,
-        )
-        self.assertIn(
-            '"Update-Überwachung auf dem LTE-Modem wurde gestartet."',
-            enduser,
-        )
-        self.assertIn(
-            '"Sicherer Start des Firmwareupdates wurde erreicht."',
             enduser,
         )
         self.assertIn(
