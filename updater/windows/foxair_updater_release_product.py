@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -42,13 +43,21 @@ class MainWindow(product.MainWindow):
         widget = super()._status()
         layout = widget.layout()
 
-        # Use the exact v0.4.6 placement that is proven visible in the release:
-        # insert the cleanup checkbox directly after the real restore button.
-        restore_parent = self.original_restore_btn.parentWidget()
-        restore_parent_layout = restore_parent.layout() if restore_parent is not None else None
-        restore_row = self._layout_containing(
-            restore_parent_layout, self.original_restore_btn
+        # Keep the comprehensive DTU cleanup available, but visually separate
+        # it from the normal automatic archive/ACK/cleanup path.
+        advanced_box = QGroupBox("Erweitert – vollständige DTU-Bereinigung")
+        advanced_layout = QVBoxLayout(advanced_box)
+
+        self.full_cleanup_note = QLabel(
+            "<b>Normalerweise nicht erforderlich.</b> Diese Option ist für Wiederherstellung, "
+            "Fehlersuche oder alte Updater-Reste gedacht. Sie wirkt beim Button "
+            "„Originalzustand wiederherstellen“ im Bereich darüber und entfernt anschließend "
+            "alle bekannten FoxAir-Updater-Arbeitsdateien. Originale PHNIX-Dateien, Firmware, "
+            "OTA_INFO und Statistik bleiben erhalten."
         )
+        self.full_cleanup_note.setWordWrap(True)
+        advanced_layout.addWidget(self.full_cleanup_note)
+
         self.clean_dtu_after_restore = QCheckBox(
             "Danach FoxAir-Updater-Dateien vollständig vom LTE-Modem entfernen"
         )
@@ -57,37 +66,16 @@ class MainWindow(product.MainWindow):
             "Nur verwenden, wenn kein Update läuft. Originale PHNIX-Dateien, Firmware, OTA_INFO "
             "und Statistik werden nicht gelöscht."
         )
-        if restore_row is not None:
-            insert_at = restore_row.indexOf(self.original_restore_btn)
-            restore_row.insertWidget(insert_at + 1, self.clean_dtu_after_restore)
-        else:
-            # Same defensive fallback as v0.4.6 if the inherited layout changes.
-            fallback_row = QHBoxLayout()
-            fallback_row.addWidget(self.clean_dtu_after_restore)
-            fallback_row.addStretch()
-            layout.insertLayout(1, fallback_row)
+        advanced_layout.addWidget(self.clean_dtu_after_restore)
 
-        self.full_cleanup_note = QLabel(
-            "<b>Normalerweise nicht erforderlich:</b> Nach einem erfolgreichen Firmwareupdate "
-            "wird nur der zugehörige Lauf automatisch archiviert und aufgeräumt. "
-            "Diese Option ist für Wiederherstellung, Fehlersuche oder eine vollständige "
-            "DTU-Bereinigung gedacht. Sie stellt zuerst den normalen PHNIX-Betrieb kontrolliert "
-            "wieder her und entfernt anschließend alle bekannten FoxAir-Updater-Arbeitsdateien. "
-            "Originale PHNIX-Dateien, Firmware, OTA_INFO und Statistik bleiben erhalten."
-        )
-        self.full_cleanup_note.setWordWrap(True)
-        if restore_parent_layout is not None:
-            status_index = restore_parent_layout.indexOf(self.status_text)
-            if status_index >= 0:
-                restore_parent_layout.insertWidget(status_index, self.full_cleanup_note)
-            else:
-                restore_parent_layout.addWidget(self.full_cleanup_note)
+        if hasattr(self, "status_finish_layout"):
+            self.status_finish_layout.addWidget(advanced_box)
         else:
-            layout.insertWidget(2, self.full_cleanup_note)
+            # Defensive fallback for older presentation layers.
+            layout.insertWidget(max(0, layout.count() - 1), advanced_box)
 
-        # Keep the manual lifecycle controls visible as a deliberate fallback.
-        # Automatic archive -> ACK -> cleanup remains the normal path; the
-        # buttons stay disabled while that automatic finalization is active.
+        # Manual lifecycle controls remain visible as a deliberate fallback.
+        # Automatic archive -> ACK -> cleanup is still the normal path.
         self.runner_ack_btn.setVisible(True)
         self.runner_cleanup_btn.setVisible(True)
         self.runner_ack_btn.setToolTip(
@@ -99,22 +87,12 @@ class MainWindow(product.MainWindow):
             "Daten dieses Firmwareupdates. Während der automatischen Abschlussverarbeitung "
             "ist der Button deaktiviert."
         )
-        for label in widget.findChildren(QLabel):
-            text = label.text()
-            if "<b>Normaler Ablauf:</b>" in text and "Ergebnis bestätigen" in text:
-                label.setText(
-                    "<b>Automatisches Aufräumen nach Firmwareupdate:</b><br>"
-                    "✓ Update-Protokolle lokal sichern<br>"
-                    "✓ abgeschlossenes Ergebnis bestätigen<br>"
-                    "✓ gespeicherte Laufdaten entfernen<br><br>"
-                    "<b>Hinweis:</b> Der normale PHNIX-Betrieb wird dabei nicht erneut verändert. "
-                    "Das ist der Standardfall nach einem erfolgreichen Firmwareupdate oder bei "
-                    "gleicher Firmware.<br><br>"
-                    "<b>Manueller Fallback:</b> Die beiden Buttons darüber bleiben sichtbar. "
-                    "Sie können verwendet werden, wenn die automatische Abschlussverarbeitung "
-                    "nicht durchgeführt werden konnte."
-                )
-                break
+        if hasattr(self, "status_cleanup_note"):
+            self.status_cleanup_note.setText(
+                "Automatischer Normalfall: Update-Protokolle lokal sichern → Ergebnis bestätigen → "
+                "gespeicherte Laufdaten entfernen. Der normale PHNIX-Betrieb wird dabei nicht "
+                "erneut verändert."
+            )
         return widget
 
     def _ui(self):
