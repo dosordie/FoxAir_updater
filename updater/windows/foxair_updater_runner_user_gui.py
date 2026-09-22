@@ -319,6 +319,10 @@ class MainWindow(runner.MainWindow):
             headline = f"<b>Zustand:</b> {escape(state)}"
 
         abort_text = "möglich" if self._runner_abort_allowed else "nicht möglich"
+        if hasattr(self, "abort_summary_label"):
+            self.abort_summary_label.setText(
+                f"<b>Sicherer Abbruch:</b> {abort_text}"
+            )
         transfer_text = "gestartet" if transfer_started else "noch nicht gestartet"
         extra = ""
         if authoritative:
