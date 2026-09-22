@@ -68,6 +68,22 @@ class WindowsReleaseCheckTests(unittest.TestCase):
         self.assertIn('self._remember_parent("firmware_dir"', source)
         self.assertIn('QSettings("FoxAir", "FoxAir Updater")', base)
 
+    def test_program_update_is_framed_and_pushed_to_bottom(self):
+        app = Path("updater/windows/foxair_updater_app.py").read_text(encoding="utf-8")
+        self.assertIn('update_box = QGroupBox("Programmupdate")', app)
+        self.assertIn("update_layout = QVBoxLayout(update_box)", app)
+        self.assertIn("layout.addWidget(update_box)", app)
+        self.assertIn("super()._connection() already ends with a stretch", app)
+
+    def test_firmware_risk_text_is_not_tied_to_v34(self):
+        base = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        risk_start = base.index('"<b>Firmwareupdate – Nutzung auf eigenes Risiko</b><br>"')
+        risk_end = base.index("self.tabs = QTabWidget()", risk_start)
+        risk_text = base[risk_start:risk_end]
+        self.assertNotIn("V3.4", risk_text)
+        self.assertIn("mehreren Hardware- und Firmwarevarianten", risk_text)
+        self.assertIn("abweichendes Verhalten", risk_text)
+
     def test_window_title_tracks_selected_connection(self):
         source = Path("updater/windows/foxair_updater_maintenance.py").read_text(encoding="utf-8")
         self.assertIn('connection = f"Remote ADB {host}" if host else "Remote ADB"', source)
