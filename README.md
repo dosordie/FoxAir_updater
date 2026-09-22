@@ -3,11 +3,13 @@
 Firmware-Update- und Reverse-Engineering-Tool für FoxAir-/PHNIX-Wärmepumpen.
 
 > [!CAUTION]
-> ## V1.2 → V3.4 und V3.3 → V3.4 live validiert
+> ## V1.2 → V3.4 und V3.3 → V3.4 live validiert; V3.5 statisch bestätigt
 >
 > Ein vollständiges Firmwareupdate von Mainboard V3.3 auf V3.4 wurde auf realer Hardware **erfolgreich durchgeführt und anschließend über Status 5 / Board-Step 12 sowie die neue C544-Versionsmeldung `0034` bestätigt**.
 >
 > Zusätzlich wurde auch ein direktes Update von **V1.2 (Auslieferungszustand) auf V3.4** auf realer Hardware erfolgreich durchgeführt.
+>
+> Die Mainboard-Firmware **V3.5** ist inzwischen statisch als nächste Revision derselben `82400644`-Firmwarelinie bestätigt (`824006440035`, gleiche Flash-Basis `0x08050000`). Ein reales Update **auf oder von V3.5** wurde mit dem FoxAir Updater jedoch noch **nicht** live validiert.
 >
 > **V3.3 → V3.3** wurde bis zur erwarteten Gleichversionsablehnung getestet. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind weiterhin nicht vollständig live validiert.
 >
@@ -112,6 +114,7 @@ Real getestet bzw. bestätigt sind unter anderem:
 - normaler Windows-Firmware-Update-Aufruf mit **V3.3 → V3.3** bis zur sicheren Gleichversionsablehnung;
 - vollständiger realer Versionswechsel **V3.3 → V3.4**, einschließlich kompletter C5A8-Übertragung, C36E Status 3, C36E Status 5 / Board-Step 12 und anschließender C544-Versionsbestätigung `0034`;
 - vollständiger realer Versionswechsel **V1.2 (Auslieferungszustand) → V3.4**;
+- **V3.5 statisch bestätigt** als `82400644 / 0035`; der OTA-Weg mit V3.5 ist noch nicht live validiert;
 - autonomer Runner-End-to-End-Ablauf auf realer Hardware einschließlich persistentem Status und kontrolliertem `phnixIot4G`-Neustart;
 - Mainboard-OTA-/Statistik-Wartung einschließlich Sicherung, kontrolliertem Dienstneustart und Datei-/RAM-Verifikation.
 
