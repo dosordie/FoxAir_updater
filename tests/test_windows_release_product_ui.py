@@ -32,11 +32,8 @@ class WindowsReleaseProductUiTests(unittest.TestCase):
             "self.status_finish_layout.addWidget(advanced_box)",
             self.source,
         )
-        self.assertIn(
-            "wirkt beim Button "
-            "„Originalzustand wiederherstellen“",
-            self.source,
-        )
+        self.assertIn("wirkt beim Button", self.source)
+        self.assertIn("„Originalzustand wiederherstellen“", self.source)
         self.assertIn("def _original_restore(self):", self.source)
         self.assertIn("super()._original_restore()", self.source)
         self.assertNotIn("layout.removeWidget(self.restore_btn)", self.source)
