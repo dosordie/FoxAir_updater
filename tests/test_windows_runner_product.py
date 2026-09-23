@@ -7,6 +7,9 @@ class WindowsRunnerProductTests(unittest.TestCase):
     def setUpClass(cls):
         cls.product = Path("updater/windows/foxair_updater_runner_product.py").read_text(encoding="utf-8")
         cls.enduser = Path("updater/windows/foxair_updater_runner_enduser.py").read_text(encoding="utf-8")
+        cls.runner = Path("updater/windows/foxair_updater_runner_gui.py").read_text(encoding="utf-8")
+        cls.user_runner = Path("updater/windows/foxair_updater_runner_user_gui.py").read_text(encoding="utf-8")
+        cls.base_gui = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
         cls.release = Path("updater/windows/foxair_updater_release_product.py").read_text(encoding="utf-8")
         cls.runtime = Path("updater/windows/foxair_updater_release_runtime.py").read_text(encoding="utf-8")
         cls.windows_readme = Path("updater/windows/README.md").read_text(encoding="utf-8")
@@ -48,6 +51,45 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn('payload / "dtu_ota_supervisor.sh"', self.client)
         self.assertIn('payload / "phnix_ota_runtime_hook"', self.client)
         self.assertNotIn("tools/dtu_ota_runner", self.client)
+
+    def test_final_layer_owns_transfer_progress_widgets(self):
+        self.assertIn("self._owns_transfer_progress = True", self.enduser)
+        runner_status = self.runner.split("def _render_runner_status", 1)[1].split(
+            "def _show_terminal_result", 1
+        )[0]
+        self.assertIn('getattr(self, "_owns_transfer_progress", False)', runner_status)
+        self.assertIn("and not progress_owned", runner_status)
+
+        user_status = self.user_runner.split("def _render_runner_status", 1)[1].split(
+            "def _failed_run_id", 1
+        )[0]
+        self.assertIn(
+            'not getattr(self, "_owns_transfer_progress", False)',
+            user_status,
+        )
+
+    def test_transfer_progress_is_monotonic_and_ui_throttled(self):
+        method = self.enduser.split("def _render_transfer_progress", 1)[1].split(
+            "def _show_terminal_result", 1
+        )[0]
+        self.assertIn("_display_progress_high_watermark = max(", method)
+        self.assertIn("PROGRESS_UI_MIN_INTERVAL", method)
+        self.assertIn("QTimer.singleShot", method)
+        self.assertIn("def _flush_transfer_progress", method)
+
+    def test_passive_runner_status_does_not_stream_pretty_json_to_ui(self):
+        runner_call = self.enduser.split("def _run_runner", 1)[1].split(
+            "def _log_runner_id_once", 1
+        )[0]
+        self.assertIn('op == "runner-status" and self._passive_runner_poll', runner_call)
+        self.assertIn("emit_lines=False", runner_call)
+        self.assertIn("log_command=False", runner_call)
+
+        run_method = self.base_gui.split("def _run(self, op, command, cwd=None", 1)[1].split(
+            "def _run_sequence", 1
+        )[0]
+        self.assertIn("if emit_lines:", run_method)
+        self.assertIn("if log_command:", run_method)
 
     def test_serial_progress_is_accepted_for_autonomous_runner(self):
         method = self.product.split("def _update_debug_line", 1)[1].split("def _debug_status", 1)[0]
