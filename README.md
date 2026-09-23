@@ -7,12 +7,6 @@ Der Schwerpunkt liegt auf einer möglichst sicheren und nachvollziehbaren Bedien
 > [!CAUTION]
 > ## Firmwareupdates erfolgen auf eigenes Risiko
 >
-> Erfolgreich auf realer Hardware getestet wurden:
->
-> - **V3.3 → V3.4**
-> - **V1.2 → V3.4**
->
->
 > Die **FoxAir BlueLine (BL)** und **FoxAir GreenLine(GL)** verwenden denselben Mainboard-Softwarecode **`82400644`** **BlueLine und GreenLine mit diesem Softwarecode verwenden dieselbe Mainboard-Firmwarelinie; die FW ist daher zwischen entsprechenden BL- und GL-Geräten der `82400644`-Familie kompatibel.**
 >
 > Wärmepumpe und LTE-Modul während eines laufenden Firmwareupdates nicht stromlos machen.
