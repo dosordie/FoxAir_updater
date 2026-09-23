@@ -368,11 +368,12 @@ class MainWindow(legacy.MainWindow):
         elif self._runner_active and not self._runner_timer.isActive():
             self._runner_timer.start()
 
-        if isinstance(progress, int):
+        progress_owned = getattr(self, "_owns_transfer_progress", False)
+        if isinstance(progress, int) and not progress_owned:
             self.progress.setValue(max(0, min(100, progress)))
             self.progress.setFormat(f"{max(0, min(100, progress))} % – LTE-Modem")
         self.progress_text.setText(self._phase_text(phase))
-        if hasattr(self, "progress_sources"):
+        if hasattr(self, "progress_sources") and not progress_owned:
             extra = self._phase_text(phase)
             if isinstance(board_step, int) and board_step:
                 extra += " | Mainboard verarbeitet das Update"
