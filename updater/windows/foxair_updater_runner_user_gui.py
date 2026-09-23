@@ -344,7 +344,7 @@ class MainWindow(runner.MainWindow):
         if hasattr(self, "progress_sources"):
             if terminal:
                 self.progress_sources.clear()
-            else:
+            elif not getattr(self, "_owns_transfer_progress", False):
                 text = self._phase_text(phase)
                 if isinstance(board_step, int) and board_step:
                     text += " | Mainboard verarbeitet das Update"
