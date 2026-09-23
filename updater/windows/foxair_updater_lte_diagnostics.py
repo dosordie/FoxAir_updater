@@ -713,7 +713,7 @@ class MainWindow(desktop.MainWindow):
         except OSError:
             pass
 
-    def _run(self, op, command, cwd=None):
+    def _run(self, op, command, cwd=None, **run_kwargs):
         if op in {"dry", "update"}:
             try:
                 index = command.index("--manifest")
@@ -752,7 +752,7 @@ class MainWindow(desktop.MainWindow):
                     target=work, daemon=True, name="phnix-pre-update-restart"
                 ).start()
                 return
-        super()._run(op, command, cwd)
+        super()._run(op, command, cwd, **run_kwargs)
 
     def _pre_update_restart_finished(self, success: bool, message: str) -> None:
         pending = self._pending_update_start
