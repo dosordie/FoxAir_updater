@@ -23,12 +23,20 @@ class MainWindow(user_gui.MainWindow):
     source fallback and a more detailed visible phase history.
     """
 
+    PROGRESS_UI_MIN_INTERVAL = 0.20
+
     def __init__(self):
         self._runner_log_run_id: str | None = None
         self._runner_progress_value: float | None = None
         self._runner_progress_offset: int | None = None
         self._runner_progress_length: int | None = None
         self._runner_transfer_visible = False
+        # The final end-user layer is the sole owner of transfer progress
+        # widgets. Lower runner layers may still update the phase headline.
+        self._owns_transfer_progress = True
+        self._display_progress_high_watermark = 0.0
+        self._last_progress_render_at = 0.0
+        self._progress_render_pending = False
         self._runner_result_type = ""
         self._runner_recovery_state = ""
         self._passive_runner_poll = False
@@ -302,6 +310,9 @@ class MainWindow(user_gui.MainWindow):
                 self._runner_progress_offset = None
                 self._runner_progress_length = None
                 self._runner_transfer_visible = False
+                self._display_progress_high_watermark = 0.0
+                self._last_progress_render_at = 0.0
+                self._progress_render_pending = False
                 self._runner_started_epoch = None
                 self._runner_terminal_epoch = None
                 # The version is already shown once in the visible protocol at
@@ -311,6 +322,22 @@ class MainWindow(user_gui.MainWindow):
                     f"[FoxAir Updater] Version {base.APP_VERSION} – autonomer DTU-Runner"
                 )
                 self._log(f"[Update-Log] Firmware-Verzeichnis: {manifest.parent}")
+
+        # Passive status polling can return dozens of pretty-printed JSON lines.
+        # Keep collecting the complete stdout for _done(), but do not send every
+        # line through the Qt GUI thread or append it to the visible protocol.
+        if op == "runner-status" and self._passive_runner_poll:
+            command = self._runner_command(*args)
+            if command:
+                self._run(
+                    op,
+                    command,
+                    str(base.backend_dir()),
+                    emit_lines=False,
+                    log_command=False,
+                )
+            return
+
         super()._run_runner(op, *args)
 
     def _log_runner_id_once(self, run_id: str) -> None:
@@ -677,13 +704,12 @@ class MainWindow(user_gui.MainWindow):
     # ------------------------------------------------------------------
     # Dual transfer progress: serial PHNIX log + autonomous runner
     # ------------------------------------------------------------------
-    def _render_transfer_progress(self) -> None:
-        """Render live transfer details while the runner is non-terminal.
+    def _render_transfer_progress(self, *, force: bool = False) -> None:
+        """Render one monotonic, throttled transfer view from both data sources.
 
-        PHNIX serial progress is preferred for the bar while it is available.
-        If that source disappears, the runner value becomes the fallback. Once
-        the runner is terminal, late PHNIX/debug events must not repopulate the
-        small detail line below the progress bar.
+        The PHNIX debug stream is the live source, while the autonomous runner
+        supplies the persisted/confirmed offset. Both remain visible, but only
+        this final layer may change the transfer bar or detail lines.
         """
         if self._runner_terminal:
             if hasattr(self, "progress_sources"):
@@ -696,21 +722,21 @@ class MainWindow(user_gui.MainWindow):
         runner_length = self._runner_progress_length
 
         lines: list[str] = []
-        display_percent: float | int | None = None
+        candidates: list[float] = []
 
         if event is not None:
-            serial_percent = float(event.progress)
-            display_percent = serial_percent
+            serial_percent = max(0.0, min(100.0, float(event.progress)))
+            candidates.append(serial_percent)
             lines.append(
                 (
-                    f"LTE-Dienst: {serial_percent:.1f} % · "
+                    f"Live-Übertragung: {serial_percent:.1f} % · "
                     f"{event.current:,} / {event.total:,} Byte"
                 ).replace(",", ".")
             )
 
         if runner_percent is not None and self._runner_transfer_visible:
-            if display_percent is None:
-                display_percent = runner_percent
+            confirmed_percent = max(0.0, min(100.0, float(runner_percent)))
+            candidates.append(confirmed_percent)
             if (
                 isinstance(runner_offset, int)
                 and isinstance(runner_length, int)
@@ -718,21 +744,53 @@ class MainWindow(user_gui.MainWindow):
             ):
                 lines.append(
                     (
-                        f"LTE-Modem: {runner_percent:.1f} % · "
+                        f"Bestätigter Fortschritt: {confirmed_percent:.1f} % · "
                         f"{runner_offset:,} / {runner_length:,} Byte"
                     ).replace(",", ".")
                 )
             else:
-                lines.append(f"LTE-Modem: {runner_percent:.1f} %")
+                lines.append(f"Bestätigter Fortschritt: {confirmed_percent:.1f} %")
+
+        display_percent: float | None = None
+        if candidates:
+            # Different sources can arrive a few seconds apart. Never let a
+            # stale poll move the visible progress backwards within one run.
+            self._display_progress_high_watermark = max(
+                self._display_progress_high_watermark,
+                *candidates,
+            )
+            display_percent = self._display_progress_high_watermark
+
+        now = time.monotonic()
+        if (
+            not force
+            and display_percent is not None
+            and display_percent < 100.0
+            and now - self._last_progress_render_at < self.PROGRESS_UI_MIN_INTERVAL
+        ):
+            if not self._progress_render_pending:
+                self._progress_render_pending = True
+                delay_ms = max(
+                    1,
+                    int(
+                        (
+                            self.PROGRESS_UI_MIN_INTERVAL
+                            - (now - self._last_progress_render_at)
+                        )
+                        * 1000
+                    ),
+                )
+                QTimer.singleShot(delay_ms, self._flush_transfer_progress)
+            return
+
+        self._progress_render_pending = False
+        self._last_progress_render_at = now
 
         if display_percent is not None:
-            value = max(0, min(100, round(display_percent)))
-            self.progress.setValue(value)
-            # No text inside the bar. The separate percent label remains next to
-            # it; detailed source values stay below the bar.
+            self.progress.setValue(max(0, min(100, round(display_percent))))
             self.progress.setFormat("")
             if hasattr(self, "progress_percent_label"):
-                self.progress_percent_label.setText(f"{float(display_percent):.1f} %")
+                self.progress_percent_label.setText(f"{display_percent:.1f} %")
         else:
             self.progress.setValue(0)
             self.progress.setFormat("")
@@ -741,6 +799,11 @@ class MainWindow(user_gui.MainWindow):
 
         if hasattr(self, "progress_sources"):
             self.progress_sources.setText("\n".join(lines))
+
+    def _flush_transfer_progress(self) -> None:
+        self._progress_render_pending = False
+        if self._runner_transfer_visible and not self._runner_terminal:
+            self._render_transfer_progress(force=True)
 
     # ------------------------------------------------------------------
     # Terminal presentation
