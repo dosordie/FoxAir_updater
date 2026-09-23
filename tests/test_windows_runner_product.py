@@ -77,19 +77,31 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn("QTimer.singleShot", method)
         self.assertIn("def _flush_transfer_progress", method)
 
-    def test_passive_runner_status_does_not_stream_pretty_json_to_ui(self):
+    def test_runner_machine_output_does_not_stream_pretty_json_to_ui(self):
         runner_call = self.enduser.split("def _run_runner", 1)[1].split(
             "def _log_runner_id_once", 1
         )[0]
-        self.assertIn('op == "runner-status" and self._passive_runner_poll', runner_call)
+        self.assertIn("op in self.QUIET_RUNNER_OPS", runner_call)
         self.assertIn("emit_lines=False", runner_call)
-        self.assertIn("log_command=False", runner_call)
+        self.assertIn("self._passive_runner_poll", runner_call)
+
+        done = self.enduser.split("def _done", 1)[1].split("def main", 1)[0]
+        self.assertIn("op in self.QUIET_RUNNER_OPS", done)
+        self.assertIn("_write_automatic_log_only", done)
 
         run_method = self.base_gui.split("def _run(self, op, command, cwd=None", 1)[1].split(
             "def _run_sequence", 1
         )[0]
         self.assertIn("if emit_lines:", run_method)
         self.assertIn("if log_command:", run_method)
+
+    def test_runner_progress_waits_for_valid_persisted_length(self):
+        method = self.enduser.split("def _render_transfer_progress", 1)[1].split(
+            "def _show_terminal_result", 1
+        )[0]
+        self.assertIn("runner_progress_valid = (", method)
+        self.assertIn("runner_length > 0", method)
+        self.assertIn("elif self._runner_transfer_visible:", method)
 
     def test_serial_progress_is_accepted_for_autonomous_runner(self):
         method = self.product.split("def _update_debug_line", 1)[1].split("def _debug_status", 1)[0]
