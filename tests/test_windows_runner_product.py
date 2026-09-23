@@ -10,6 +10,7 @@ class WindowsRunnerProductTests(unittest.TestCase):
         cls.runner = Path("updater/windows/foxair_updater_runner_gui.py").read_text(encoding="utf-8")
         cls.user_runner = Path("updater/windows/foxair_updater_runner_user_gui.py").read_text(encoding="utf-8")
         cls.base_gui = Path("updater/windows/foxair_updater_gui.py").read_text(encoding="utf-8")
+        cls.lte = Path("updater/windows/foxair_updater_lte_diagnostics.py").read_text(encoding="utf-8")
         cls.release = Path("updater/windows/foxair_updater_release_product.py").read_text(encoding="utf-8")
         cls.runtime = Path("updater/windows/foxair_updater_release_runtime.py").read_text(encoding="utf-8")
         cls.windows_readme = Path("updater/windows/README.md").read_text(encoding="utf-8")
@@ -76,6 +77,13 @@ class WindowsRunnerProductTests(unittest.TestCase):
         self.assertIn("PROGRESS_UI_MIN_INTERVAL", method)
         self.assertIn("QTimer.singleShot", method)
         self.assertIn("def _flush_transfer_progress", method)
+
+    def test_lte_layer_forwards_runner_execution_options(self):
+        run_method = self.lte.split("def _run(self, op, command, cwd=None", 1)[1].split(
+            "def _pre_update_restart_finished", 1
+        )[0]
+        self.assertIn("**run_kwargs", run_method)
+        self.assertIn("super()._run(op, command, cwd, **run_kwargs)", run_method)
 
     def test_runner_machine_output_does_not_stream_pretty_json_to_ui(self):
         runner_call = self.enduser.split("def _run_runner", 1)[1].split(
