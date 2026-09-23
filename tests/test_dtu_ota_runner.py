@@ -219,6 +219,16 @@ class DtuOtaPackageTests(unittest.TestCase):
             )
             self.assertEqual(actual, payload)
 
+    def test_work_qemu_provides_persisted_progress_busybox_applets(self):
+        source = Path(
+            "tools/testvm/fake_adb/qemu_work_lab_backend.py"
+        ).read_text(encoding="utf-8")
+        ensure = source.split("def _ensure_rootfs_busybox", 1)[1].split(
+            "def _remove_rootfs_busybox_overlay", 1
+        )[0]
+        for applet in ("od", "tr", "wc"):
+            self.assertIn(f'"{applet}"', ensure)
+
     def test_restart_at_half_preserves_only_proven_resume_state(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
