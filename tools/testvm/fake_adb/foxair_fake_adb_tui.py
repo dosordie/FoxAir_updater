@@ -100,6 +100,16 @@ def process_count(needle: str) -> int:
     return sum(needle in line for line in proc.stdout.splitlines())
 
 
+def format_duration(seconds: object) -> str:
+    try:
+        total = max(0, int(float(str(seconds))))
+    except (TypeError, ValueError):
+        return "-"
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 def snapshot() -> dict:
     base, error = backend_status()
     ota = newest_run_status()
@@ -135,6 +145,12 @@ def snapshot() -> dict:
             scenario_exit = (run_dir / "exit-code.txt").read_text().strip()
         except OSError:
             scenario_exit = "?"
+    ota_elapsed = "-"
+    if ota.get("_active") and not terminal and ota.get("started_at"):
+        try:
+            ota_elapsed = format_duration(time.time() - float(ota["started_at"]))
+        except (TypeError, ValueError):
+            pass
     return {
         "base": base, "ota": ota, "error": error, "verdict": verdict,
         "severity": severity, "phase": phase, "pids": pids,
@@ -145,6 +161,8 @@ def snapshot() -> dict:
         "httpd_count": process_count("busybox httpd -p 127.0.0.1:8081"),
         "scenario_exit": scenario_exit,
         "runner_started": runner.get("started_at", "-"),
+        "run_dir": str(run_dir) if run_dir.is_dir() else "",
+        "ota_elapsed": ota_elapsed,
         "refreshed": time.strftime("%H:%M:%S"),
     }
 
@@ -226,30 +244,51 @@ def result_screen(stdscr, title: str, code: int, output: str) -> None:
 
 
 def log_screen(stdscr) -> None:
-    stdscr.timeout(-1)
-    options = [
-        (str(STATE_DIR / "qemu-adb/scenario-lab.out"), "Simulator-/Lab-Log"),
+    base, _ = backend_status()
+    runner = base.get("scenario_runner") or {}
+    run_dir_value = str(runner.get("run_dir", ""))
+    run_dir = Path(run_dir_value) if run_dir_value else None
+    ota = newest_run_status()
+    ota_path_value = str(ota.get("_path", ""))
+    ota_dir = Path(ota_path_value).parent if ota_path_value else None
+    options = []
+    if run_dir:
+        options.extend([
+            (str(run_dir / "stdout.log"), "PHNIX-Live-Ausgabe"),
+            (str(run_dir / "ttyHSL2-transcript.txt"), "RS485-/Mainboard-Protokoll"),
+            (str(run_dir / "qemu-strace.log"), "QEMU-Systemaufrufe (technisch)"),
+        ])
+    if ota_dir:
+        options.extend([
+            (str(ota_dir / "hook.log"), "OTA-Hook-Protokoll"),
+            (str(ota_dir / "launcher.log"), "OTA-Launcher-Protokoll"),
+        ])
+    options.extend([
+        (str(STATE_DIR / "qemu-adb/scenario-lab.out"), "Launcher-Log (nur Startfehler; oft leer)"),
         ("journal:foxair-fake-adb.service", "Fake-ADB-Dienst"),
         ("journal:foxair-debug-stream.service", "Debugstream-Dienst"),
-    ]
+    ])
     target = choose(stdscr, "Log auswaehlen", options)
     if not target:
         return
+    stdscr.timeout(1000)
     while True:
+        max_lines = max(1, stdscr.getmaxyx()[0] - 3)
         if target.startswith("journal:"):
             proc = subprocess.run(
-                ["journalctl", "-u", target.split(":", 1)[1], "-n", "120", "--no-pager"],
+                ["journalctl", "-u", target.split(":", 1)[1], "-n", str(max_lines), "--no-pager"],
                 text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
             )
             content = proc.stdout
         else:
-            try:
-                content = Path(target).read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                content = str(exc)
-        lines = content.splitlines()[-max(1, stdscr.getmaxyx()[0] - 3):]
+            proc = subprocess.run(
+                ["tail", "-n", str(max_lines), target], text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+            )
+            content = proc.stdout
+        lines = content.splitlines()[-max_lines:] or ["(Log ist derzeit leer)"]
         stdscr.erase()
-        add(stdscr, 0, 0, "Log (R: aktualisieren, Esc/Q: zurueck)", curses.A_BOLD)
+        add(stdscr, 0, 0, "Log (Auto 1s, Esc/Q: zurueck)", curses.A_BOLD)
         for row, line in enumerate(lines, 1):
             add(stdscr, row, 0, line)
         stdscr.refresh()
@@ -275,7 +314,7 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 8, 0, f"HTTP-Server:    {state['httpd_count']}   QEMU-Exit: {state['scenario_exit']}   Start: {state['runner_started']}", curses.color_pair(3) if state["httpd_count"] > 1 else 0)
     run_label = "Aktiver OTA-Lauf" if ota.get("_active") else "Letzter OTA-Lauf (inaktiv)"
     add(stdscr, 10, 0, run_label, curses.A_BOLD)
-    add(stdscr, 11, 0, f"ID:             {ota.get('run_id', '-')}")
+    add(stdscr, 11, 0, f"ID:             {ota.get('run_id', '-')}   Laufzeit: {state.get('ota_elapsed', '-')}")
     add(stdscr, 12, 0, f"Phase:          {state['phase']}")
     add(stdscr, 13, 0, f"Fortschritt:    {ota.get('progress', 0)} %   Offset {ota.get('offset', 0)} / {ota.get('length', 0)}")
     add(stdscr, 14, 0, f"C350/C357/C5A8: {ota.get('c350_sent', False)} / {ota.get('c357_sent', False)} / {ota.get('c5a8_sent', False)}")
@@ -311,7 +350,7 @@ def main(stdscr) -> None:
         try:
             state = snapshot()
         except Exception as exc:  # keep the recovery UI usable
-            state = {"base": {}, "ota": {}, "error": str(exc), "verdict": "STATUSFEHLER", "severity": "error", "phase": "-", "pids": [], "runner_pid": None, "adb_online": False, "fake_adb": False, "debug_service": False, "modem_log": "?", "httpd_count": 0}
+            state = {"base": {}, "ota": {}, "error": str(exc), "verdict": "STATUSFEHLER", "severity": "error", "phase": "-", "pids": [], "runner_pid": None, "adb_online": False, "fake_adb": False, "debug_service": False, "modem_log": "?", "httpd_count": 0, "scenario_exit": "-", "runner_started": "-", "ota_elapsed": "-", "refreshed": time.strftime("%H:%M:%S")}
         draw(stdscr, state, message)
         message = ""
         stdscr.timeout(2000)

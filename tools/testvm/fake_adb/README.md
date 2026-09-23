@@ -214,7 +214,8 @@ sudo foxair-fake-adbctl ui
 ```
 
 Sie zeigt PHNIX-/Szenario-PIDs, Board-Version, ADB und Debugstream, den letzten
-OTA-Status einschließlich Phase, Fortschritt, C350/C357/C5A8 und Recovery sowie
+OTA-Status einschließlich Phase, Fortschritt, laufender Updatezeit,
+C350/C357/C5A8 und Recovery sowie
 übrig gebliebene Firmware-Webserver. Die Anzeige aktualisiert sich automatisch
 alle zwei Sekunden und zeigt außerdem QEMU-Exitcode sowie den letzten
 Runner-Grund und die Detailmeldung. Über einzelne Tasten lassen sich Szenario,
@@ -225,6 +226,11 @@ nicht mehr aktive OTA-Statusdateien werden als inaktiv angezeigt und lösen
 keinen falschen Recovery-Alarm aus. Zustandsverändernde Aktionen verlangen eine Bestätigung. Die TUI
 enthält keine eigene Simulatorlogik, sondern verwendet dieselben
 `foxair-fake-adbctl`-Befehle wie die Kommandozeile.
+
+Die Logansicht zeigt als erste Auswahl die laufend aktualisierte originale
+PHNIX-Ausgabe und danach das RS485-/Mainboard-Protokoll. Das äußere
+`scenario-lab.out` bleibt für Startfehler verfügbar, ist während eines normal
+laufenden Szenarios aber erwartungsgemäß meist leer.
 
 Lange Detailmeldungen werden in der Statusansicht über zwei Zeilen umgebrochen.
 Der Work-QEMU-Rootfs stellt außerdem `od`, `tr` und `wc` aus dem importierten
