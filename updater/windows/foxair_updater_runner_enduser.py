@@ -24,6 +24,15 @@ class MainWindow(user_gui.MainWindow):
     """
 
     PROGRESS_UI_MIN_INTERVAL = 0.20
+    QUIET_RUNNER_OPS = {
+        "runner-prepare",
+        "runner-start",
+        "runner-status",
+        "runner-current",
+        "runner-abort",
+        "runner-ack",
+        "runner-cleanup",
+    }
 
     def __init__(self):
         self._runner_log_run_id: str | None = None
@@ -323,10 +332,10 @@ class MainWindow(user_gui.MainWindow):
                 )
                 self._log(f"[Update-Log] Firmware-Verzeichnis: {manifest.parent}")
 
-        # Passive status polling can return dozens of pretty-printed JSON lines.
-        # Keep collecting the complete stdout for _done(), but do not send every
-        # line through the Qt GUI thread or append it to the visible protocol.
-        if op == "runner-status" and self._passive_runner_poll:
+        # Runner commands return machine-readable JSON. Keep the complete stdout
+        # for _done() and the automatic file log, but do not stream the pretty-
+        # printed JSON line by line through the Qt GUI thread.
+        if op in self.QUIET_RUNNER_OPS:
             command = self._runner_command(*args)
             if command:
                 self._run(
@@ -334,7 +343,9 @@ class MainWindow(user_gui.MainWindow):
                     command,
                     str(base.backend_dir()),
                     emit_lines=False,
-                    log_command=False,
+                    log_command=not (
+                        op == "runner-status" and self._passive_runner_poll
+                    ),
                 )
             return
 
@@ -734,27 +745,29 @@ class MainWindow(user_gui.MainWindow):
             candidates.append(serial_percent)
             lines.append(
                 (
-                    f"Live-Übertragung: {serial_percent:.1f} % · "
+                    f"PHNIX: {serial_percent:.1f} % · "
                     f"{event.current:,} / {event.total:,} Byte"
                 ).replace(",", ".")
             )
 
-        if runner_percent is not None and self._runner_transfer_visible:
-            confirmed_percent = max(0.0, min(100.0, float(runner_percent)))
-            candidates.append(confirmed_percent)
-            if (
-                isinstance(runner_offset, int)
-                and isinstance(runner_length, int)
-                and runner_length > 0
-            ):
-                lines.append(
-                    (
-                        f"Bestätigter Fortschritt: {confirmed_percent:.1f} % · "
-                        f"{runner_offset:,} / {runner_length:,} Byte"
-                    ).replace(",", ".")
-                )
-            else:
-                lines.append(f"Bestätigter Fortschritt: {confirmed_percent:.1f} %")
+        runner_progress_valid = (
+            runner_percent is not None
+            and self._runner_transfer_visible
+            and isinstance(runner_offset, int)
+            and isinstance(runner_length, int)
+            and runner_length > 0
+        )
+        if runner_progress_valid:
+            updater_percent = max(0.0, min(100.0, float(runner_percent)))
+            candidates.append(updater_percent)
+            lines.append(
+                (
+                    f"Updater: {updater_percent:.1f} % · "
+                    f"{runner_offset:,} / {runner_length:,} Byte"
+                ).replace(",", ".")
+            )
+        elif self._runner_transfer_visible:
+            lines.append("Updater: –")
 
         display_percent: float | None = None
         if candidates:
@@ -995,6 +1008,10 @@ class MainWindow(user_gui.MainWindow):
 
     def _done(self, op, code, output):
         passive_poll = op == "runner-status" and self._passive_runner_poll
+
+        if op in self.QUIET_RUNNER_OPS and output:
+            for line in str(output).splitlines():
+                self._write_automatic_log_only(line)
 
         # The manual firmware-page status button must not tear down a healthy
         # Remote-ADB connection just to read runner state. Try the read-only
