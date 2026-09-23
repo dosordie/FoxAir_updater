@@ -168,7 +168,12 @@ def _ensure_rootfs_busybox() -> tuple[bool, str]:
     if not target.is_file() or target.stat().st_size != source.stat().st_size:
         shutil.copy2(source, target)
     target.chmod(0o755)
-    for applet in ("sh", "rm", "cp", "mv", "mkdir", "chmod", "sync", "md5sum"):
+    for applet in (
+        "sh", "rm", "cp", "mv", "mkdir", "chmod", "sync", "md5sum",
+        # The production supervisor reads persisted OTA_INFO progress with
+        # od/tr and validates its size with wc during recovery.
+        "od", "tr", "wc",
+    ):
         link = bin_dir / applet
         if link.exists() and not link.is_symlink():
             continue
@@ -180,7 +185,10 @@ def _ensure_rootfs_busybox() -> tuple[bool, str]:
 def _remove_rootfs_busybox_overlay() -> None:
     """Remove only applets created by _ensure_rootfs_busybox."""
     bin_dir = qemu_rootfs() / "bin"
-    for applet in ("sh", "rm", "cp", "mv", "mkdir", "chmod", "sync", "md5sum"):
+    for applet in (
+        "sh", "rm", "cp", "mv", "mkdir", "chmod", "sync", "md5sum",
+        "od", "tr", "wc",
+    ):
         link = bin_dir / applet
         if link.is_symlink() and os.readlink(link) == "busybox":
             link.unlink(missing_ok=True)

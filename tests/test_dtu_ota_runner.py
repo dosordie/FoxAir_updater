@@ -527,6 +527,16 @@ class DtuOtaPackageTests(unittest.TestCase):
         )
         self.assertIn("shell_ok, shell_message = _ensure_rootfs_busybox()", backend)
 
+    def test_work_qemu_provides_persisted_progress_busybox_applets(self):
+        source = Path(
+            "tools/testvm/fake_adb/qemu_work_lab_backend.py"
+        ).read_text(encoding="utf-8")
+        ensure = source.split("def _ensure_rootfs_busybox", 1)[1].split(
+            "def _remove_rootfs_busybox_overlay", 1
+        )[0]
+        for applet in ("od", "tr", "wc"):
+            self.assertIn(f'"{applet}"', ensure)
+
     def test_runner_p0_guards_are_persistent_and_side_effect_free(self):
         runner = Path("updater/dtu_ota/payload/dtu_ota_supervisor.sh").read_text(
             encoding="utf-8"

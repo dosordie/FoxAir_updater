@@ -226,6 +226,11 @@ keinen falschen Recovery-Alarm aus. Zustandsverändernde Aktionen verlangen eine
 enthält keine eigene Simulatorlogik, sondern verwendet dieselben
 `foxair-fake-adbctl`-Befehle wie die Kommandozeile.
 
+Lange Detailmeldungen werden in der Statusansicht über zwei Zeilen umgebrochen.
+Der Work-QEMU-Rootfs stellt außerdem `od`, `tr` und `wc` aus dem importierten
+ARM-BusyBox bereit, damit der produktive Supervisor Offset und Länge aus
+`phnixIot_device_OTA_INFO` genauso lesen kann wie auf dem LTE-Modem.
+
 Zum manuellen Prüfen der echten `phnixIot4G`-Debugausgabe eines eingehenden
 Cloud-OTA-Angebots zuerst den TCP-Debugstream auf Port `5039` verbinden und
 anschließend genau einmal senden:

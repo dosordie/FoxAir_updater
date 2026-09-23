@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import textwrap
 import time
 
 
@@ -280,13 +281,20 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 14, 0, f"C350/C357/C5A8: {ota.get('c350_sent', False)} / {ota.get('c357_sent', False)} / {ota.get('c5a8_sent', False)}")
     add(stdscr, 15, 0, f"Recovery:       {ota.get('recovery', '-')}   Abbruch erlaubt: {ota.get('abort_allowed', '-')}")
     add(stdscr, 16, 0, f"Grund:          {ota.get('reason', '-')}")
-    add(stdscr, 17, 0, f"Detail:         {ota.get('detail', '-')}")
+    height, width = stdscr.getmaxyx()
+    detail = str(ota.get("detail", "-") or "-")
+    detail_lines = textwrap.wrap(detail, width=max(10, width - 17)) or ["-"]
+    if len(detail_lines) > 2:
+        detail_lines = [detail_lines[0], clipped(detail_lines[1], max(4, width - 20)) + "..."]
+    add(stdscr, 17, 0, f"Detail:         {detail_lines[0]}")
+    if len(detail_lines) > 1:
+        add(stdscr, 18, 17, detail_lines[1])
     if state["error"]:
-        add(stdscr, 18, 0, state["error"], curses.color_pair(1))
-    add(stdscr, 19, 0, "[R] Status  [S] Szenario  [B] Board-Version  [X] Reset  [F] Reparieren", curses.A_BOLD)
-    add(stdscr, 20, 0, "[C] Dienst-Crash  [M] Modem-Log  [A] ADB an/aus  [L] Logs  [Q] Ende", curses.A_BOLD)
+        add(stdscr, 19, 0, state["error"], curses.color_pair(1))
+    add(stdscr, 20, 0, "[R] Status  [S] Szenario  [B] Board-Version  [X] Reset  [F] Reparieren", curses.A_BOLD)
+    add(stdscr, 21, 0, "[C] Dienst-Crash  [M] Modem-Log  [A] ADB an/aus  [L] Logs  [Q] Ende", curses.A_BOLD)
     if message:
-        add(stdscr, 22, 0, message, curses.color_pair(4))
+        add(stdscr, min(22, height - 1), 0, message, curses.color_pair(4))
     stdscr.refresh()
 
 
