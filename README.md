@@ -79,7 +79,7 @@ Die Firmwaredatei wird vor dem Start geprüft. Ein Update wird nicht allein desh
 | V3.3 | V3.4 | ✅ real erfolgreich getestet |
 | V1.2 | V3.4 | ✅ real erfolgreich getestet |
 | V3.3 | V3.3 | ✅ gleiche Version wird korrekt abgelehnt |
-| V3.4 / andere | V3.5 | ⚠️ Firmware bekannt, Update noch nicht real mit dem Updater getestet |
+| V3.4 / andere | V3.5 | ✅ real erfolgreich geteste |
 
 ### V3.5: BlueLine und GreenLine
 
