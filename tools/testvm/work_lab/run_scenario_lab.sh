@@ -328,11 +328,17 @@ fi
   if [[ "${MQTT_TLS_STUB:-0}" == 1 ]]; then
     app_path=/data/phnixIot4G.tls-lab
   fi
+  qemu_env=()
+  if [[ -f "$rootfs/lib/libfoxair_qemu_system_shim.so" ]]; then
+    # VM only: avoid qemu-user clone/exec crashes caused by the original
+    # concurrent hardware system() calls from the service. Never used on DTU.
+    qemu_env=(-E LD_PRELOAD=/lib/libfoxair_qemu_system_shim.so)
+  fi
   if [[ "${AUTONOMOUS_DTU_RUNNER:-0}" == 1 ]]; then
     # Start stopped on the QEMU remote-GDB socket. The production DTU runtime
     # hook connects later and remains the sole debugger/OTA orchestrator.
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static -g 12345 -L / -strace "$app_path" \
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" -g 12345 -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log" &
     app_timeout_pid=$!
     wait "$app_timeout_pid"
@@ -342,7 +348,7 @@ fi
       local_handler_gdb="$tools/gdb_local_ota_handler_late.gdb"
     fi
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static -g 12345 -L / -strace "$app_path" \
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" -g 12345 -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log" &
     app_timeout_pid=$!
     sleep 0.5
@@ -352,7 +358,7 @@ fi
     wait "$app_timeout_pid"
   elif [[ "${V33_FULL_TRANSFER:-0}" == 1 ]]; then
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static -g 12345 -L / -strace "$app_path" \
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" -g 12345 -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log" &
     app_timeout_pid=$!
     sleep 0.5
@@ -362,7 +368,7 @@ fi
     wait "$app_timeout_pid"
   elif [[ "${V33_DOWNLOAD_PROBE:-0}" == 1 ]]; then
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static -g 12345 -L / -strace "$app_path" \
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" -g 12345 -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log" &
     app_timeout_pid=$!
     sleep 0.5
@@ -372,7 +378,7 @@ fi
     wait "$app_timeout_pid"
   elif [[ "${OTA_0033_PARSE_PROBE:-0}" == 1 ]]; then
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static -g 12345 -L / -strace "$app_path" \
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" -g 12345 -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log" &
     app_timeout_pid=$!
     sleep 0.5
@@ -386,7 +392,7 @@ fi
     }
     command -v gdb-multiarch >/dev/null || { echo "gdb-multiarch missing" >&2; exit 94; }
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static -g 12345 -L / -strace "$app_path" \
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" -g 12345 -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log" &
     app_timeout_pid=$!
     sleep 0.5
@@ -398,11 +404,11 @@ fi
     timeout -k 2 "${run_secs}s" strace -f -s 256 -xx \
       -e trace=socket,connect,bind,sendto,recvfrom,sendmsg,recvmsg \
       -o "$run_dir/host-network-strace.log" \
-      chroot "$rootfs" /usr/bin/qemu-arm-static -L / -strace "$app_path" \
+      chroot "$rootfs" /usr/bin/qemu-arm-static "${qemu_env[@]}" -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log"
   else
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static -L / -strace "$app_path" \
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log"
   fi
 ' bash "$ROOTFS" "$TOOLS" "$RUN_DIR" "$RUN_SECS" "$TLS_DIR" "$MQTT_HOST" "$V33_FIXTURE"

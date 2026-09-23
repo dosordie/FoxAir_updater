@@ -29,49 +29,10 @@ def patch_script(text: str) -> tuple[str, bool]:
     # required for this hook and makes GDB 16.3 internally crash while qemu
     # reports the service's many fork/exec events during parser continuation.
     patched = patched.replace("file /data/phnixIot4G\n", "", 1)
-    # qemu-user's single GDB stub cannot survive an execve() in one of the
-    # inferior's forked children.  The original 0033 parser executes two
-    # system() calls here (cache removal and OTA_INFO truncation), causing the
-    # otherwise healthy remote target to disappear before C350.  Reproduce
-    # those two file mutations in the VM namespace and temporarily intercept
-    # system@plt while the injected parser is active.  One guarded hardware
-    # breakpoint also stays within qemu-user's four-slot limit; two separate
-    # call-site breakpoints exceeded it and made GDB fall back to an impossible
-    # text-memory write.  This is strictly a QEMU transport workaround; the
-    # uploaded production hook remains unchanged.
-    yield_anchor = "  set $return_pc = $pc\n"
-    yield_patch = (
-        "  shell rm -f /cache/phnixIot_device_OTA\n"
-        "  shell : > /data/phnixIot_device_OTA_INFO\n"
-        "  hbreak *0x9a98\n"
-        "  condition 4 $r0 == 0x83a9c || $r0 == 0x83ac0\n"
-        + yield_anchor
-    )
-    patched = patched.replace(yield_anchor, yield_patch, 1)
-    patched = patched.replace(
-        '  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
-        '  disable 4\n  printf "PHNIX post-parser pc=0x%x\\n", $pc\n',
-        1,
-    )
-    c36e_flow = 'continue\nprintf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *)($r0+1), *(unsigned char *)($r0+3)\n'
-    qemu_c36e_flow = '''continue
-while $pc == 0x9a98
-  printf "FOXAIR_QEMU_SYSTEM_BYPASS command=%s\\n", (char *)$r0
-  set $r0 = 0
-  set $pc = $lr
-  continue
-end
-disable 4
-printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *)($r0+1), *(unsigned char *)($r0+3)
-'''
-    patched = patched.replace(c36e_flow, qemu_c36e_flow, 1)
-    # Breakpoint 4 is now the parser-only system() guard created after yield.
-    # Keep the
-    # production script's later one-shot C357/C5A8 disables aligned with their
-    # shifted QEMU-only breakpoint numbers.
-    patched = patched.replace("    disable 4\n", "    disable 4004\n", 1)
-    patched = patched.replace("    disable 5\n", "    disable 6\n", 1)
-    patched = patched.replace("    disable 4004\n", "    disable 5\n", 1)
+    # system(3) is handled from process start by the VM-only ARM preload shim.
+    # No system@plt breakpoint is needed here; keeping that former workaround
+    # would stop the remote target before C350.  Production hook semantics and
+    # its original C357/C5A8 breakpoint numbering therefore remain intact.
     return patched, patched != text
 
 

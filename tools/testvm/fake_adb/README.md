@@ -182,6 +182,18 @@ allgemeines Downgrade-Modell.
 
 Die Zuordnung erfolgt auf die tatsächlich vorhandenen `rs485_fault_emulator.py`-Schalter. Nicht direkt unterstützte historische Simulatornamen werden nicht stillschweigend angenähert.
 
+### QEMU-system()-Schutz
+
+Nur in der Simulator-VM wird beim Start des ARM-Dienstes
+`libfoxair_qemu_system_shim.so` per `LD_PRELOAD` geladen. Der originale Dienst
+startet während der Initialisierung aus mehreren Threads kurzlebige Shells für
+nicht vorhandene GPIO-Pfade. Dieses `clone/execve`-Muster kann qemu-user intern
+mit Exit 139 abstürzen lassen. Der Shim behandelt die wirkungslosen
+Hardwareaufrufe ohne Kindprozess und bildet die beiden vom OTA-Parser benötigten
+Cache-/OTA_INFO-Dateioperationen direkt per ARM-Syscall nach. Er wird vom
+Installer aus `qemu_system_shim.c` gebaut und existiert weder im produktiven
+Updaterpaket noch auf einem realen LTE-Modem.
+
 Nützliche Diagnosebefehle:
 
 ```sh
@@ -203,7 +215,9 @@ sudo foxair-fake-adbctl ui
 
 Sie zeigt PHNIX-/Szenario-PIDs, Board-Version, ADB und Debugstream, den letzten
 OTA-Status einschließlich Phase, Fortschritt, C350/C357/C5A8 und Recovery sowie
-übrig gebliebene Firmware-Webserver. Über einzelne Tasten lassen sich Szenario,
+übrig gebliebene Firmware-Webserver. Die Anzeige aktualisiert sich automatisch
+alle zwei Sekunden und zeigt außerdem QEMU-Exitcode sowie den letzten
+Runner-Grund und die Detailmeldung. Über einzelne Tasten lassen sich Szenario,
 Board-Version, Reset, absichtlicher Dienstabsturz, ADB, Modem-Log und Logansicht
 bedienen. `F` repariert einen verwaisten VM-Lauf, entfernt ausschließlich dessen
 alte Firmware-Webserver und startet das aktuell gewählte Szenario neu. Alte,

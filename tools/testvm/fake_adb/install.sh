@@ -29,7 +29,8 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-    wget ca-certificates python3 busybox curl gdb net-tools iproute2 procps bubblewrap
+    wget ca-certificates python3 busybox curl gdb net-tools iproute2 procps bubblewrap \
+    gcc-arm-linux-gnueabi
 
 config_value() {
     key=$1
@@ -136,6 +137,7 @@ fetch tools/testvm/work_lab/mqtt_ready_bridge.py "$LAB_ROOT/tools/mqtt_ready_bri
 fetch tools/testvm/work_lab/qmux_stub.py "$LAB_ROOT/tools/qmux_stub.py"
 fetch tools/testvm/work_lab/credential_http_stub.py "$LAB_ROOT/tools/credential_http_stub.py"
 fetch tools/testvm/work_lab/prepare_tls_lab.py "$LAB_ROOT/tools/prepare_tls_lab.py"
+fetch tools/testvm/work_lab/qemu_system_shim.c "$LAB_ROOT/tools/qemu_system_shim.c"
 # Re-use only the deterministic OTA hook state machine from the repository.
 # qemu_permissive_backend.py remaps all of its remote file access back into the
 # existing Work-QEMU/ADB namespace; this does NOT create a second modem rootfs.
@@ -168,6 +170,14 @@ python3 -m py_compile \
     "$INSTALL_DIR/phnix_ota_simulator.py" \
     "$LAB_ROOT/tools/mqtt_ready_bridge.py"
 sh -n "$LAB_ROOT/tools/run_scenario_lab.sh"
+arm-linux-gnueabi-gcc -shared -fPIC -nostdlib \
+    -Wl,-soname,libfoxair_qemu_system_shim.so \
+    -o "$ROOTFS/lib/libfoxair_qemu_system_shim.so" \
+    "$LAB_ROOT/tools/qemu_system_shim.c"
+if readelf -d "$ROOTFS/lib/libfoxair_qemu_system_shim.so" | grep -q '(NEEDED)'; then
+    echo "QEMU-system()-Shim darf keine Laufzeitbibliothek benötigen." >&2
+    exit 2
+fi
 
 chmod 0755 \
     "$INSTALL_DIR/foxair_fake_adb_server.py" \

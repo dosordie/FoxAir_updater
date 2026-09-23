@@ -126,6 +126,14 @@ def snapshot() -> dict:
     else:
         verdict = "BEREIT"
         severity = "ok"
+    runner = base.get("scenario_runner") or {}
+    run_dir = Path(str(runner.get("run_dir", "")))
+    scenario_exit = "-"
+    if run_dir.is_dir() and (run_dir / "exit-code.txt").is_file():
+        try:
+            scenario_exit = (run_dir / "exit-code.txt").read_text().strip()
+        except OSError:
+            scenario_exit = "?"
     return {
         "base": base, "ota": ota, "error": error, "verdict": verdict,
         "severity": severity, "phase": phase, "pids": pids,
@@ -134,6 +142,9 @@ def snapshot() -> dict:
         "debug_service": service_active("foxair-debug-stream.service"),
         "modem_log": modem_log_mode(),
         "httpd_count": process_count("busybox httpd -p 127.0.0.1:8081"),
+        "scenario_exit": scenario_exit,
+        "runner_started": runner.get("started_at", "-"),
+        "refreshed": time.strftime("%H:%M:%S"),
     }
 
 
@@ -152,6 +163,7 @@ def add(stdscr, row: int, col: int, text: object, attr: int = 0) -> None:
 
 
 def choose(stdscr, title: str, options: list[tuple[str, str]]) -> str | None:
+    stdscr.timeout(-1)
     index = 0
     while True:
         stdscr.erase()
@@ -174,6 +186,7 @@ def choose(stdscr, title: str, options: list[tuple[str, str]]) -> str | None:
 
 
 def prompt(stdscr, title: str, default: str = "") -> str | None:
+    stdscr.timeout(-1)
     curses.echo()
     curses.curs_set(1)
     try:
@@ -191,6 +204,7 @@ def prompt(stdscr, title: str, default: str = "") -> str | None:
 
 
 def confirm(stdscr, question: str) -> bool:
+    stdscr.timeout(-1)
     stdscr.erase()
     add(stdscr, 0, 0, question, curses.A_BOLD | curses.color_pair(3))
     add(stdscr, 2, 0, "Mit J bestaetigen, jede andere Taste bricht ab.")
@@ -199,6 +213,7 @@ def confirm(stdscr, question: str) -> bool:
 
 
 def result_screen(stdscr, title: str, code: int, output: str) -> None:
+    stdscr.timeout(-1)
     stdscr.erase()
     attr = curses.color_pair(2 if code == 0 else 1) | curses.A_BOLD
     add(stdscr, 0, 0, f"{title}: {'OK' if code == 0 else 'FEHLER'}", attr)
@@ -210,6 +225,7 @@ def result_screen(stdscr, title: str, code: int, output: str) -> None:
 
 
 def log_screen(stdscr) -> None:
+    stdscr.timeout(-1)
     options = [
         (str(STATE_DIR / "qemu-adb/scenario-lab.out"), "Simulator-/Lab-Log"),
         ("journal:foxair-fake-adb.service", "Fake-ADB-Dienst"),
@@ -248,13 +264,14 @@ def draw(stdscr, state: dict, message: str) -> None:
     color = {"ok": 2, "warn": 3, "error": 1, "active": 4}[state["severity"]]
     add(stdscr, 0, 0, "FoxAir OTA Simulator", curses.A_BOLD)
     add(stdscr, 0, 27, state["verdict"], curses.color_pair(color) | curses.A_BOLD)
+    add(stdscr, 0, 55, f"Auto 2s | {state['refreshed']}")
     add(stdscr, 2, 0, f"Szenario:       {scenario.get('scenario', '-')}")
     add(stdscr, 3, 0, f"Board-Version:  {scenario.get('board_version', '-')}")
     add(stdscr, 4, 0, f"PHNIX-PID(s):   {', '.join(map(str, state['pids'])) or '-'}")
     add(stdscr, 5, 0, f"Szenario-PID:   {state['runner_pid'] or '-'}")
     add(stdscr, 6, 0, f"ADB / Debug:    {'online' if state['adb_online'] else 'offline'} / {state['modem_log']}")
     add(stdscr, 7, 0, f"Dienste:        ADB={'OK' if state['fake_adb'] else 'FEHLER'}  Debug={'OK' if state['debug_service'] else 'FEHLER'}")
-    add(stdscr, 8, 0, f"HTTP-Server:    {state['httpd_count']}", curses.color_pair(3) if state["httpd_count"] > 1 else 0)
+    add(stdscr, 8, 0, f"HTTP-Server:    {state['httpd_count']}   QEMU-Exit: {state['scenario_exit']}   Start: {state['runner_started']}", curses.color_pair(3) if state["httpd_count"] > 1 else 0)
     run_label = "Aktiver OTA-Lauf" if ota.get("_active") else "Letzter OTA-Lauf (inaktiv)"
     add(stdscr, 10, 0, run_label, curses.A_BOLD)
     add(stdscr, 11, 0, f"ID:             {ota.get('run_id', '-')}")
@@ -262,8 +279,10 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 13, 0, f"Fortschritt:    {ota.get('progress', 0)} %   Offset {ota.get('offset', 0)} / {ota.get('length', 0)}")
     add(stdscr, 14, 0, f"C350/C357/C5A8: {ota.get('c350_sent', False)} / {ota.get('c357_sent', False)} / {ota.get('c5a8_sent', False)}")
     add(stdscr, 15, 0, f"Recovery:       {ota.get('recovery', '-')}   Abbruch erlaubt: {ota.get('abort_allowed', '-')}")
+    add(stdscr, 16, 0, f"Grund:          {ota.get('reason', '-')}")
+    add(stdscr, 17, 0, f"Detail:         {ota.get('detail', '-')}")
     if state["error"]:
-        add(stdscr, 17, 0, state["error"], curses.color_pair(1))
+        add(stdscr, 18, 0, state["error"], curses.color_pair(1))
     add(stdscr, 19, 0, "[R] Status  [S] Szenario  [B] Board-Version  [X] Reset  [F] Reparieren", curses.A_BOLD)
     add(stdscr, 20, 0, "[C] Dienst-Crash  [M] Modem-Log  [A] ADB an/aus  [L] Logs  [Q] Ende", curses.A_BOLD)
     if message:
@@ -287,7 +306,10 @@ def main(stdscr) -> None:
             state = {"base": {}, "ota": {}, "error": str(exc), "verdict": "STATUSFEHLER", "severity": "error", "phase": "-", "pids": [], "runner_pid": None, "adb_online": False, "fake_adb": False, "debug_service": False, "modem_log": "?", "httpd_count": 0}
         draw(stdscr, state, message)
         message = ""
+        stdscr.timeout(2000)
         key = stdscr.getch()
+        if key == -1:
+            continue
         if key in (ord("q"), ord("Q")):
             return
         if key in (ord("r"), ord("R")):
