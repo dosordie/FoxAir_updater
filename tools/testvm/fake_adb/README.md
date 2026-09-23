@@ -192,6 +192,23 @@ sudo foxair-fake-adbctl debug-logs
 sudo foxair-fake-adbctl modem-log status
 ```
 
+## Terminaloberfläche
+
+Die wichtigsten Zustände und Simulatoraktionen sind auch über eine kleine,
+rein textbasierte Oberfläche erreichbar:
+
+```sh
+sudo foxair-fake-adbctl ui
+```
+
+Sie zeigt PHNIX-/Szenario-PIDs, Board-Version, ADB und Debugstream, den letzten
+OTA-Status einschließlich Phase, Fortschritt, C350/C357/C5A8 und Recovery sowie
+übrig gebliebene Firmware-Webserver. Über einzelne Tasten lassen sich Szenario,
+Board-Version, Reset, absichtlicher Dienstabsturz, ADB, Modem-Log und Logansicht
+bedienen. Zustandsverändernde Aktionen verlangen eine Bestätigung. Die TUI
+enthält keine eigene Simulatorlogik, sondern verwendet dieselben
+`foxair-fake-adbctl`-Befehle wie die Kommandozeile.
+
 Zum manuellen Prüfen der echten `phnixIot4G`-Debugausgabe eines eingehenden
 Cloud-OTA-Angebots zuerst den TCP-Debugstream auf Port `5039` verbinden und
 anschließend genau einmal senden:

@@ -60,6 +60,7 @@ Board und OTA-Szenarien:
   same-version-scenario NAME     vorhandene C350-Status0/Status1-Fehlerbilder verwenden
 
 Diagnose und simulierte Eingaben:
+  ui                             interaktive Terminaloberfläche für Status und Szenarien
   modem-log on|off|status        TCP 5039 persistent aktivieren/stummschalten
                                  Port bleibt bei off erreichbar; keine spätere Datenwiedergabe
   mqtt-send status-request       während eines OTA einen FC03-Statusread per MQTT senden
@@ -110,6 +111,10 @@ EOF
 cmd=${1:-status}
 shift || true
 case "$cmd" in
+    ui)
+        need_root ui
+        exec python3 "$INSTALL_DIR/foxair_fake_adb_tui.py"
+        ;;
     status)
         need_root status
         systemctl --no-pager --full status "$SERVICE" || true

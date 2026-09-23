@@ -126,6 +126,7 @@ fetch tools/testvm/fake_adb/qemu_lab_adapter.py "$INSTALL_DIR/qemu_lab_adapter.p
 fetch tools/testvm/fake_adb/qemu_work_lab_backend.py "$INSTALL_DIR/qemu_work_lab_backend.py"
 fetch tools/testvm/fake_adb/qemu_permissive_backend.py "$INSTALL_DIR/qemu_permissive_backend.py"
 fetch tools/testvm/fake_adb/qemu_gdb_wrapper.py "$INSTALL_DIR/qemu_gdb_wrapper.py"
+fetch tools/testvm/fake_adb/foxair_fake_adb_tui.py "$INSTALL_DIR/foxair_fake_adb_tui.py"
 fetch tools/testvm/fake_adb/gdb_warm_detach.gdb "$INSTALL_DIR/gdb_warm_detach.gdb"
 fetch tools/testvm/fake_adb/gdb_original_ota_1fe40.gdb "$INSTALL_DIR/gdb_original_ota_1fe40.gdb"
 fetch tools/testvm/work_lab/run_scenario_lab.sh "$LAB_ROOT/tools/run_scenario_lab.sh"
@@ -163,6 +164,7 @@ python3 -m py_compile \
     "$INSTALL_DIR/qemu_work_lab_backend.py" \
     "$INSTALL_DIR/qemu_permissive_backend.py" \
     "$INSTALL_DIR/qemu_gdb_wrapper.py" \
+    "$INSTALL_DIR/foxair_fake_adb_tui.py" \
     "$INSTALL_DIR/phnix_ota_simulator.py" \
     "$LAB_ROOT/tools/mqtt_ready_bridge.py"
 sh -n "$LAB_ROOT/tools/run_scenario_lab.sh"
@@ -174,6 +176,7 @@ chmod 0755 \
     "$INSTALL_DIR/qemu_work_lab_backend.py" \
     "$INSTALL_DIR/qemu_permissive_backend.py" \
     "$INSTALL_DIR/qemu_gdb_wrapper.py" \
+    "$INSTALL_DIR/foxair_fake_adb_tui.py" \
     "$INSTALL_DIR/phnix_ota_simulator.py" \
     "$INSTALL_DIR/foxair-fake-adbctl"
 chmod 0755 "$LAB_ROOT/tools/run_scenario_lab.sh" "$LAB_ROOT/tools/rs485_fault_emulator.py" \
