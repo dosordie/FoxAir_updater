@@ -616,15 +616,16 @@ class MainWindow(QMainWindow):
         env.update(self._adb_env())
         return env
 
-    def _run(self, op, command, cwd=None):
+    def _run(self, op, command, cwd=None, *, emit_lines=True, log_command=True):
         if self.busy:
             return
         self.busy = True
         self._buttons()
-        adb_env = self._adb_env()
-        if adb_env:
-            self._log("[Remote ADB] ADB_SERVER_SOCKET=" + adb_env["ADB_SERVER_SOCKET"])
-        self._log("$ " + subprocess.list2cmdline([str(item) for item in command]))
+        if log_command:
+            adb_env = self._adb_env()
+            if adb_env:
+                self._log("[Remote ADB] ADB_SERVER_SOCKET=" + adb_env["ADB_SERVER_SOCKET"])
+            self._log("$ " + subprocess.list2cmdline([str(item) for item in command]))
 
         def work():
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
@@ -644,7 +645,8 @@ class MainWindow(QMainWindow):
                 for line in process.stdout or []:
                     line = line.rstrip("\r\n")
                     output.append(line)
-                    self.signals.line.emit(line)
+                    if emit_lines:
+                        self.signals.line.emit(line)
                 self.signals.done.emit(op, process.wait(), "\n".join(output))
             except Exception as error:
                 self.signals.line.emit("[Prozessfehler] " + str(error))
