@@ -344,6 +344,11 @@ class MainWindow(user_gui.MainWindow):
         if not run_id or run_id == self._runner_log_run_id:
             return
         self._runner_log_run_id = run_id
+        # A newly attached run must start its own monotonic display history.
+        # Otherwise a previous run's high-water mark could pin the bar too high.
+        self._display_progress_high_watermark = 0.0
+        self._last_progress_render_at = 0.0
+        self._progress_render_pending = False
         self._log(f"[DTU Runner] Lauf-ID: {run_id}")
 
     # ------------------------------------------------------------------
