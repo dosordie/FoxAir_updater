@@ -851,6 +851,13 @@ class MainWindow(QMainWindow):
         elif op == "status":
             try:
                 data = json.loads(output)
+                if data.get("event") == "error":
+                    message = escape(str(data.get("message") or "Statusprüfung fehlgeschlagen."))
+                    self.status_text.setText(
+                        '<span style="color:#b42318;"><b>Statusprüfung fehlgeschlagen</b></span><br>'
+                        + message
+                    )
+                    return
                 checks = data.get("checks", {})
                 lines = [
                     (
