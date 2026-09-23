@@ -1049,6 +1049,26 @@ def reset_ota_runtime() -> None:
 
 def reset_autonomous_runner_state() -> None:
     """Forget all autonomous OTA runs only for an explicit VM lab reset."""
+    # A failed supervisor can leave its firmware httpd orphaned after its PID
+    # and lock vanished.  Limit cleanup strictly to httpd instances serving an
+    # autonomous lab-run payload; never touch unrelated web servers.
+    stale_httpd: list[int] = []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            cmdline = (proc / "cmdline").read_bytes().replace(b"\0", b" ")
+        except OSError:
+            continue
+        if (b"busybox httpd" in cmdline
+                and b"/data/foxair_ota_runner/runs/" in cmdline
+                and b"/payload" in cmdline):
+            stale_httpd.append(int(proc.name))
+    for pid in stale_httpd:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     runner_root = root_path("/data/foxair_ota_runner")
     if runner_root.is_dir():
         shutil.rmtree(runner_root)

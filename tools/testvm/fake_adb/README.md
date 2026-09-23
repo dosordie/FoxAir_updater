@@ -205,7 +205,10 @@ Sie zeigt PHNIX-/Szenario-PIDs, Board-Version, ADB und Debugstream, den letzten
 OTA-Status einschließlich Phase, Fortschritt, C350/C357/C5A8 und Recovery sowie
 übrig gebliebene Firmware-Webserver. Über einzelne Tasten lassen sich Szenario,
 Board-Version, Reset, absichtlicher Dienstabsturz, ADB, Modem-Log und Logansicht
-bedienen. Zustandsverändernde Aktionen verlangen eine Bestätigung. Die TUI
+bedienen. `F` repariert einen verwaisten VM-Lauf, entfernt ausschließlich dessen
+alte Firmware-Webserver und startet das aktuell gewählte Szenario neu. Alte,
+nicht mehr aktive OTA-Statusdateien werden als inaktiv angezeigt und lösen
+keinen falschen Recovery-Alarm aus. Zustandsverändernde Aktionen verlangen eine Bestätigung. Die TUI
 enthält keine eigene Simulatorlogik, sondern verwendet dieselben
 `foxair-fake-adbctl`-Befehle wie die Kommandozeile.
 

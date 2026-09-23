@@ -61,6 +61,18 @@ def newest_run_status() -> dict:
     try:
         result = json.loads(newest.read_text(encoding="utf-8"))
         result["_path"] = str(newest)
+        lock = runs.parent / "active.lock"
+        active = False
+        try:
+            pid = int((lock / "pid").read_text(encoding="ascii").strip())
+            run_id = (lock / "run_id").read_text(encoding="ascii").strip()
+            os.kill(pid, 0)
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+            active = (run_id == str(result.get("run_id", ""))
+                      and b"dtu_ota_supervisor" in cmdline)
+        except (OSError, ValueError):
+            pass
+        result["_active"] = active
         return result
     except (OSError, json.JSONDecodeError):
         return {"phase": "Statusdatei unlesbar", "_path": str(newest)}
@@ -99,10 +111,10 @@ def snapshot() -> dict:
     if error:
         verdict = "STATUSFEHLER"
         severity = "error"
-    elif ota and not terminal and recovery in {"required", "in-progress"}:
+    elif ota.get("_active") and not terminal and recovery in {"required", "in-progress"}:
         verdict = "RECOVERY NOETIG"
         severity = "error"
-    elif ota and not terminal and ota.get("state") in {"running", "prepared"}:
+    elif ota.get("_active") and not terminal and ota.get("state") in {"running", "prepared"}:
         verdict = "UPDATE LAEUFT"
         severity = "active"
     elif not pids or not runner_pid:
@@ -243,7 +255,8 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 6, 0, f"ADB / Debug:    {'online' if state['adb_online'] else 'offline'} / {state['modem_log']}")
     add(stdscr, 7, 0, f"Dienste:        ADB={'OK' if state['fake_adb'] else 'FEHLER'}  Debug={'OK' if state['debug_service'] else 'FEHLER'}")
     add(stdscr, 8, 0, f"HTTP-Server:    {state['httpd_count']}", curses.color_pair(3) if state["httpd_count"] > 1 else 0)
-    add(stdscr, 10, 0, "Letzter OTA-Lauf", curses.A_BOLD)
+    run_label = "Aktiver OTA-Lauf" if ota.get("_active") else "Letzter OTA-Lauf (inaktiv)"
+    add(stdscr, 10, 0, run_label, curses.A_BOLD)
     add(stdscr, 11, 0, f"ID:             {ota.get('run_id', '-')}")
     add(stdscr, 12, 0, f"Phase:          {state['phase']}")
     add(stdscr, 13, 0, f"Fortschritt:    {ota.get('progress', 0)} %   Offset {ota.get('offset', 0)} / {ota.get('length', 0)}")
@@ -251,7 +264,7 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 15, 0, f"Recovery:       {ota.get('recovery', '-')}   Abbruch erlaubt: {ota.get('abort_allowed', '-')}")
     if state["error"]:
         add(stdscr, 17, 0, state["error"], curses.color_pair(1))
-    add(stdscr, 19, 0, "[R] Status  [S] Szenario  [B] Board-Version  [X] Reset", curses.A_BOLD)
+    add(stdscr, 19, 0, "[R] Status  [S] Szenario  [B] Board-Version  [X] Reset  [F] Reparieren", curses.A_BOLD)
     add(stdscr, 20, 0, "[C] Dienst-Crash  [M] Modem-Log  [A] ADB an/aus  [L] Logs  [Q] Ende", curses.A_BOLD)
     if message:
         add(stdscr, 22, 0, message, curses.color_pair(4))
@@ -294,6 +307,11 @@ def main(stdscr) -> None:
             if value and confirm(stdscr, f"Laufzustand loeschen und '{value}' neu starten?"):
                 code, output = run("reset", value, timeout=120)
                 result_screen(stdscr, "Reset", code, output)
+        elif key in (ord("f"), ord("F")):
+            current = str((state["base"].get("scenario") or {}).get("scenario", "success"))
+            if confirm(stdscr, f"Altzustand bereinigen und '{current}' sauber neu starten?"):
+                code, output = run("reset", current, timeout=120)
+                result_screen(stdscr, "Simulator-Reparatur", code, output)
         elif key in (ord("c"), ord("C")):
             if confirm(stdscr, "Simulierten PHNIX-Dienst jetzt absichtlich crashen?"):
                 code, output = run("service-crash")
