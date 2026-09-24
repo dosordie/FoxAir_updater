@@ -11,7 +11,7 @@ Die Einrichtung der USB-/ADB-Verbindung zum LTE-Modem ist identisch mit dem Verb
 > [!CAUTION]
 > Ein Firmwareupdate verändert die Firmware des Mainboards und erfolgt **auf eigenes Risiko**. Während des laufenden Updates Wärmepumpe und LTE-Modem **nicht stromlos machen**.
 >
-> Real erfolgreich bestätigt sind inzwischen sowohl ein vollständiger Versionswechsel **V3.3 → V3.4** als auch ein direktes Update von **V1.2 (Auslieferungszustand) → V3.4**. **V3.5 (`82400644 / 0035`) ist als nächste Revision derselben Firmwarelinie bestätigt, wurde mit dem FoxAir Updater aber noch nicht live als kompletter Updatevorgang validiert.**
+> Real erfolgreich bestätigt sind inzwischen sowohl ein vollständiger Versionswechsel **V3.3 → V3.4** als auch ein direktes Update von **V1.2 (Auslieferungszustand) → V3.4**, **V3.5 (`82400644 / 0035`) 
 >
 > Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** verwenden dieselbe Mainboard-Firmwarelinie. Die V3.5 ist deshalb für entsprechende BL- und GL-Geräte dieser `82400644`-Familie untereinander kompatibel. Bei unbekannten Modellen sollte vor dem Update trotzdem immer der tatsächlich ausgelesene Mainboard-Softwarecode geprüft werden.
 >
