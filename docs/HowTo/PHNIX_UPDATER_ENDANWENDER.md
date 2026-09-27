@@ -1,9 +1,9 @@
 # PHNIX-Firmware-Updater – Anleitung für Anwender
 
-Stand: 22. September 2026
+Stand: 27. September 2026
 
 > [!CAUTION]
-> Vollständige Mainboard-Firmwarewechsel **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4** wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt. Die Firmware **V3.5** ist als `82400644 / 0035` und damit als nächste Revision derselben untersuchten Firmwarelinie bestätigt; ein kompletter Updatevorgang **auf oder von V3.5** wurde mit diesem Updater jedoch noch nicht live validiert.
+> Mehrere vollständige Mainboard-Firmwarewechsel wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt, darunter **V3.3 → V3.4**, **V1.2 → V3.4** sowie reale Updates auf **V3.5**. Der jeweils aktuelle Teststand steht in der Projekt-`README.md`.
 >
 > Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. Für BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** handelt es sich um dieselbe Mainboard-Firmwarelinie. Die V3.5 ist damit zwischen entsprechenden BL- und GL-Geräten dieser Firmwarefamilie kompatibel. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind nicht in gleicher Tiefe live validiert. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
 
@@ -15,9 +15,9 @@ Die USB-/ADB-Einrichtung und das Firmware-Backup sind hier beschrieben:
 
 **[`firmware_backup_lte.md`](firmware_backup_lte.md)**
 
-## Windows v0.4.0
+## Windows: autonomer DTU-OTA-Runner
 
-Seit v0.4.0 verwendet die Windows-Anwendung den **autonomen DTU-OTA-Runner**. Windows führt Vorprüfung und Start aus und überwacht den Vorgang. Nach erfolgreichem Start läuft das Mainboard-OTA jedoch auf dem LTE-Modem selbstständig weiter.
+Die aktuelle Windows-Anwendung verwendet den **autonomen DTU-OTA-Runner**. Windows führt Vorprüfung und Start aus und überwacht den Vorgang. Nach erfolgreichem Start läuft das Mainboard-OTA jedoch auf dem LTE-Modem selbstständig weiter.
 
 Das bedeutet insbesondere:
 
@@ -147,13 +147,19 @@ Danach stehen unter anderem zur Verfügung:
 ```text
 ./foxair-updater status
 ./foxair-updater check MANIFEST
-./foxair-updater update MANIFEST --confirm
+./foxair-updater update MANIFEST --full --confirm
+./foxair-updater same-version MANIFEST --confirm
 ./foxair-updater restore
+./foxair-updater download
 ./foxair-updater manifest FIRMWARE ...
 ./foxair-updater version
 ```
 
-Der Windows-v0.4-Produktpfad mit autonomem DTU-Runner und der historische Linux-/Controllerpfad teilen weiterhin gemeinsame Manifest-, Transport- und PHNIX-Hilfslogik, sind aber nicht als identische Host-Orchestrierung zu verstehen.
+Bei einem echten Update ist `--full` verpflichtend.
+
+Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter [`../../updater/linux/README.md`](../../updater/linux/README.md). Die Linux-Kurzangaben auf dieser Seite werden bewusst knapp gehalten, damit Installationsweg und Befehle nicht an mehreren Stellen vollständig parallel gepflegt werden.
+
+Der Windows-Produktpfad mit autonomem DTU-Runner und der Linux-/Controllerpfad teilen gemeinsame Manifest-, Transport- und PHNIX-Hilfslogik, sind aber nicht als identische Host-Orchestrierung zu verstehen.
 
 ## Real bestätigte Punkte
 
@@ -165,7 +171,7 @@ Real getestet bzw. bestätigt sind unter anderem:
 - V3.3 → V3.3 bis zur sicheren Gleichversionsablehnung ohne C5A8;
 - vollständiger V3.3 → V3.4-Transfer und terminaler Abschluss;
 - vollständiger V1.2 → V3.4-Versionswechsel;
-- V3.5 als `82400644 / 0035` bestätigt; Quelle ist eine **BlueLine (BL)**, dieselbe Firmwarelinie wird bei entsprechenden **GreenLine-/GL-Geräten** mit `82400644` verwendet; ein real validierter kompletter V3.5-Updatevorgang mit dem Updater steht noch aus;
+- V3.5 als `82400644 / 0035` bestätigt; Quelle ist eine **BlueLine (BL)**, dieselbe Firmwarelinie wird bei entsprechenden **GreenLine-/GL-Geräten** mit `82400644` verwendet; vollständige Updates auf V3.5 wurden inzwischen real erfolgreich durchgeführt;
 - C36E Status 5 / Board-Step 12 als terminale Erfolgsgrenze;
 - Rückkehr in den normalen LTE-/Cloudzustand;
 - autonomer Runner auf realer Hardware einschließlich kontrolliertem Dienstneustart;
