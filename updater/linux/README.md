@@ -1,13 +1,13 @@
 # Linux / Raspberry Pi
 
-Stand: 29. August 2026
+Stand: 27. September 2026
 
-Der Linux-Installer richtet den FoxAir Updater auf Raspberry Pi OS sowie anderen Debian-/Ubuntu-basierten Systemen ein. Der Linux-Weg verwendet denselben gemeinsamen OTA-Controller wie die Windows-Version.
+Der Linux-Installer richtet den FoxAir Updater auf Raspberry Pi OS sowie anderen Debian-/Ubuntu-basierten Systemen ein. Der Linux-Weg verwendet gemeinsame Manifest-, ADB- und PHNIX-Hilfslogik mit der Windows-Version, besitzt aber eine eigene CLI-/Host-Orchestrierung über `foxair-updater` und den gehärteten lokalen OTA-Controller.
 
 > [!IMPORTANT]
-> Der vollständige Mainboard-Firmwarewechsel **V3.3 → V3.4** wurde auf realer Hardware erfolgreich durchgeführt. Die neue Firmware wurde über C36E Status 5 / Board-Step 12 und anschließend C544-Version `0034` bestätigt.
+> Mehrere Firmwarestände und Hardwarekonfigurationen wurden inzwischen real mit dem FoxAir Updater getestet, darunter vollständige Firmwarewechsel bis V3.5. Der jeweils aktuelle Teststand ist in der Projekt-`README.md` zusammengefasst.
 >
-> Andere Firmwarestände und Hardwarevarianten sind weiterhin nicht in gleicher Tiefe live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
+> Nicht jede denkbare Firmware-/Mainboardkombination und nicht jeder Fehlerfall ist in gleicher Tiefe live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
 
 ## Schnellinstallation
 
@@ -24,11 +24,12 @@ Der Installer verwendet `sudo` nur dort, wo Systemrechte benötigt werden. Stand
 
 ```text
 ~/FoxAir_updater/
-├── firmware/          # lokale Firmware + Manifest
-├── foxair-updater     # Endanwender-Launcher
+├── firmware/              # lokale Firmware + Manifest
+├── downloaded_firmware/   # per "download" gesicherte LTE-/Firmwaredateien
+├── foxair-updater         # Endanwender-Launcher
 ├── docs/HowTo/
-├── tools/phnix_ota/   # gemeinsame OTA-Werkzeuge
-└── updater/           # gemeinsame Module + Linux-Installer
+├── tools/phnix_ota/       # gemeinsame OTA-Werkzeuge
+└── updater/               # gemeinsame Module + Linux-/DTU-OTA-Komponenten
 ```
 
 Der Ordner `firmware/` wird lokal durch den Installer erstellt und ist über `.gitignore` von Git ausgeschlossen. Er wird bei einem normalen Update des Repository-Checkouts weder hochgeladen noch gelöscht.
@@ -39,6 +40,7 @@ Der Installer verwendet `git sparse-checkout`. Beim Endanwender werden nur die b
 
 ```text
 updater/common
+updater/dtu_ota
 updater/linux
 tools/phnix_ota
 docs/HowTo
@@ -54,7 +56,7 @@ Dateien im Projekt-Hauptverzeichnis wie `foxair-updater`, `.gitignore` und `READ
 - installiert einen schlanken Sparse-Checkout nach `~/FoxAir_updater`;
 - aktualisiert eine vorhandene Installation per `git pull --ff-only`;
 - überschreibt keine lokal geänderten Projektdateien;
-- erstellt `~/FoxAir_updater/firmware`;
+- erstellt `~/FoxAir_updater/firmware` und `~/FoxAir_updater/downloaded_firmware`;
 - setzt benötigte Dateirechte;
 - installiert die udev-Regel für das PHNIX-LTE-Modem `1e0e:9001`;
 - lädt die udev-Regeln neu und startet ADB neu;
@@ -105,8 +107,18 @@ Dry-Run:
 Echtes Update:
 
 ```sh
-./foxair-updater update FW3.4.json --confirm
+./foxair-updater update FW3.4.json --full --confirm
 ```
+
+`--full` ist bei einem echten Update verpflichtend. Die Firmware wird dabei unmittelbar vor ADB-/Busaktivität erneut vollständig analysiert; Firmwareidentität, Dateigröße und Hashes müssen mit dem Manifest übereinstimmen.
+
+Firmware-/Diagnosedateien vom LTE-Modem read-only sichern:
+
+```sh
+./foxair-updater download
+```
+
+Die Dateien landen unter `~/FoxAir_updater/downloaded_firmware/<Zeitstempel>/`.
 
 Restore ist ausschließlich für einen Zustand **vor begonnenem C5A8-Firmwaretransfer** vorgesehen:
 
@@ -120,7 +132,7 @@ Installierten Git-Stand anzeigen:
 ./foxair-updater version
 ```
 
-Die eigentliche Sicherheitslogik bleibt im gemeinsamen `phnix_local_ota_controller.py`; der Launcher dupliziert keine OTA-Logik.
+Die eigentliche Sicherheitslogik bleibt im `phnix_local_ota_controller_hardened.py`; der Launcher dupliziert keine OTA-Logik.
 
 ## MQTT beim normalen Vollupdate
 
@@ -218,7 +230,10 @@ Ist beim Installieren noch kein LTE-Modem angeschlossen, wird dies nur als Warnu
 
 ## Weiterführende Dokumentation
 
+Diese Datei ist die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung**. Die Linux-Kurzabschnitte in der Projekt-`README.md` und in der Endanwender-Anleitung verweisen bewusst hierher, damit Befehle und Installationsweg nicht mehrfach vollständig gepflegt werden müssen.
+
+- [`../../README.md`](../../README.md)
 - [`../../docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](../../docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)
+- [`../../docs/HowTo/FIRMWARE_MANIFEST.md`](../../docs/HowTo/FIRMWARE_MANIFEST.md)
 - [`../../docs/HowTo/firmware_backup_lte.md`](../../docs/HowTo/firmware_backup_lte.md)
-- [`../../docs/RELEASE_NOTES_WINDOWS_v0.3.9.md`](../../docs/RELEASE_NOTES_WINDOWS_v0.3.9.md)
 - Live-Bericht im vollständigen GitHub-Repository: `docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`
