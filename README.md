@@ -209,11 +209,17 @@ Danach stehen unter anderem folgende Befehle zur Verfügung:
 ```text
 ./foxair-updater status
 ./foxair-updater check MANIFEST
-./foxair-updater update MANIFEST --confirm
+./foxair-updater update MANIFEST --full --confirm
+./foxair-updater same-version MANIFEST --confirm
 ./foxair-updater restore
+./foxair-updater download
 ./foxair-updater manifest FIRMWARE ...
 ./foxair-updater version
 ```
+
+Bei einem echten Update ist `--full` verpflichtend. Dabei wird die Firmware unmittelbar vor ADB-/Busaktivität vollständig analysiert und gegen das Manifest geprüft.
+
+Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter **[updater/linux/README.md](updater/linux/README.md)**. Die Kurzangaben hier sollen nur den Einstieg zeigen und nicht parallel eine zweite vollständige Linux-Dokumentation pflegen.
 
 Für Endanwender unter Windows ist die grafische Anwendung normalerweise deutlich einfacher.
 
