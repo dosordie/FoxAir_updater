@@ -24,6 +24,10 @@ info() { printf '[..] %s\n' "$*"; }
 warn() { printf '[WARNUNG] %s\n' "$*" >&2; }
 die()  { printf '[FEHLER] %s\n' "$*" >&2; exit 1; }
 
+if (( $# > 0 )); then
+    die "Der Installer benötigt keine Optionen. Remotezugriff wird nur installiert und bleibt standardmäßig deaktiviert. Danach bei Bedarf './foxair-updater remote start' oder 'remote enable' verwenden."
+fi
+
 configure_sparse_checkout() {
     if ! git -C "$INSTALL_DIR" sparse-checkout init --cone; then
         die "git sparse-checkout konnte nicht initialisiert werden ($(git --version))."
