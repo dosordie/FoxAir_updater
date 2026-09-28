@@ -5,6 +5,11 @@ REPO_URL="https://github.com/dosordie/FoxAir_updater.git"
 INSTALL_DIR="${FOX_AIR_INSTALL_DIR:-$HOME/FoxAir_updater}"
 UDEV_RULE_FILE="/etc/udev/rules.d/51-foxair-android.rules"
 UDEV_RULE='SUBSYSTEM=="usb", ATTR{idVendor}=="1e0e", ATTR{idProduct}=="9001", MODE="0666"'
+REMOTE_ADB_SERVICE_FILE="/etc/systemd/system/foxair-adb-remote.service"
+REMOTE_DEBUG_SERVICE_FILE="/etc/systemd/system/foxair-debug-stream.service"
+REMOTE_ADB_PORT=5038
+REMOTE_DEBUG_PORT=5039
+REMOTE_ACCESS_MODE="${FOX_AIR_REMOTE_ACCESS:-ask}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=10
 SPARSE_PATHS=(
@@ -19,6 +24,33 @@ ok()   { printf '[OK] %s\n' "$*"; }
 info() { printf '[..] %s\n' "$*"; }
 warn() { printf '[WARNUNG] %s\n' "$*" >&2; }
 die()  { printf '[FEHLER] %s\n' "$*" >&2; exit 1; }
+
+installer_usage() {
+    cat <<'TXT'
+FoxAir Linux Installer
+
+Verwendung:
+  bash install.sh
+  bash install.sh --remote-access
+  bash install.sh --no-remote-access
+
+--remote-access     ADB TCP 5038 und PHNIX-Debug TCP 5039 installieren,
+                    beim Boot aktivieren und sofort starten.
+--no-remote-access  Dienste installieren, aber deaktiviert/gestoppt lassen.
+
+Ohne Option wird bei einer interaktiven Erstinstallation gefragt. Ein bereits
+aktivierter Remotezugriff bleibt bei späteren Updates aktiviert.
+TXT
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --remote-access) REMOTE_ACCESS_MODE="enable" ;;
+        --no-remote-access) REMOTE_ACCESS_MODE="disable" ;;
+        -h|--help) installer_usage; exit 0 ;;
+        *) die "Unbekannte Installer-Option: $arg" ;;
+    esac
+done
 
 configure_sparse_checkout() {
     if ! git -C "$INSTALL_DIR" sparse-checkout init --cone; then
@@ -159,6 +191,8 @@ chmod 755 \
     "$INSTALL_DIR/tools/phnix_ota/create_firmware_manifest.py" \
     "$INSTALL_DIR/updater/dtu_ota/payload/phnix_ota_runtime_hook" \
     "$INSTALL_DIR/updater/linux/autonomous_update.py" \
+    "$INSTALL_DIR/updater/linux/remote_debug_stream.py" \
+    "$INSTALL_DIR/updater/linux/remote_access.sh" \
     "$INSTALL_DIR/updater/linux/install.sh"
 ok "Dateirechte gesetzt"
 
@@ -183,6 +217,86 @@ else
     warn "udevadm wurde nicht gefunden; die USB-Regel wird spätestens nach erneutem Anstecken/Neustart wirksam."
 fi
 
+remote_was_enabled=0
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-enabled --quiet foxair-adb-remote.service 2>/dev/null \
+       || systemctl is-enabled --quiet foxair-debug-stream.service 2>/dev/null; then
+        remote_was_enabled=1
+    fi
+
+    adb_path="$(command -v adb)"
+    python_path="$(command -v python3)"
+    install_user="$(id -un)"
+    install_home="$HOME"
+
+    info "Installiere integrierten Remotezugriff (ADB 5038 / PHNIX-Debug 5039)"
+    sudo tee "$REMOTE_ADB_SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=FoxAir remote ADB server on TCP $REMOTE_ADB_PORT
+After=network.target
+
+[Service]
+Type=simple
+User=$install_user
+Environment=HOME=$install_home
+ExecStartPre=-/usr/bin/env ADB_SERVER_SOCKET=tcp:127.0.0.1:$REMOTE_ADB_PORT $adb_path kill-server
+ExecStartPre=-$adb_path kill-server
+ExecStart=$adb_path -a -P $REMOTE_ADB_PORT nodaemon server
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo tee "$REMOTE_DEBUG_SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=FoxAir read-only PHNIX debug stream on TCP $REMOTE_DEBUG_PORT
+After=network.target foxair-adb-remote.service
+
+[Service]
+Type=simple
+User=$install_user
+SupplementaryGroups=dialout
+ExecStart=$python_path $INSTALL_DIR/updater/linux/remote_debug_stream.py --bind 0.0.0.0 --port $REMOTE_DEBUG_PORT
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo chmod 644 "$REMOTE_ADB_SERVICE_FILE" "$REMOTE_DEBUG_SERVICE_FILE"
+    sudo systemctl daemon-reload
+    ok "Remote-Dienste installiert"
+
+    if [[ "$REMOTE_ACCESS_MODE" == "ask" && "$remote_was_enabled" -eq 1 ]]; then
+        REMOTE_ACCESS_MODE="enable"
+    elif [[ "$REMOTE_ACCESS_MODE" == "ask" && -t 0 ]]; then
+        printf 'Remotezugriff für Windows aktivieren (ADB :5038 + PHNIX-Debug :5039)? [j/N] '
+        read -r remote_answer
+        case "${remote_answer,,}" in
+            j|ja|y|yes) REMOTE_ACCESS_MODE="enable" ;;
+            *) REMOTE_ACCESS_MODE="disable" ;;
+        esac
+    elif [[ "$REMOTE_ACCESS_MODE" == "ask" ]]; then
+        REMOTE_ACCESS_MODE="disable"
+    fi
+
+    if [[ "$REMOTE_ACCESS_MODE" == "enable" ]]; then
+        sudo systemctl enable foxair-adb-remote.service foxair-debug-stream.service >/dev/null
+        sudo systemctl restart foxair-adb-remote.service foxair-debug-stream.service
+        export ADB_SERVER_SOCKET="tcp:127.0.0.1:$REMOTE_ADB_PORT"
+        ok "Remotezugriff aktiv: ADB TCP $REMOTE_ADB_PORT, PHNIX-Debug TCP $REMOTE_DEBUG_PORT"
+        warn "Remote-ADB ist für ein vertrauenswürdiges LAN gedacht. TCP $REMOTE_ADB_PORT/$REMOTE_DEBUG_PORT nicht ins Internet weiterleiten."
+    else
+        sudo systemctl disable --now foxair-adb-remote.service foxair-debug-stream.service >/dev/null 2>&1 || true
+        ok "Remotezugriff installiert, aber nicht aktiviert"
+        info "Später aktivieren mit: $INSTALL_DIR/foxair-updater remote enable"
+    fi
+else
+    warn "systemd wurde nicht gefunden; Remote-ADB/Debug-Dienste wurden nicht installiert."
+fi
+
 info "Prüfe FoxAir-Updater-Dateien"
 (
     cd "$INSTALL_DIR"
@@ -190,14 +304,21 @@ info "Prüfe FoxAir-Updater-Dateien"
     python3 updater/dtu_ota/cli.py --help >/dev/null
     python3 updater/dtu_ota/original_state.py --help >/dev/null
     python3 updater/linux/autonomous_update.py --help >/dev/null
+    python3 updater/linux/remote_debug_stream.py --help >/dev/null
+    bash -n updater/linux/remote_access.sh
     ./foxair-updater --help >/dev/null
 )
 ok "Updater und Launcher erfolgreich geprüft"
 
-info "Starte ADB neu"
-adb kill-server >/dev/null 2>&1 || true
-adb start-server >/dev/null
-ok "ADB-Server läuft"
+if [[ -n "${ADB_SERVER_SOCKET:-}" ]]; then
+    info "Verwende integrierten ADB-Server: $ADB_SERVER_SOCKET"
+    ok "Remote-ADB-Server läuft"
+else
+    info "Starte lokalen ADB-Server"
+    adb kill-server >/dev/null 2>&1 || true
+    adb start-server >/dev/null
+    ok "ADB-Server läuft"
+fi
 
 # Das PHNIX-LTE-Modem kann unmittelbar nach einem ADB-Neustart kurz als
 # "offline" erscheinen, obwohl USB und Berechtigungen bereits korrekt sind.
@@ -249,4 +370,9 @@ printf '\nAutonome Vorprüfung mit Manifest, z. B.:\n'
 printf '  ./foxair-updater check FW3.5.json\n'
 printf '\nAutonomes Firmwareupdate (interaktive Bestätigung):\n'
 printf '  ./foxair-updater update FW3.5.json\n'
+printf '\nRemotezugriff verwalten:\n'
+printf '  ./foxair-updater remote status\n'
+printf '  ./foxair-updater remote start|stop|enable|disable\n'
+printf '\nWindows Remote-Modus: ADB TCP 5038; PHNIX-Debugstream TCP 5039 (read-only).\n'
+printf 'Der Debug-Port wird automatisch über VID 1e0e / PID 9001 / Interface 04 erkannt.\n'
 printf '\nFirmwaredateien und OTA-Zustände werden vom Installer selbst nicht heruntergeladen, verändert oder gelöscht.\n'
