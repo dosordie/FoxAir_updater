@@ -29,7 +29,7 @@ Standardmäßig wird nach `~/FoxAir_updater` installiert. Der Installer verwende
 ├── updater/common/        # gemeinsamer Transport/Manifest-Core
 ├── updater/dtu_ota/       # autonomer DTU-Runner
 ├── updater/linux/         # Linux-Host-Orchestrierung
-├── tools/phnix_ota/       # Legacy-/Recovery-/Entwicklungswerkzeuge
+├── tools/phnix_ota/       # Manifest- und Runtime-Profil-Werkzeuge
 └── docs/HowTo/
 ```
 
@@ -191,7 +191,7 @@ Dieser Befehl ist read-only gegenüber den gelesenen PHNIX-Dateien.
 ./foxair-updater restore
 ```
 
-`restore` bleibt ausschließlich als Legacy-/Recovery-Werkzeug für einen eindeutig bestätigten Zustand **vor begonnenem C5A8-Firmwaretransfer** erhalten. Es gehört nicht zum normalen autonomen Updatepfad und darf nicht als generischer Abbruch eines laufenden autonomen OTA verwendet werden.
+`restore` verwendet den gemeinsamen Originalzustands-Core und denselben geprüften Runtime-Hook wie der autonome Runner. Der Aufruf ist ausschließlich für einen eindeutig sicheren Zustand **vor Übernahme des Firmwaretransfers durch den Originaldienst** vorgesehen. Ein aktiver autonomer Runner sowie `transfer_started` oder `original_service_owns` sperren den Restore fail-closed. Ein laufender autonomer OTA wird stattdessen ausschließlich über dessen Runner-/Abort-Pfad behandelt.
 
 ## Manifest erzeugen
 
