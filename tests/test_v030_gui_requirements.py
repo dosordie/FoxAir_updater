@@ -10,6 +10,7 @@ class V030GuiRequirementsTests(unittest.TestCase):
         cls.desktop = Path("updater/windows/foxair_updater_desktop.py").read_text(encoding="utf-8")
         cls.traffic = Path("updater/windows/foxair_updater_traffic.py").read_text(encoding="utf-8")
         cls.maintenance = Path("updater/windows/foxair_updater_maintenance.py").read_text(encoding="utf-8")
+        cls.runner = Path("updater/windows/foxair_updater_runner_gui.py").read_text(encoding="utf-8")
 
     def test_base_tab_order(self):
         methods = ["self._connection()", "self._backup()", "self._update()", "self._manifest()", "self._status()", "self._advanced()"]
@@ -27,8 +28,8 @@ class V030GuiRequirementsTests(unittest.TestCase):
         self.assertIn("setTabVisible(self.traffic_tab_index", self.traffic)
 
     def test_reattach_is_read_only_and_does_not_start_an_ota(self):
-        reattach = self.base.split("def _reattach_ota", 1)[1].split("def ", 1)[0]
-        self.assertIn('"status"', reattach)
+        reattach = self.runner.split("def _reattach_ota", 1)[1].split("def ", 1)[0]
+        self.assertIn('"current"', reattach)
         for forbidden in ("--execute", "PHNIX-FULL-UPDATE", "--manifest", "restore"):
             self.assertNotIn(forbidden, reattach)
 
@@ -55,14 +56,14 @@ class V030GuiRequirementsTests(unittest.TestCase):
     def test_mqtt_stays_connected_by_default_and_can_be_explicitly_isolated(self):
         update_ui = self.base.split("def _update(self):", 1)[1].split("def _status", 1)[0]
         advanced_ui = self.base.split("def _advanced(self):", 1)[1].split("def _load", 1)[0]
-        update_run = self.base.split("def _update_run(self):", 1)[1].split("def _restore", 1)[0]
+        prepare_runner = self.runner.split("def _prepare_runner", 1)[1].split("def _dry", 1)[0]
 
         self.assertNotIn("self.isolate_mqtt", update_ui)
         self.assertIn('value("isolate_mqtt", "false")', advanced_ui)
         self.assertIn('setValue("isolate_mqtt", checked)', advanced_ui)
-        self.assertEqual(update_run.count('update_args.append("--isolate-mqtt")'), 1)
-        self.assertIn("if self.isolate_mqtt.isChecked():", update_run)
-        default_args = update_run.split("if self.isolate_mqtt.isChecked():", 1)[0]
+        self.assertEqual(prepare_runner.count('args.append("--isolate-mqtt")'), 1)
+        self.assertIn("if self.isolate_mqtt.isChecked():", prepare_runner)
+        default_args = prepare_runner.split("if self.isolate_mqtt.isChecked():", 1)[0]
         self.assertNotIn('"--isolate-mqtt"', default_args)
 
     def test_runtime_restore_wait_has_neutral_cloud_status(self):
