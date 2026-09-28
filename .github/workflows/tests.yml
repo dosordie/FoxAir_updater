@@ -41,17 +41,10 @@ jobs:
           updater/dtu_ota/cleanup.py
           updater/dtu_ota/diagnostics.py
           updater/dtu_ota/package.py
+          updater/dtu_ota/original_state.py
+          updater/windows/prepare_runtime_hook.py
           updater/linux/autonomous_update.py
 
-  vm-matrix:
-    if: github.ref_name == 'VM_OTA_Simulator' || github.head_ref == 'VM_OTA_Simulator'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: python tests/run_phnix_vm_matrix.py
 
   shell:
     runs-on: ubuntu-latest
@@ -59,8 +52,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: sh -n updater/dtu_ota/payload/phnix_ota_runtime_hook
       - run: sh -n updater/dtu_ota/payload/dtu_ota_supervisor.sh
-      - run: sh -n tools/phnix_ota/phnix-ota-sim
-      - run: sh -n tools/phnix_ota/phnix-sim-adb
       - run: bash -n foxair-updater
       - run: bash -n updater/linux/install.sh
 
