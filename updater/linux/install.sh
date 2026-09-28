@@ -9,7 +9,6 @@ REMOTE_ADB_SERVICE_FILE="/etc/systemd/system/foxair-adb-remote.service"
 REMOTE_DEBUG_SERVICE_FILE="/etc/systemd/system/foxair-debug-stream.service"
 REMOTE_ADB_PORT=5038
 REMOTE_DEBUG_PORT=5039
-REMOTE_ACCESS_MODE="${FOX_AIR_REMOTE_ACCESS:-ask}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=10
 SPARSE_PATHS=(
@@ -25,32 +24,9 @@ info() { printf '[..] %s\n' "$*"; }
 warn() { printf '[WARNUNG] %s\n' "$*" >&2; }
 die()  { printf '[FEHLER] %s\n' "$*" >&2; exit 1; }
 
-installer_usage() {
-    cat <<'TXT'
-FoxAir Linux Installer
-
-Verwendung:
-  bash install.sh
-  bash install.sh --remote-access
-  bash install.sh --no-remote-access
-
---remote-access     ADB TCP 5038 und PHNIX-Debug TCP 5039 installieren,
-                    beim Boot aktivieren und sofort starten.
---no-remote-access  Dienste installieren, aber deaktiviert/gestoppt lassen.
-
-Ohne Option wird bei einer interaktiven Erstinstallation gefragt. Ein bereits
-aktivierter Remotezugriff bleibt bei späteren Updates aktiviert.
-TXT
-}
-
-for arg in "$@"; do
-    case "$arg" in
-        --remote-access) REMOTE_ACCESS_MODE="enable" ;;
-        --no-remote-access) REMOTE_ACCESS_MODE="disable" ;;
-        -h|--help) installer_usage; exit 0 ;;
-        *) die "Unbekannte Installer-Option: $arg" ;;
-    esac
-done
+if (( $# > 0 )); then
+    die "Der Installer benötigt keine Optionen. Remotezugriff wird nur installiert und bleibt standardmäßig deaktiviert. Danach bei Bedarf './foxair-updater remote start' oder 'remote enable' verwenden."
+fi
 
 configure_sparse_checkout() {
     if ! git -C "$INSTALL_DIR" sparse-checkout init --cone; then
@@ -218,10 +194,15 @@ else
 fi
 
 remote_was_enabled=0
+remote_was_active=0
 if command -v systemctl >/dev/null 2>&1; then
     if systemctl is-enabled --quiet foxair-adb-remote.service 2>/dev/null \
        || systemctl is-enabled --quiet foxair-debug-stream.service 2>/dev/null; then
         remote_was_enabled=1
+    fi
+    if systemctl is-active --quiet foxair-adb-remote.service 2>/dev/null \
+       || systemctl is-active --quiet foxair-debug-stream.service 2>/dev/null; then
+        remote_was_active=1
     fi
 
     adb_path="$(command -v adb)"
@@ -269,27 +250,19 @@ EOF
     sudo systemctl daemon-reload
     ok "Remote-Dienste installiert"
 
-    if [[ "$REMOTE_ACCESS_MODE" == "ask" && "$remote_was_enabled" -eq 1 ]]; then
-        REMOTE_ACCESS_MODE="enable"
-    elif [[ "$REMOTE_ACCESS_MODE" == "ask" && -t 0 ]]; then
-        printf 'Remotezugriff für Windows aktivieren (ADB :5038 + PHNIX-Debug :5039)? [j/N] '
-        read -r remote_answer
-        case "${remote_answer,,}" in
-            j|ja|y|yes) REMOTE_ACCESS_MODE="enable" ;;
-            *) REMOTE_ACCESS_MODE="disable" ;;
-        esac
-    elif [[ "$REMOTE_ACCESS_MODE" == "ask" ]]; then
-        REMOTE_ACCESS_MODE="disable"
-    fi
-
-    if [[ "$REMOTE_ACCESS_MODE" == "enable" ]]; then
+    if [[ "$remote_was_enabled" -eq 1 ]]; then
         "$INSTALL_DIR/updater/linux/remote_access.sh" enable
         export ADB_SERVER_SOCKET="tcp:127.0.0.1:$REMOTE_ADB_PORT"
-        warn "Remote-ADB ist für ein vertrauenswürdiges LAN gedacht. TCP $REMOTE_ADB_PORT/$REMOTE_DEBUG_PORT nicht ins Internet weiterleiten."
+        ok "Bereits aktivierter Remotezugriff bleibt aktiviert"
+    elif [[ "$remote_was_active" -eq 1 ]]; then
+        "$INSTALL_DIR/updater/linux/remote_access.sh" start
+        export ADB_SERVER_SOCKET="tcp:127.0.0.1:$REMOTE_ADB_PORT"
+        ok "Bereits manuell gestarteter Remotezugriff bleibt für diese Sitzung aktiv"
     else
         "$INSTALL_DIR/updater/linux/remote_access.sh" disable >/dev/null 2>&1 || true
-        ok "Remotezugriff installiert, aber nicht aktiviert"
-        info "Später aktivieren mit: $INSTALL_DIR/foxair-updater remote enable"
+        ok "Remotezugriff installiert und standardmäßig deaktiviert"
+        info "Bei Bedarf einmalig starten: $INSTALL_DIR/foxair-updater remote start"
+        info "Bei Bedarf dauerhaft aktivieren: $INSTALL_DIR/foxair-updater remote enable"
     fi
 else
     warn "systemd wurde nicht gefunden; Remote-ADB/Debug-Dienste wurden nicht installiert."

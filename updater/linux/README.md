@@ -16,12 +16,10 @@ wget -O install.sh https://raw.githubusercontent.com/dosordie/FoxAir_updater/mai
 bash install.sh
 ```
 
-Bei der interaktiven Erstinstallation kann zusätzlich der integrierte Windows-
-Remotezugriff aktiviert werden. Direkt erzwingen lässt er sich mit:
-
-```sh
-bash install.sh --remote-access
-```
+Der Installer richtet den optionalen Windows-Remotezugriff mit ein, lässt ihn
+bei einer frischen Installation aber bewusst **deaktiviert und gestoppt**.
+Es gibt keine zusätzliche Setup-Abfrage. Bei Bedarf kann er später einmalig
+oder dauerhaft gestartet werden.
 
 Dabei werden zwei systemd-Dienste eingerichtet:
 
@@ -251,8 +249,10 @@ Verwaltung:
 ./foxair-updater remote disable
 ```
 
-`enable` aktiviert beide Dienste auch für den nächsten Systemstart. `start`
-startet sie nur für die aktuelle Sitzung.
+Standardmäßig laufen beide Dienste nicht. `start` startet sie nur für die
+aktuelle Sitzung. `enable` aktiviert sie zusätzlich für kommende Systemstarts.
+Ein einmal bewusst aktivierter Dienst bleibt bei späteren Installer-Updates
+aktiviert.
 
 Der Debugstream auf TCP 5039 ist bewusst **kein allgemeiner virtueller COM-Port**:
 Netzwerkdaten werden niemals zurück auf den seriellen PHNIX-Port geschrieben.
