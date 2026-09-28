@@ -1,6 +1,6 @@
 # Firmware-Update mit dem FoxAir Updater unter Windows
 
-Stand: 22. September 2026
+Stand: 28. September 2026
 
 Diese Anleitung beschreibt **nur den normalen Firmware-Update-Ablauf für Endanwender unter Windows**.
 
@@ -11,7 +11,7 @@ Die Einrichtung der USB-/ADB-Verbindung zum LTE-Modem ist identisch mit dem Verb
 > [!CAUTION]
 > Ein Firmwareupdate verändert die Firmware des Mainboards und erfolgt **auf eigenes Risiko**. Während des laufenden Updates Wärmepumpe und LTE-Modem **nicht stromlos machen**.
 >
-> Real erfolgreich bestätigt sind inzwischen sowohl ein vollständiger Versionswechsel **V3.3 → V3.4** als auch ein direktes Update von **V1.2 (Auslieferungszustand) → V3.4**, **V3.5 (`82400644 / 0035`) 
+> Real erfolgreich bestätigt sind inzwischen vollständige Firmwarewechsel **V3.3 → V3.4**, **V1.2 (Auslieferungszustand) → V3.4** sowie reale Updates auf **V3.5 (`82400644 / 0035`)**.
 >
 > Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** verwenden dieselbe Mainboard-Firmwarelinie. Die V3.5 ist deshalb für entsprechende BL- und GL-Geräte dieser `82400644`-Familie untereinander kompatibel. Bei unbekannten Modellen sollte vor dem Update trotzdem immer der tatsächlich ausgelesene Mainboard-Softwarecode geprüft werden.
 >
@@ -44,7 +44,9 @@ Falls die Verbindung noch nicht eingerichtet ist, zuerst die separate Anleitung 
 
 **[Firmware-Backup des LTE-Modems über Micro-USB](firmware_backup_lte.md)**
 
-Dort sind sowohl der direkte Anschluss an einen Windows-PC als auch Remote-ADB über einen Raspberry Pi beschrieben.
+Dort sind sowohl der direkte Anschluss an einen Windows-PC als auch der neue Raspberry-Pi-Serverweg beschrieben.
+
+Beim Remoteweg stellt der Raspberry Pi der Windows-GUI standardmäßig **ADB auf TCP 5038** und zusätzlich den ausschließlich lesenden **PHNIX-Debugstream auf TCP 5039** bereit. In der Windows-GUI wird nur die Raspberry-Pi-IP mit ADB-Port `5038` eingetragen; der Debugkanal verwendet automatisch denselben Host auf **ADB-Port + 1**.
 
 ## 3. Update-Datei laden
 
@@ -144,4 +146,4 @@ Die Wartungsfunktionen für persistente Statistikzähler gehören **nicht** zum 
 11. Bei Verbindungsverlust nach Wiederherstellung **Status prüfen** verwenden; dadurch wird kein zweiter OTA gestartet.
 12. Anschließend bei Bedarf **Protokoll speichern…** und die automatischen Logs sichern.
 
-Real erfolgreich durchgeführt: **V3.3 → V3.4** und **V1.2 (Auslieferungszustand) → V3.4**. **V3.5 ist bekannt und stammt aus einer BlueLine; sie gehört zur selben `82400644`-Firmwarelinie wie die entsprechenden GreenLine-Geräte. Ein kompletter V3.5-Updatevorgang mit dem FoxAir Updater ist aber noch nicht real validiert.**
+Real erfolgreich durchgeführt wurden unter anderem **V3.3 → V3.4**, **V1.2 (Auslieferungszustand) → V3.4** sowie vollständige Updates auf **V3.5**. Die untersuchte V3.5 stammt aus einer BlueLine und gehört zur selben `82400644`-Firmwarelinie wie die entsprechenden GreenLine-Geräte.
