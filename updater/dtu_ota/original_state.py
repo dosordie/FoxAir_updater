@@ -74,6 +74,38 @@ def _mqtt_established(adb: AdbClient) -> tuple[bool, str]:
     return any("ESTABLISHED" in line for line in lines.splitlines()), lines
 
 
+def _crc16_x25(data: bytes) -> int:
+    crc = 0xFFFF
+    for value in data:
+        crc ^= value
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0x8408 if crc & 1 else crc >> 1
+    return (~crc) & 0xFFFF
+
+
+def _ota_info_snapshot(adb: AdbClient) -> dict[str, Any]:
+    raw = adb.read_file("/data/phnixIot_device_OTA_INFO")
+    if len(raw) != 220:
+        return {
+            "valid": False,
+            "length_bytes": len(raw),
+            "crc_ok": False,
+            "offset": None,
+            "length": None,
+        }
+    stored = int.from_bytes(raw[0:4], "little")
+    calculated = _crc16_x25(raw[4:220])
+    return {
+        "valid": True,
+        "length_bytes": 220,
+        "crc_ok": stored == calculated,
+        "stored_crc": stored,
+        "calculated_crc": calculated,
+        "offset": int.from_bytes(raw[212:216], "little"),
+        "length": int.from_bytes(raw[216:220], "little"),
+    }
+
+
 def original_state_snapshot(adb: AdbClient) -> dict[str, Any]:
     pids = _service_pids(adb)
     service_pid = pids[0] if len(pids) == 1 else ""
@@ -85,13 +117,19 @@ def original_state_snapshot(adb: AdbClient) -> dict[str, Any]:
     service_sha256 = adb.shell(
         f"sha256sum '{REMOTE_SERVICE}' 2>/dev/null | awk '{{print $1}}'"
     ).upper()
-    tracer = (
+    service_state = (
         adb.shell(
-            f"awk '/^TracerPid:/ {{print $2}}' /proc/{service_pid}/status 2>/dev/null || true"
+            f"awk '/^State:|^TracerPid:/ {{print}}' /proc/{service_pid}/status 2>/dev/null || true"
         )
         if service_pid
         else ""
     )
+    tracer = ""
+    for line in service_state.splitlines():
+        if line.startswith("TracerPid:"):
+            tracer = line.split(":", 1)[1].strip()
+            break
+
     watchdogs = _watchdog_pids(adb)
     cloud_connected, mqtt_lines = _mqtt_established(adb)
     active_runner = _read(adb, REMOTE_RUNNER_LOCK)
@@ -102,17 +140,36 @@ def original_state_snapshot(adb: AdbClient) -> dict[str, Any]:
         "original_service_owns": _exists(adb, REMOTE_ORIGINAL_SERVICE_OWNS),
     }
     helper_present = _exists(adb, REMOTE_HELPER)
+    debugger_pids = adb.shell("pidof gdbserver gdb 2>/dev/null || true").strip()
+    cloud_guards = adb.shell(
+        "iptables -S OUTPUT 2>/dev/null | grep -- '--dport 1883' || true; "
+        "iptables -S INPUT 2>/dev/null | grep -- '--sport 1883' || true"
+    ).strip()
+    http_pid = _exists(adb, REMOTE_HTTP_PID)
+    http_listener = adb.shell(
+        "netstat -lnt 2>/dev/null | awk '$4 ~ /:8081$/ {print}'"
+    ).strip()
+    staging = adb.shell(
+        f"ls -A '{REMOTE_STAGE_DIR}' 2>/dev/null || true"
+    ).strip()
+    ota_info = _ota_info_snapshot(adb)
 
     checks = {
         "single_service": len(pids) == 1,
         "service_path": service_path == REMOTE_SERVICE,
         "service_original": service_sha256 == EXPECTED_SERVICE_SHA256,
-        "service_untraced": tracer.strip() == "0",
+        "service_untraced": tracer == "0",
+        "service_not_stopped": "T (stopped)" not in service_state,
+        "no_debugger": not bool(debugger_pids),
         "watchdogs_running": len(watchdogs) >= 2,
         "cloud_connected": cloud_connected,
+        "no_cloud_guard": not bool(cloud_guards),
+        "http_stopped": not http_pid and not bool(http_listener),
+        "staging_clean": not bool(staging),
         "runtime_helper_absent": not helper_present,
         "no_active_runner": not bool(active_runner),
         "legacy_runtime_clear": not any(markers.values()),
+        "ota_info_valid": ota_info.get("crc_ok") is True,
     }
     original_ok = all(checks.values())
     return {
@@ -123,11 +180,18 @@ def original_state_snapshot(adb: AdbClient) -> dict[str, Any]:
         "service_pids": pids,
         "service_path": service_path or None,
         "service_sha256": service_sha256 or None,
+        "service_state": service_state,
         "watchdog_pids": watchdogs,
         "mqtt_connection": mqtt_lines,
+        "cloud_guards": cloud_guards,
+        "debugger_pids": debugger_pids,
+        "http_active": http_pid or bool(http_listener),
+        "http_listener": http_listener,
+        "staging_entries": staging,
         "active_runner": active_runner or None,
         "legacy_markers": markers,
         "runtime_helper_present": helper_present,
+        "ota_info": ota_info,
     }
 
 
