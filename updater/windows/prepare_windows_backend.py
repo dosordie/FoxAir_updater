@@ -4,7 +4,7 @@ import argparse
 import shutil
 from pathlib import Path
 
-from prepare_legacy_restore_hook import prepare as prepare_legacy_hook
+from prepare_runtime_hook import prepare as prepare_runtime_hook
 from verify_windows_backend import verify
 
 
@@ -24,35 +24,8 @@ def prepare_backend(root: Path, out: Path) -> None:
         copy_file(source, backend / "updater/common" / source.name)
 
     copy_file(
-        root / "tools/phnix_ota/phnix_local_ota_controller.py",
-        backend / "tools/phnix_ota/phnix_local_ota_controller_core.py",
-    )
-    copy_file(
-        root / "tools/phnix_ota/phnix_local_ota_controller_hardened.py",
-        backend / "tools/phnix_ota/phnix_local_ota_controller_hardened.py",
-    )
-    # Keep the established Windows cache/manifest safety wrapper as the inner
-    # implementation and expose a tiny release wrapper at the historic public
-    # controller path. The outer wrapper only adds a bounded post-restore MQTT
-    # grace; all existing safety semantics stay in the inner wrapper.
-    copy_file(
-        root / "updater/windows/phnix_windows_controller_wrapper.py",
-        backend / "tools/phnix_ota/phnix_windows_controller_wrapper_core.py",
-    )
-    copy_file(
-        root / "updater/windows/phnix_windows_restore_grace_wrapper.py",
-        backend / "tools/phnix_ota/phnix_local_ota_controller.py",
-    )
-    copy_file(
         root / "tools/phnix_ota/create_firmware_manifest.py",
         backend / "tools/phnix_ota/create_firmware_manifest.py",
-    )
-    # The legacy controller validates the local helper before doing even a
-    # restore. Windows worktrees can still contain CRLF despite .gitattributes,
-    # so both packaged helper locations must contain deterministic Unix LF.
-    prepare_legacy_hook(
-        root / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
-        backend / "tools/phnix_ota/phnix_ota_runtime_hook",
     )
     copy_file(
         root / "tools/phnix_traffic/foxair_traffic_trace",
@@ -65,7 +38,7 @@ def prepare_backend(root: Path, out: Path) -> None:
         root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh",
         backend / "updater/dtu_ota/payload/dtu_ota_supervisor.sh",
     )
-    prepare_legacy_hook(
+    prepare_runtime_hook(
         root / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
         backend / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
     )
