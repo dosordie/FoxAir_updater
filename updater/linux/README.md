@@ -265,6 +265,50 @@ Wenn der Remote-ADB-Dienst aktiv ist, verwendet auch
 `127.0.0.1:5038`. Dadurch konkurriert kein zusätzlicher ADB-Server auf TCP
 5037 um dasselbe USB-Modem.
 
+### Windows-GUI mit Raspberry Pi als Server
+
+Auf dem Raspberry Pi einmalig oder dauerhaft starten:
+
+```sh
+cd ~/FoxAir_updater
+./foxair-updater remote start
+```
+
+oder für automatischen Start nach einem Reboot:
+
+```sh
+./foxair-updater remote enable
+```
+
+Danach in der Windows-GUI unter **Verbindung**:
+
+1. **Remote – ADB-Server auf Raspberry Pi** auswählen;
+2. die IP-Adresse des Raspberry Pi eintragen;
+3. ADB-Port `5038` verwenden;
+4. **ADB prüfen** ausführen.
+
+Die Windows-GUI verwendet im Remote-Modus denselben Raspberry Pi gleichzeitig
+für den PHNIX-Debugkanal. Dessen Endpunkt wird automatisch aus dem eingetragenen
+ADB-Port gebildet:
+
+```text
+ADB-Port 5038
+→ PHNIX-Debug-Port 5039
+```
+
+Der Benutzer muss deshalb keinen separaten COM-Port und keinen zusätzlichen
+Debug-Port in der GUI konfigurieren. Eine lokale `adb.exe` wird unter Windows
+weiterhin als ADB-Client benötigt.
+
+Der Zustand auf dem Raspberry Pi kann jederzeit geprüft werden:
+
+```sh
+./foxair-updater remote status
+```
+
+Dabei werden der Status beider systemd-Dienste, der automatisch erkannte
+PHNIX-Debugport und die Listener auf TCP 5038/5039 angezeigt.
+
 > [!WARNING]
 > Remote-ADB ist nur für ein vertrauenswürdiges LAN vorgesehen. TCP 5038 und
 > TCP 5039 nicht per Router/Portweiterleitung ins Internet freigeben.
