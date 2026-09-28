@@ -249,6 +249,13 @@ Verwaltung:
 ./foxair-updater remote disable
 ```
 
+Der Launcher delegiert diese Befehle an `updater/linux/remote_access.sh`. Das Script verwaltet gemeinsam:
+
+- `foxair-adb-remote.service`: startet den ADB-Server mit Netzwerkzugriff auf TCP 5038 und wird bei einem Fehler von systemd neu gestartet;
+- `foxair-debug-stream.service`: startet den read-only PHNIX-Debugbridge auf TCP 5039 und verbindet sich automatisch mit USB-Interface 04.
+
+Damit muss weder ein eigener ADB-Startbefehl noch eine feste serielle Gerätebezeichnung gepflegt werden.
+
 Standardmäßig laufen beide Dienste nicht. `start` startet sie nur für die
 aktuelle Sitzung. `enable` aktiviert sie zusätzlich für kommende Systemstarts.
 Ein einmal bewusst aktivierter Dienst bleibt bei späteren Installer-Updates
