@@ -283,13 +283,11 @@ EOF
     fi
 
     if [[ "$REMOTE_ACCESS_MODE" == "enable" ]]; then
-        sudo systemctl enable foxair-adb-remote.service foxair-debug-stream.service >/dev/null
-        sudo systemctl restart foxair-adb-remote.service foxair-debug-stream.service
+        "$INSTALL_DIR/updater/linux/remote_access.sh" enable
         export ADB_SERVER_SOCKET="tcp:127.0.0.1:$REMOTE_ADB_PORT"
-        ok "Remotezugriff aktiv: ADB TCP $REMOTE_ADB_PORT, PHNIX-Debug TCP $REMOTE_DEBUG_PORT"
         warn "Remote-ADB ist für ein vertrauenswürdiges LAN gedacht. TCP $REMOTE_ADB_PORT/$REMOTE_DEBUG_PORT nicht ins Internet weiterleiten."
     else
-        sudo systemctl disable --now foxair-adb-remote.service foxair-debug-stream.service >/dev/null 2>&1 || true
+        "$INSTALL_DIR/updater/linux/remote_access.sh" disable >/dev/null 2>&1 || true
         ok "Remotezugriff installiert, aber nicht aktiviert"
         info "Später aktivieren mit: $INSTALL_DIR/foxair-updater remote enable"
     fi
