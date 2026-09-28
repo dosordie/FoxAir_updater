@@ -1,6 +1,6 @@
 # PHNIX-Firmware-Updater – Anleitung für Anwender
 
-Stand: 27. September 2026
+Stand: 28. September 2026
 
 > [!CAUTION]
 > Mehrere vollständige Mainboard-Firmwarewechsel wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt, darunter **V3.3 → V3.4**, **V1.2 → V3.4** sowie reale Updates auf **V3.5**. Der jeweils aktuelle Teststand steht in der Projekt-`README.md`.
@@ -158,10 +158,41 @@ Danach stehen unter anderem zur Verfügung:
 
 Die vollständige Firmware-/Manifestprüfung ist beim normalen `update` immer aktiv; `--full` ist dafür nicht mehr erforderlich. Eine bereits installierte identische Firmware wird vom Mainboard-/Runner-Ablauf automatisch erkannt, daher entfällt der separate Endanwender-`same-version`-Befehl.
 
-Nach dem Start hängt der Mainboard-OTA nicht mehr von einer dauerhaft bestehenden Raspberry-Pi-/Linux-/ADB-Verbindung ab. Bei `success` oder `same-version` wird zuerst ein lokales Diagnosearchiv erzeugt und verifiziert. Erst danach bestätigt der Host das terminale Ergebnis und entfernt die zu diesem Lauf gehörenden FoxAir-Updater-Daten vom LTE-Modem. Fehler- und Recovery-Daten bleiben dagegen erhalten.
+Nach dem Start hängt der Mainboard-OTA nicht mehr von einer dauerhaft bestehenden Raspberry-Pi-/Linux-/ADB-Verbindung ab. Der autonome DTU-Runner kann bei einem Ausfall von `phnixIot4G` den Dienst kontrolliert neu starten, das Runtime-Monitoring erneut anbinden und einen bereits begonnenen Transfer anhand des persistenten OTA-Zustands weiterführen. Zusätzlich existiert ein Stall-Recovery-Pfad für ausbleibenden C5A8-Fortschritt.
+
+Bei `success` oder `same-version` wird zuerst ein lokales Diagnosearchiv erzeugt und verifiziert. Erst danach bestätigt der Host das terminale Ergebnis und entfernt die zu diesem Lauf gehörenden FoxAir-Updater-Daten vom LTE-Modem. Fehler- und Recovery-Daten bleiben dagegen erhalten.
+
+### Raspberry Pi als Server für die Windows-GUI
+
+Der Linux-Installer richtet zusätzlich einen optionalen Netzwerkzugriff ein. Auf einer frischen Installation bleibt er standardmäßig deaktiviert.
+
+```sh
+./foxair-updater remote start
+./foxair-updater remote status
+```
+
+Für einen dauerhaften Start bei jedem Boot:
+
+```sh
+./foxair-updater remote enable
+```
+
+Der Raspberry Pi stellt dabei zwei getrennte Netzwerkpfade bereit:
+
+```text
+Windows-GUI
+  ├─ ADB         → Raspberry Pi :5038 → LTE-Modem
+  └─ PHNIX Debug → Raspberry Pi :5039 → USB Interface 04 (read-only)
+```
+
+In der Windows-GUI wird **Remote – ADB-Server auf Raspberry Pi** gewählt, die IP-Adresse des Raspberry Pi eingetragen und Port `5038` verwendet. Der PHNIX-Debugmonitor nutzt im Remote-Modus automatisch denselben Host auf **ADB-Port + 1**, also standardmäßig TCP `5039`.
+
+Der Debugstream ist absichtlich nur lesend. Es werden keine Netzwerkdaten zurück auf den seriellen PHNIX-Port geschrieben; für diesen FoxAir-Updater-Remoteweg ist deshalb kein `ser2net` erforderlich.
+
+> [!WARNING]
+> TCP 5038 und 5039 nur in einem vertrauenswürdigen lokalen Netz verwenden und nicht per Portweiterleitung ins Internet freigeben.
 
 Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter [`../../updater/linux/README.md`](../../updater/linux/README.md). Die Linux-Kurzangaben auf dieser Seite werden bewusst knapp gehalten.
-
 
 ## Real bestätigte Punkte
 
