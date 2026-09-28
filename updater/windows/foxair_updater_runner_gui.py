@@ -485,6 +485,38 @@ class MainWindow(legacy.MainWindow):
                 QMessageBox.critical(self, "Löschen fehlgeschlagen", "Die gespeicherten Updatedaten konnten nicht gelöscht werden. Diagnosedaten bleiben erhalten.")
             return
 
+        if op == "runner-discard-prepared":
+            result = self._runner_json(output)
+            if code == 0 and isinstance(result, dict) and result.get("discarded") is True:
+                self._log("[DTU Runner] Vorprüfungsdaten wurden wieder vom LTE-Modem entfernt.")
+                self._runner_run_id = None
+                self._runner_prepared_manifest = None
+                self._runner_active = False
+                self._runner_terminal = False
+                self._runner_abort_allowed = False
+                self._runner_acknowledged = False
+                self.ota_reattach_btn.setVisible(False)
+                self.status_text.setText(
+                    "Vorprüfung abgeschlossen; es sind keine Vorprüfungsdaten auf dem LTE-Modem gespeichert."
+                )
+                self._buttons()
+                QMessageBox.information(
+                    self,
+                    "Vorprüfung erfolgreich",
+                    "Update-Datei und LTE-Modem wurden vollständig geprüft. Das Firmwareupdate "
+                    "wurde nicht gestartet, es wurden keine Firmwaredaten an das Mainboard übertragen "
+                    "und die Vorprüfungsdaten wurden wieder vom LTE-Modem entfernt.",
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Vorprüfung nicht aufgeräumt",
+                    "Die Vorprüfung war erfolgreich, aber der eindeutig nur vorbereitete Lauf "
+                    "konnte nicht sicher entfernt werden. Es wird nichts weiter verändert; "
+                    "Details stehen im technischen Protokoll.",
+                )
+            return
+
         status = self._runner_json(output)
         if code != 0 or status is None or status.get("ok") is False:
             if op in {"runner-status", "runner-current"} and self._runner_active:
@@ -525,11 +557,19 @@ class MainWindow(legacy.MainWindow):
                 self._runner_autostart_after_prepare = False
                 QTimer.singleShot(150, self._start_prepared_runner)
             else:
-                QMessageBox.information(
-                    self,
-                    "Vorprüfung erfolgreich",
-                    "Update-Datei und LTE-Modem wurden vollständig geprüft. Das Firmwareupdate "
-                    "wurde noch nicht gestartet und es wurden keine Firmwaredaten an das Mainboard übertragen.",
+                run_id = self._runner_run_id
+                if not run_id:
+                    QMessageBox.critical(
+                        self,
+                        "Vorprüfung",
+                        "Die Vorprüfung lieferte keine gültige Lauf-ID; die Daten werden nicht automatisch entfernt.",
+                    )
+                    return
+                self._run_runner(
+                    "runner-discard-prepared",
+                    "discard-prepared",
+                    "--run-id",
+                    run_id,
                 )
             return
 

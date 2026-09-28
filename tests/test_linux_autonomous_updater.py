@@ -59,6 +59,14 @@ class FakeClient:
     def cleanup(self, run_id):
         self.calls.append(("cleanup", run_id))
 
+    def discard_prepared(self, run_id):
+        self.calls.append(("discard-prepared", run_id))
+        if self.active is not None:
+            raise linux.RunnerClientError("active run")
+        if self.prepared.get("transfer_started") is True:
+            raise linux.RunnerClientError("unsafe prepared run")
+        return {"ok": True, "discarded": True, "run_id": run_id}
+
     def active_run_id(self):
         return self.active
 
@@ -176,19 +184,17 @@ class LinuxAutonomousUpdaterTests(unittest.TestCase):
             self.assertEqual(client.calls[1], ("start", "20260928-080000-0001"))
             monitor.assert_called_once()
 
-    def test_check_removes_only_a_proven_prepared_non_active_run(self):
+    def test_check_uses_shared_safe_prepared_run_discard(self):
         client = FakeClient()
         linux.discard_prepared_run(client, dict(client.prepared))
-        self.assertEqual(len(client.adb.commands), 1)
-        self.assertIn("20260928-080000-0001", client.adb.commands[0])
+        self.assertEqual(
+            client.calls[-1],
+            ("discard-prepared", "20260928-080000-0001"),
+        )
 
-        unsafe = dict(client.prepared, transfer_started=True)
+        missing_id = dict(client.prepared, run_id="")
         with self.assertRaises(linux.CliError):
-            linux.discard_prepared_run(client, unsafe)
-
-        client.active = "another-run"
-        with self.assertRaises(linux.CliError):
-            linux.discard_prepared_run(client, dict(client.prepared))
+            linux.discard_prepared_run(client, missing_id)
 
 
 if __name__ == "__main__":
