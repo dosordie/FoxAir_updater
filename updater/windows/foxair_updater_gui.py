@@ -916,18 +916,12 @@ class MainWindow(QMainWindow):
             self._run("reconnect", [str(adb), "reconnect"])
 
     def _reattach_ota(self):
-        """Reconnect ADB and read the existing OTA session without changing it."""
-        adb = self._require_adb()
-        if not adb:
-            return
-        command = [
-            str(backend_python()), str(self.controller), "--adb", str(adb),
-            "--output", "json", "--no-color", "status",
-        ]
-        self._run_sequence(
-            "ota-reattach",
-            [[str(adb), "reconnect"], command],
-            str(backend_dir()),
+        """Base-shell fallback; the product runner layer owns OTA reattachment."""
+        QMessageBox.information(
+            self,
+            "Autonomer DTU-Runner",
+            "Der Update-Status wird in der aktuellen Produktoberfläche direkt aus dem "
+            "persistenten DTU-Runner gelesen.",
         )
 
     def _backup_run(self):
