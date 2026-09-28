@@ -218,7 +218,24 @@ Danach stehen unter anderem folgende Befehle zur Verfügung:
 
 Beim normalen `update` ist die vollständige Firmware-/Manifestprüfung immer aktiv; ein `--full`-Schalter ist dafür nicht mehr nötig. Eine bereits installierte identische Firmware wird automatisch erkannt, deshalb gibt es keinen separaten Endanwender-`same-version`-Befehl mehr.
 
-Nach dem Start läuft der OTA persistent auf dem LTE-Modem weiter. Bei erfolgreichem Abschluss wird zuerst ein lokales Diagnosearchiv gespeichert und verifiziert; erst danach folgen ACK und Cleanup der gespeicherten Daten dieses OTA-Laufs. Fehler-/Recovery-Daten bleiben erhalten.
+Nach dem Start läuft der OTA persistent auf dem LTE-Modem weiter. Der autonome Runner kann bei einem Ausfall von `phnixIot4G` den Dienst kontrolliert neu starten, das Monitoring wieder anbinden und einen begonnenen Transfer anhand des persistenten OTA-Zustands fortsetzen. Bei erfolgreichem Abschluss wird zuerst ein lokales Diagnosearchiv gespeichert und verifiziert; erst danach folgen ACK und Cleanup der gespeicherten Daten dieses OTA-Laufs. Fehler-/Recovery-Daten bleiben erhalten.
+
+Der Raspberry Pi kann zusätzlich als **Netzwerk-Server für die Windows-GUI** verwendet werden. Der Linux-Installer richtet dafür zwei zunächst deaktivierte Dienste ein:
+
+```text
+Windows-GUI
+  ├─ ADB         → Raspberry Pi :5038 → LTE-Modem
+  └─ PHNIX Debug → Raspberry Pi :5039 → USB Interface 04 (read-only)
+```
+
+Der Zugriff wird bei Bedarf über den normalen Launcher gestartet:
+
+```sh
+./foxair-updater remote start
+./foxair-updater remote status
+```
+
+Für einen dauerhaften Start beim Booten steht `./foxair-updater remote enable` zur Verfügung. Der PHNIX-Debugstream ist bewusst nur lesend; für diesen Windows-Remoteweg ist kein `ser2net` erforderlich.
 
 Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter **[updater/linux/README.md](updater/linux/README.md)**.
 
