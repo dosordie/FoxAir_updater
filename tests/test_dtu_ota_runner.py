@@ -147,6 +147,45 @@ class DtuOtaPackageTests(unittest.TestCase):
         with self.assertRaises(RunnerClientError):
             client.status("run-1", reconcile=False)
 
+    def test_discard_prepared_removes_only_verified_unstarted_run(self):
+        adb = FakeAdb()
+        client = DtuOtaClient(adb)
+        state = {"last": "run-1", "exists": True}
+        original = adb.shell
+
+        def shell(command, check=True):
+            if command.startswith("cat '/data/foxair_ota_runner/last_run_id'"):
+                return state["last"]
+            if command.startswith("rm -rf '/data/foxair_ota_runner/runs/run-1'"):
+                state["exists"] = False
+                state["last"] = ""
+                adb.commands.append((command, check))
+                return ""
+            if command.startswith("test -e '/data/foxair_ota_runner/runs/run-1'"):
+                return "1" if state["exists"] else ""
+            return original(command, check)
+
+        adb.shell = shell
+        result = client.discard_prepared("run-1")
+        self.assertTrue(result["discarded"])
+        self.assertFalse(state["exists"])
+        self.assertEqual(state["last"], "")
+
+    def test_discard_prepared_refuses_started_or_active_run(self):
+        adb = FakeAdb()
+        client = DtuOtaClient(adb)
+        valid = client.status("run-1", reconcile=False)
+
+        started = dict(valid, transfer_started=True)
+        client.status = lambda *args, **kwargs: started
+        with self.assertRaises(RunnerClientError):
+            client.discard_prepared("run-1")
+
+        client.status = lambda *args, **kwargs: valid
+        adb.active = "active-2"
+        with self.assertRaises(RunnerClientError):
+            client.discard_prepared("run-1")
+
     def test_active_run_is_independent_from_stale_last_run(self):
         adb = FakeAdb()
         client = DtuOtaClient(adb)
