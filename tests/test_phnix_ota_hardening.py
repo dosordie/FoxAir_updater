@@ -101,12 +101,13 @@ class OtaHardeningTests(unittest.TestCase):
         self.assertIn("kill -STOP", cleanup)
         self.assertNotIn("transfer-unattended", cleanup)
 
-    def test_linux_launcher_requires_full_for_real_update(self):
+    def test_linux_launcher_routes_normal_update_to_autonomous_runner(self):
         launcher = Path("foxair-updater").read_text(encoding="utf-8")
-        update = launcher.split("    update)", 1)[1].split("    same-version)", 1)[0]
+        update = launcher.split("    update)", 1)[1].split("    restore)", 1)[0]
         self.assertIn('full_manifest_preflight "$manifest"', update)
-        self.assertIn('if [[ "$phase" == "same-version" ]]', update)
-        self.assertIn("restore_update_cache", update)
+        self.assertIn('python3 "$AUTONOMOUS"', update)
+        self.assertNotIn('python3 "$CONTROLLER"', update)
+        self.assertNotIn("same-version)", launcher)
 
     def test_windows_wrapper_uses_stable_ota_state_and_same_version_cache_restore(self):
         wrapper = Path("updater/windows/phnix_windows_controller_wrapper.py").read_text(encoding="utf-8")

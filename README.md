@@ -193,7 +193,7 @@ Für ein normales Update sollten diese Einstellungen unverändert bleiben.
 
 ## Linux / Raspberry Pi
 
-Für erfahrene Anwender gibt es weiterhin einen Linux-/Raspberry-Pi-Weg.
+Für erfahrene Anwender gibt es weiterhin einen Linux-/Raspberry-Pi-Weg. Normale Firmwareupdates verwenden dort jetzt denselben **autonomen DTU-Runner** wie die Windows-Version.
 
 Installation als normaler Benutzer:
 
@@ -209,17 +209,18 @@ Danach stehen unter anderem folgende Befehle zur Verfügung:
 ```text
 ./foxair-updater status
 ./foxair-updater check MANIFEST
-./foxair-updater update MANIFEST --full --confirm
-./foxair-updater same-version MANIFEST --confirm
+./foxair-updater update MANIFEST
 ./foxair-updater restore
 ./foxair-updater download
 ./foxair-updater manifest FIRMWARE ...
 ./foxair-updater version
 ```
 
-Bei einem echten Update ist `--full` verpflichtend. Dabei wird die Firmware unmittelbar vor ADB-/Busaktivität vollständig analysiert und gegen das Manifest geprüft.
+Beim normalen `update` ist die vollständige Firmware-/Manifestprüfung immer aktiv; ein `--full`-Schalter ist dafür nicht mehr nötig. Eine bereits installierte identische Firmware wird automatisch erkannt, deshalb gibt es keinen separaten Endanwender-`same-version`-Befehl mehr.
 
-Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter **[updater/linux/README.md](updater/linux/README.md)**. Die Kurzangaben hier sollen nur den Einstieg zeigen und nicht parallel eine zweite vollständige Linux-Dokumentation pflegen.
+Nach dem Start läuft der OTA persistent auf dem LTE-Modem weiter. Bei erfolgreichem Abschluss wird zuerst ein lokales Diagnosearchiv gespeichert und verifiziert; erst danach folgen ACK und Cleanup der gespeicherten Daten dieses OTA-Laufs. Fehler-/Recovery-Daten bleiben erhalten.
+
+Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter **[updater/linux/README.md](updater/linux/README.md)**.
 
 Für Endanwender unter Windows ist die grafische Anwendung normalerweise deutlich einfacher.
 

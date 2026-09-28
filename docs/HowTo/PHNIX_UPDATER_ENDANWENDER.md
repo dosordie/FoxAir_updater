@@ -133,7 +133,9 @@ Vor einem Schreibvorgang wird die vollständige 128-Byte-Statistikdatei gesicher
 
 ## Linux / Raspberry Pi
 
-Der Linux-Weg bleibt verfügbar. Installation als normaler Benutzer:
+Der Linux-/Raspberry-Pi-Weg bleibt verfügbar und verwendet für normale Mainboard-Firmwareupdates jetzt ebenfalls den **autonomen DTU-Runner**.
+
+Installation als normaler Benutzer:
 
 ```sh
 cd ~
@@ -147,19 +149,19 @@ Danach stehen unter anderem zur Verfügung:
 ```text
 ./foxair-updater status
 ./foxair-updater check MANIFEST
-./foxair-updater update MANIFEST --full --confirm
-./foxair-updater same-version MANIFEST --confirm
+./foxair-updater update MANIFEST
 ./foxair-updater restore
 ./foxair-updater download
 ./foxair-updater manifest FIRMWARE ...
 ./foxair-updater version
 ```
 
-Bei einem echten Update ist `--full` verpflichtend.
+Die vollständige Firmware-/Manifestprüfung ist beim normalen `update` immer aktiv; `--full` ist dafür nicht mehr erforderlich. Eine bereits installierte identische Firmware wird vom Mainboard-/Runner-Ablauf automatisch erkannt, daher entfällt der separate Endanwender-`same-version`-Befehl.
 
-Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter [`../../updater/linux/README.md`](../../updater/linux/README.md). Die Linux-Kurzangaben auf dieser Seite werden bewusst knapp gehalten, damit Installationsweg und Befehle nicht an mehreren Stellen vollständig parallel gepflegt werden.
+Nach dem Start hängt der Mainboard-OTA nicht mehr von einer dauerhaft bestehenden Raspberry-Pi-/Linux-/ADB-Verbindung ab. Bei `success` oder `same-version` wird zuerst ein lokales Diagnosearchiv erzeugt und verifiziert. Erst danach bestätigt der Host das terminale Ergebnis und entfernt die zu diesem Lauf gehörenden FoxAir-Updater-Daten vom LTE-Modem. Fehler- und Recovery-Daten bleiben dagegen erhalten.
 
-Der Windows-Produktpfad mit autonomem DTU-Runner und der Linux-/Controllerpfad teilen gemeinsame Manifest-, Transport- und PHNIX-Hilfslogik, sind aber nicht als identische Host-Orchestrierung zu verstehen.
+Die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung** steht unter [`../../updater/linux/README.md`](../../updater/linux/README.md). Die Linux-Kurzangaben auf dieser Seite werden bewusst knapp gehalten.
+
 
 ## Real bestätigte Punkte
 

@@ -41,6 +41,7 @@ jobs:
           updater/dtu_ota/cleanup.py
           updater/dtu_ota/diagnostics.py
           updater/dtu_ota/package.py
+          updater/linux/autonomous_update.py
 
   vm-matrix:
     if: github.ref_name == 'VM_OTA_Simulator' || github.head_ref == 'VM_OTA_Simulator'
@@ -61,6 +62,7 @@ jobs:
       - run: sh -n tools/phnix_ota/phnix-ota-sim
       - run: sh -n tools/phnix_ota/phnix-sim-adb
       - run: bash -n foxair-updater
+      - run: bash -n updater/linux/install.sh
 
   macos-cli:
     runs-on: macos-latest

@@ -1,13 +1,11 @@
 # Linux / Raspberry Pi
 
-Stand: 27. September 2026
+Stand: 28. September 2026
 
-Der Linux-Installer richtet den FoxAir Updater auf Raspberry Pi OS sowie anderen Debian-/Ubuntu-basierten Systemen ein. Der Linux-Weg verwendet gemeinsame Manifest-, ADB- und PHNIX-Hilfslogik mit der Windows-Version, besitzt aber eine eigene CLI-/Host-Orchestrierung über `foxair-updater` und den gehärteten lokalen OTA-Controller.
+Der Linux-/Raspberry-Pi-Weg verwendet für normale Mainboard-Firmwareupdates denselben **autonomen DTU-Runner** wie die Windows-Version. Der Raspberry Pi bzw. Linux-Rechner ist nur noch Host für Vorbereitung, Start, Statusanzeige und lokale Archivierung. Nach dem Start läuft der eigentliche OTA-Vorgang persistent auf dem LTE-Modem weiter.
 
 > [!IMPORTANT]
-> Mehrere Firmwarestände und Hardwarekonfigurationen wurden inzwischen real mit dem FoxAir Updater getestet, darunter vollständige Firmwarewechsel bis V3.5. Der jeweils aktuelle Teststand ist in der Projekt-`README.md` zusammengefasst.
->
-> Nicht jede denkbare Firmware-/Mainboardkombination und nicht jeder Fehlerfall ist in gleicher Tiefe live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
+> Mehrere Firmwarestände und Hardwarekonfigurationen wurden real mit dem FoxAir Updater getestet, einschließlich vollständiger Firmwarewechsel bis V3.5. Nicht jede denkbare Hardware-/Firmwarekombination und nicht jeder Fehlerfall ist in gleicher Tiefe live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
 
 ## Schnellinstallation
 
@@ -18,67 +16,73 @@ wget -O install.sh https://raw.githubusercontent.com/dosordie/FoxAir_updater/mai
 bash install.sh
 ```
 
-Der Installer verwendet `sudo` nur dort, wo Systemrechte benötigt werden. Standardmäßig wird nach `~/FoxAir_updater` installiert.
+Standardmäßig wird nach `~/FoxAir_updater` installiert. Der Installer verwendet `sudo` nur für Systempakete und die udev-Regel.
 
-## Endanwender-Struktur
+## Installierte Struktur
 
 ```text
 ~/FoxAir_updater/
 ├── firmware/              # lokale Firmware + Manifest
-├── downloaded_firmware/   # per "download" gesicherte LTE-/Firmwaredateien
+├── downloaded_firmware/   # manuell geladene LTE-/Firmwaredateien
+├── logs/                  # Update-Logs + automatische DTU-Diagnosearchive
 ├── foxair-updater         # Endanwender-Launcher
-├── docs/HowTo/
-├── tools/phnix_ota/       # gemeinsame OTA-Werkzeuge
-└── updater/               # gemeinsame Module + Linux-/DTU-OTA-Komponenten
+├── updater/common/        # gemeinsamer Transport/Manifest-Core
+├── updater/dtu_ota/       # autonomer DTU-Runner
+├── updater/linux/         # Linux-Host-Orchestrierung
+├── tools/phnix_ota/       # Legacy-/Recovery-/Entwicklungswerkzeuge
+└── docs/HowTo/
 ```
 
-Der Ordner `firmware/` wird lokal durch den Installer erstellt und ist über `.gitignore` von Git ausgeschlossen. Er wird bei einem normalen Update des Repository-Checkouts weder hochgeladen noch gelöscht.
+Der Installer verwendet `git sparse-checkout`. Entwicklungsbereiche wie `devtools`, `tests`, `docs/reverse_engineering` und `updater/windows` werden beim normalen Linux-Endanwender-Checkout nicht benötigt.
 
-## Schlanker Git-Checkout
+## Architektur
 
-Der Installer verwendet `git sparse-checkout`. Beim Endanwender werden nur die benötigten Bereiche ausgecheckt:
+Der produktive Linux-Updatepfad ist:
 
 ```text
-updater/common
-updater/dtu_ota
-updater/linux
-tools/phnix_ota
-docs/HowTo
+./foxair-updater update MANIFEST
+        ↓
+automatische vollständige Firmware-/Manifestprüfung
+        ↓
+updater/linux/autonomous_update.py
+        ↓
+DtuOtaClient / updater/dtu_ota
+        ↓
+dtu_ota_supervisor.sh auf dem LTE-DTU
+        ↓
+phnix_ota_runtime_hook
+        ↓
+phnixIot4G
+        ↓
+Mainboard
 ```
 
-Dateien im Projekt-Hauptverzeichnis wie `foxair-updater`, `.gitignore` und `README.md` bleiben ebenfalls verfügbar. Entwicklungsbereiche wie `devtools`, `tests`, `docs/reverse_engineering`, `updater/windows` und `firmware_manifests` erscheinen im normalen Linux-Endanwender-Checkout nicht.
+Nach `start` ist der Host nicht mehr dafür verantwortlich, den OTA am Leben zu halten. USB-, ADB- oder Host-Verbindungsverlust beendet einen bereits gestarteten Mainboard-Transfer nicht.
 
-## Was der Installer erledigt
+Der autonome Runner übernimmt insbesondere:
 
-- prüft `python3`, `adb`, `lsusb`, `git` und CA-Zertifikate;
-- installiert fehlende Pakete auf Debian/Ubuntu/Raspberry Pi OS per `apt-get`;
-- verlangt Python 3.10 oder neuer;
-- installiert einen schlanken Sparse-Checkout nach `~/FoxAir_updater`;
-- aktualisiert eine vorhandene Installation per `git pull --ff-only`;
-- überschreibt keine lokal geänderten Projektdateien;
-- erstellt `~/FoxAir_updater/firmware` und `~/FoxAir_updater/downloaded_firmware`;
-- setzt benötigte Dateirechte;
-- installiert die udev-Regel für das PHNIX-LTE-Modem `1e0e:9001`;
-- lädt die udev-Regeln neu und startet ADB neu;
-- prüft Controller, Manifestwerkzeug und Launcher;
-- zeigt zum Abschluss `adb devices -l` und den installierten Git-Commit an.
+- persistenten Run-/Statuszustand auf dem LTE-Modem;
+- kontrollierten Neustart von `phnixIot4G` vor dem Update;
+- Readiness-Prüfung des Originaldienstes;
+- C350/C36E/C357/C5A8 und Abschlussüberwachung;
+- Wiederanbindung des Runtime-Monitorings;
+- direkten kontrollierten Neustart von `phnixIot4G` nach einem Dienst-Crash;
+- Wiederaufnahme anhand des persistenten PHNIX-OTA-Offsets;
+- 20-Minuten-Stall-Recovery;
+- maximal drei automatische Recovery-Vorgänge pro OTA-Lauf.
 
-Die USB-Regel lautet:
-
-```udev
-SUBSYSTEM=="usb", ATTR{idVendor}=="1e0e", ATTR{idProduct}=="9001", MODE="0666"
-```
+MQTT bleibt beim normalen Vollupdate verbunden.
 
 ## Firmware bereitstellen
 
-Firmware und Manifest werden **nicht** automatisch von GitHub geladen. Beide Dateien werden lokal nach `~/FoxAir_updater/firmware/` kopiert, zum Beispiel:
+Firmware und Manifest lokal nach `~/FoxAir_updater/firmware/` kopieren, zum Beispiel:
 
 ```text
-~/FoxAir_updater/firmware/FW3.4.bin
-~/FoxAir_updater/firmware/FW3.4.json
+~/FoxAir_updater/firmware/FW3.5.bin
+~/FoxAir_updater/firmware/FW3.5.json
 ```
 
-Wenn im Manifest `"firmware_file": "FW3.4.bin"` steht, sucht der Controller die Firmware im selben Verzeichnis wie das Manifest.
+Der im Manifest angegebene Firmwaredateiname wird im selben Verzeichnis und anschließend im lokalen `firmware/`-Ordner gesucht.
 
 ## Bedienung
 
@@ -92,133 +96,122 @@ Hilfe:
 ./foxair-updater --help
 ```
 
-Originalzustand read-only prüfen:
+### Status
 
 ```sh
 ./foxair-updater status
 ```
 
-Dry-Run:
+Der Status wird aus dem persistenten autonomen DTU-Lauf gelesen. Wurde ein erfolgreicher Lauf nach einem früheren Host-/ADB-Verlust inzwischen terminal, führt `status` ebenfalls den sicheren Abschluss **Diagnose → ACK → Cleanup** aus.
+
+### Vorprüfung
 
 ```sh
-./foxair-updater check FW3.4.json
+./foxair-updater check FW3.5.json
 ```
 
-Echtes Update:
+Die Firmware wird lokal vollständig gegen das Manifest geprüft. Danach wird ein DTU-Paket hochgeladen und der autonome DTU-Preflight ausgeführt. Es werden dabei weder GDB noch C350 noch ein Mainboard-OTA gestartet. Nach erfolgreicher Vorprüfung werden die ausschließlich vorbereiteten Testdaten wieder vom LTE-Modem entfernt.
+
+### Firmwareupdate
 
 ```sh
-./foxair-updater update FW3.4.json --full --confirm
+./foxair-updater update FW3.5.json
 ```
 
-`--full` ist bei einem echten Update verpflichtend. Die Firmware wird dabei unmittelbar vor ADB-/Busaktivität erneut vollständig analysiert; Firmwareidentität, Dateigröße und Hashes müssen mit dem Manifest übereinstimmen.
+Vor dem Start erfolgt eine interaktive Bestätigung.
 
-Firmware-/Diagnosedateien vom LTE-Modem read-only sichern:
+Für einen bewusst nicht-interaktiven Aufruf bleibt möglich:
+
+```sh
+./foxair-updater update FW3.5.json --confirm
+```
+
+`--full` ist beim Update **nicht mehr erforderlich und nicht mehr vorgesehen**. Die vollständige Firmware-/Manifestprüfung läuft immer zwingend.
+
+Ein separater `same-version`-Befehl ist ebenfalls nicht mehr erforderlich. Meldet das Mainboard, dass bereits dieselbe Firmware installiert ist, erkennt der autonome Runner das automatisch und beendet den Lauf sicher ohne C357/C5A8-Firmwareübertragung.
+
+### Automatischer Abschluss
+
+Bei terminalem `success` oder `same-version`:
+
+```text
+terminales Ergebnis
+→ lokales FoxAir_DTU_Logs_<run-id>.zip erzeugen
+→ ZIP verifizieren
+→ Ergebnis auf dem DTU bestätigen (ACK)
+→ gespeicherte Daten dieses OTA-Laufs vom DTU entfernen
+```
+
+Die Archive und Host-Logs liegen unter:
+
+```text
+~/FoxAir_updater/logs/
+```
+
+Kann das Diagnosearchiv nicht sicher lokal erstellt und verifiziert werden, erfolgt **kein ACK und kein Cleanup**. Die Daten bleiben auf dem LTE-Modem erhalten.
+
+Bei `failed`, `runner-lost`, `recovery-required` oder vergleichbaren Fehlerzuständen wird ein Diagnosepaket gespeichert, die DTU-Daten werden aber absichtlich **nicht automatisch gelöscht**.
+
+Das normale per-run Cleanup entfernt keine originalen PHNIX-Dateien. Insbesondere bleiben erhalten:
+
+- `/data/phnixIot4G`
+- `/cache/phnixIot_device_OTA`
+- `/data/phnixIot_device_OTA_INFO`
+- `/data/phnixIot_device_statisic`
+
+## Host-/ADB-Verlust während des Updates
+
+Wird die Host-Verbindung unterbrochen, meldet die CLI, dass nur das Monitoring verloren wurde. Der autonome DTU-Lauf arbeitet weiter.
+
+Nach Wiederherstellung der Verbindung:
+
+```sh
+./foxair-updater status
+```
+
+Es wird kein zweiter OTA gestartet.
+
+## Firmware-/LTE-Dateien manuell sichern
 
 ```sh
 ./foxair-updater download
 ```
 
-Die Dateien landen unter `~/FoxAir_updater/downloaded_firmware/<Zeitstempel>/`.
+Die Dateien landen unter:
 
-Restore ist ausschließlich für einen Zustand **vor begonnenem C5A8-Firmwaretransfer** vorgesehen:
+```text
+~/FoxAir_updater/downloaded_firmware/<Zeitstempel>/
+```
+
+Dieser Befehl ist read-only gegenüber den gelesenen PHNIX-Dateien.
+
+## Restore
 
 ```sh
 ./foxair-updater restore
 ```
 
-Installierten Git-Stand anzeigen:
-
-```sh
-./foxair-updater version
-```
-
-Die eigentliche Sicherheitslogik bleibt im `phnix_local_ota_controller_hardened.py`; der Launcher dupliziert keine OTA-Logik.
-
-## MQTT beim normalen Vollupdate
-
-MQTT bleibt beim normalen Vollupdate **standardmäßig verbunden**.
-
-Die frühere MQTT-Isolierung ist nur noch ein optionaler Testmodus des Controllers (`--isolate-mqtt` beziehungsweise `--update-no-mqtt`). Sie ist für normale Updates nicht empfohlen.
-
-Der Originaldienst besitzt einen Rebootpfad, wenn der Aliyun-MQTT-Client intern länger als 1800 Sekunden als offline gilt. Diese 1800 Sekunden starten erst, nachdem der MQTT-SDK die Verbindung intern als offline bewertet; eine stille Firewall-DROP-Sperre kann davor mehrere Keepalive-Zyklen benötigen.
-
-Es gibt keinen bekannten OTA-Sonderzweig, der diesen Rebootpfad während eines Mainboardupdates deaktiviert.
-
-## Fortschritt und terminaler Erfolg
-
-Während C5A8 zeigt der Controller den persistenten `offset/length`-Fortschritt des Originaldienstes.
-
-> [!WARNING]
-> **100 % bedeutet nur, dass alle Firmwaredaten übertragen wurden.** Das Mainboard muss anschließend noch die Staging-Prüfung und Promotion/Commit-Phase abschließen.
-
-Beim realen V3.3→V3.4-Lauf wurden beobachtet:
-
-```text
-C5A8 vollständig
-→ C36E Status 3
-→ Mainboard Flash/Promotion
-→ C36E Status 5
-→ Board-Step 12
-→ C544 Version 0034
-```
-
-Gemessene Zeiten:
-
-- C5A8-Transfer ca. **28:56 min**;
-- letzter C5A8 → Status 5 ca. **5:16 min**;
-- vollständiger beobachteter Ablauf bis zur ersten neuen C544-Meldung rund **35 min**.
-
-Nach dem terminalen Mainboardergebnis wartet der Controller bis zu **120 Sekunden** auf einen wieder vollständig normalen LTE-/Cloudzustand.
-
-## Gleichversionstest
-
-Der Entwicklungs-/Abnahmetest für eine bereits installierte V3.3 bleibt im Launcher verfügbar:
-
-```sh
-./foxair-updater same-version FW3.3.json --confirm
-```
-
-Ein passiver Logger muss für diesen speziellen Labortest tatsächlich laufen.
-
-Der reale V3.3→V3.3-Test endete wie erwartet vor C357/C5A8. Dieser Test ist heute ein Regressionstest des frühen Handshakes und nicht mehr die höchste erreichte Live-Teststufe.
+`restore` bleibt ausschließlich als Legacy-/Recovery-Werkzeug für einen eindeutig bestätigten Zustand **vor begonnenem C5A8-Firmwaretransfer** erhalten. Es gehört nicht zum normalen autonomen Updatepfad und darf nicht als generischer Abbruch eines laufenden autonomen OTA verwendet werden.
 
 ## Manifest erzeugen
 
-Empfohlen ist zuerst die vollständig lesende Vorschau:
+Die Option `--full` bleibt beim **Manifest-Werkzeug** weiterhin sinnvoll und hat nichts mit dem früheren Update-Schalter zu tun:
 
 ```sh
-./foxair-updater manifest FW3.4.bin --full --show
+./foxair-updater manifest FW3.5.bin --full --show
+./foxair-updater manifest FW3.5.bin --full
 ```
 
-Danach kann das Manifest automatisch erzeugt werden:
+Ohne `--output` wird das Manifest neben der Firmware erzeugt.
 
-```sh
-./foxair-updater manifest FW3.4.bin --full
-```
-
-Alternativ können bekannte Sollwerte explizit angegeben werden:
-
-```sh
-./foxair-updater manifest FW3.4.bin \
-  --software-code 82400644 \
-  --display-version V3.4 \
-  --target-ssid 0063
-```
-
-Ohne `--output` wird das JSON neben der Firmware erzeugt. Größe, MD5 und SHA-256 werden vom Manifestwerkzeug berechnet.
-
-Details:
-
-[`../../docs/HowTo/FIRMWARE_MANIFEST.md`](../../docs/HowTo/FIRMWARE_MANIFEST.md)
-
-## Vorhandene Installation aktualisieren
+## Installation aktualisieren
 
 ```sh
 cd ~/FoxAir_updater
 bash updater/linux/install.sh
 ```
 
-Der Installer zieht Änderungen nur per Fast-Forward und richtet den Sparse-Checkout erneut ein. Nicht versionierte Dateien im lokalen `firmware/`-Ordner bleiben unangetastet. Es werden weder `git reset --hard` noch ein Repository-Cleanup ausgeführt.
+Der Installer aktualisiert nur per Fast-Forward. Lokale Firmwaredateien, Downloads und Logs bleiben erhalten.
 
 ## ADB
 
@@ -226,14 +219,12 @@ Der Installer zieht Änderungen nur per Fast-Forward und richtet den Sparse-Chec
 adb devices -l
 ```
 
-Ist beim Installieren noch kein LTE-Modem angeschlossen, wird dies nur als Warnung ausgegeben. Die Softwareinstallation selbst kann trotzdem abgeschlossen werden.
+Ist beim Installieren noch kein LTE-Modem angeschlossen, ist das nur eine Warnung. Die Softwareinstallation selbst kann trotzdem abgeschlossen werden.
 
 ## Weiterführende Dokumentation
 
-Diese Datei ist die **maßgebliche ausführliche Linux-/Raspberry-Pi-Anleitung**. Die Linux-Kurzabschnitte in der Projekt-`README.md` und in der Endanwender-Anleitung verweisen bewusst hierher, damit Befehle und Installationsweg nicht mehrfach vollständig gepflegt werden müssen.
-
-- [`../../README.md`](../../README.md)
-- [`../../docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md`](../../docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)
-- [`../../docs/HowTo/FIRMWARE_MANIFEST.md`](../../docs/HowTo/FIRMWARE_MANIFEST.md)
-- [`../../docs/HowTo/firmware_backup_lte.md`](../../docs/HowTo/firmware_backup_lte.md)
-- Live-Bericht im vollständigen GitHub-Repository: `docs/reverse_engineering/PHNIX_V33_TO_V34_LIVE_UPDATE_2026-08-29.md`
+- [Projekt-README](../../README.md)
+- [Endanwender-Anleitung](../../docs/HowTo/PHNIX_UPDATER_ENDANWENDER.md)
+- [Firmware-Manifest](../../docs/HowTo/FIRMWARE_MANIFEST.md)
+- [LTE-/Firmware-Backup](../../docs/HowTo/firmware_backup_lte.md)
+- [DTU OTA Runner](../../docs/DTU_OTA_RUNNER.md)

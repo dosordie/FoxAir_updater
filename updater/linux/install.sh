@@ -147,9 +147,10 @@ else
     ok "Repository als schlanker Linux-Checkout installiert"
 fi
 
-mkdir -p "$INSTALL_DIR/firmware" "$INSTALL_DIR/downloaded_firmware"
+mkdir -p "$INSTALL_DIR/firmware" "$INSTALL_DIR/downloaded_firmware" "$INSTALL_DIR/logs"
 ok "Lokaler Firmware-Ordner bereit: $INSTALL_DIR/firmware"
 ok "Lokaler Download-/Backup-Ordner bereit: $INSTALL_DIR/downloaded_firmware"
+ok "Lokaler Update-/Diagnose-Logordner bereit: $INSTALL_DIR/logs"
 
 # Die internen Werkzeuge bleiben direkt ausführbar; der Anwender verwendet im
 # Normalfall den Launcher im Projekt-Hauptverzeichnis.
@@ -158,6 +159,7 @@ chmod 755 \
     "$INSTALL_DIR/tools/phnix_ota/phnix_local_ota_controller.py" \
     "$INSTALL_DIR/tools/phnix_ota/create_firmware_manifest.py" \
     "$INSTALL_DIR/updater/dtu_ota/payload/phnix_ota_runtime_hook" \
+    "$INSTALL_DIR/updater/linux/autonomous_update.py" \
     "$INSTALL_DIR/updater/linux/install.sh"
 ok "Dateirechte gesetzt"
 
@@ -187,6 +189,8 @@ info "Prüfe FoxAir-Updater-Dateien"
     cd "$INSTALL_DIR"
     python3 tools/phnix_ota/phnix_local_ota_controller.py --help >/dev/null
     python3 tools/phnix_ota/create_firmware_manifest.py --help >/dev/null
+    python3 updater/dtu_ota/cli.py --help >/dev/null
+    python3 updater/linux/autonomous_update.py --help >/dev/null
     ./foxair-updater --help >/dev/null
 )
 ok "Updater und Launcher erfolgreich geprüft"
@@ -235,11 +239,15 @@ printf '\nFirmware und Manifest hier ablegen:\n'
 printf '  %s/firmware/\n' "$INSTALL_DIR"
 printf '\nVom LTE-Modem geladene Backups landen hier:\n'
 printf '  %s/downloaded_firmware/\n' "$INSTALL_DIR"
+printf '\nUpdate-Logs und automatische DTU-Diagnosearchive landen hier:\n'
+printf '  %s/logs/\n' "$INSTALL_DIR"
 printf '\nStatus prüfen:\n'
 printf '  cd %q\n' "$INSTALL_DIR"
 printf '  ./foxair-updater status\n'
 printf '\nFirmware/Diagnosedateien vom LTE-Modem sichern:\n'
 printf '  ./foxair-updater download\n'
-printf '\nDry-Run mit Manifest, z. B.:\n'
-printf '  ./foxair-updater check FW3.4.json\n'
-printf '\nFirmwaredateien und OTA-Zustände werden vom Installer nicht heruntergeladen, verändert oder gelöscht.\n'
+printf '\nAutonome Vorprüfung mit Manifest, z. B.:\n'
+printf '  ./foxair-updater check FW3.5.json\n'
+printf '\nAutonomes Firmwareupdate (interaktive Bestätigung):\n'
+printf '  ./foxair-updater update FW3.5.json\n'
+printf '\nFirmwaredateien und OTA-Zustände werden vom Installer selbst nicht heruntergeladen, verändert oder gelöscht.\n'
