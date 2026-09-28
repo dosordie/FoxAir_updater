@@ -10,6 +10,20 @@ DEBUG_TOOL="$ROOT_DIR/updater/linux/remote_debug_stream.py"
 die() { printf '[FEHLER] %s\n' "$*" >&2; exit 1; }
 ok() { printf '[OK] %s\n' "$*"; }
 
+debug_port_conflict() {
+    if systemctl is-active --quiet "$DEBUG_SERVICE" 2>/dev/null; then
+        return 1
+    fi
+    command -v ss >/dev/null 2>&1 || return 1
+    ss -ltn 2>/dev/null | awk '$4 ~ /:5039$/ {found=1} END {exit !found}'
+}
+
+guard_debug_port() {
+    if debug_port_conflict; then
+        die "TCP 5039 wird bereits von einem anderen Dienst verwendet. Falls dort noch eine alte ser2net-Zuordnung für den PHNIX-Debugport läuft, bitte nur diese Zuordnung entfernen/deaktivieren; andere ser2net-Ports müssen nicht abgeschaltet werden."
+    fi
+}
+
 require_systemd() {
     command -v systemctl >/dev/null 2>&1 || die "systemctl wurde nicht gefunden"
     systemctl cat "$ADB_SERVICE" >/dev/null 2>&1 \
@@ -42,6 +56,7 @@ require_systemd
 action="${1:-status}"
 case "$action" in
     start)
+        guard_debug_port
         sudo systemctl start "${SERVICES[@]}"
         ok "Remotezugriff gestartet: ADB TCP 5038, PHNIX-Debug TCP 5039"
         ;;
@@ -50,10 +65,14 @@ case "$action" in
         ok "Remotezugriff gestoppt"
         ;;
     restart)
+        if ! systemctl is-active --quiet "$DEBUG_SERVICE" 2>/dev/null; then
+            guard_debug_port
+        fi
         sudo systemctl restart "${SERVICES[@]}"
         ok "Remotezugriff neu gestartet"
         ;;
     enable)
+        guard_debug_port
         sudo systemctl enable --now "${SERVICES[@]}"
         ok "Remotezugriff aktiviert und gestartet"
         ;;
