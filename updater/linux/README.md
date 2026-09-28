@@ -16,6 +16,22 @@ wget -O install.sh https://raw.githubusercontent.com/dosordie/FoxAir_updater/mai
 bash install.sh
 ```
 
+Bei der interaktiven Erstinstallation kann zusätzlich der integrierte Windows-
+Remotezugriff aktiviert werden. Direkt erzwingen lässt er sich mit:
+
+```sh
+bash install.sh --remote-access
+```
+
+Dabei werden zwei systemd-Dienste eingerichtet:
+
+- **TCP 5038:** Remote-ADB-Server;
+- **TCP 5039:** ausschließlich lesender PHNIX-Debugstream.
+
+Der Debugstream findet den SIMCom-Port anhand **VID 1e0e / PID 9001 /
+USB-Interface 04** automatisch. Eine feste Zuordnung wie `/dev/ttyUSB4` ist
+nicht erforderlich.
+
 Standardmäßig wird nach `~/FoxAir_updater` installiert. Der Installer verwendet `sudo` nur für Systempakete und die udev-Regel.
 
 ## Installierte Struktur
@@ -212,6 +228,46 @@ bash updater/linux/install.sh
 ```
 
 Der Installer aktualisiert nur per Fast-Forward. Lokale Firmwaredateien, Downloads und Logs bleiben erhalten.
+
+## Remotezugriff für Windows
+
+Der Raspberry Pi kann den Windows-Updater direkt mit beiden benötigten
+Netzwerkpfaden versorgen:
+
+```text
+Windows
+  ├─ ADB            → Raspberry Pi :5038 → LTE-Modem/ADB
+  └─ PHNIX Debug    → Raspberry Pi :5039 → USB Interface 04 (read-only)
+```
+
+Verwaltung:
+
+```sh
+./foxair-updater remote status
+./foxair-updater remote start
+./foxair-updater remote stop
+./foxair-updater remote restart
+./foxair-updater remote enable
+./foxair-updater remote disable
+```
+
+`enable` aktiviert beide Dienste auch für den nächsten Systemstart. `start`
+startet sie nur für die aktuelle Sitzung.
+
+Der Debugstream auf TCP 5039 ist bewusst **kein allgemeiner virtueller COM-Port**:
+Netzwerkdaten werden niemals zurück auf den seriellen PHNIX-Port geschrieben.
+Für den FoxAir-Updater ist deshalb kein `ser2net` erforderlich. Falls außerhalb
+des Updaters ein echter bidirektionaler COM↔TCP-/RFC2217-Adapter gebraucht wird,
+kann ser2net weiterhin separat verwendet werden.
+
+Wenn der Remote-ADB-Dienst aktiv ist, verwendet auch
+`./foxair-updater` lokal automatisch den ADB-Server auf
+`127.0.0.1:5038`. Dadurch konkurriert kein zusätzlicher ADB-Server auf TCP
+5037 um dasselbe USB-Modem.
+
+> [!WARNING]
+> Remote-ADB ist nur für ein vertrauenswürdiges LAN vorgesehen. TCP 5038 und
+> TCP 5039 nicht per Router/Portweiterleitung ins Internet freigeben.
 
 ## ADB
 
