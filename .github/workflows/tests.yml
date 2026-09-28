@@ -44,6 +44,7 @@ jobs:
           updater/dtu_ota/original_state.py
           updater/windows/prepare_runtime_hook.py
           updater/linux/autonomous_update.py
+          updater/linux/remote_debug_stream.py
 
 
   shell:
@@ -54,6 +55,8 @@ jobs:
       - run: sh -n updater/dtu_ota/payload/dtu_ota_supervisor.sh
       - run: bash -n foxair-updater
       - run: bash -n updater/linux/install.sh
+      - run: bash -n updater/linux/remote_access.sh
+      - run: python3 updater/linux/remote_debug_stream.py --help >/dev/null
 
   macos-cli:
     runs-on: macos-latest
