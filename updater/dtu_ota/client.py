@@ -190,6 +190,40 @@ class DtuOtaClient:
         self.adb.shell(f"touch '{self._run_dir(run_id)}/abort.request'")
         return self.status(run_id, reconcile=False)
 
+    def discard_prepared(self, run_id: str) -> dict[str, Any]:
+        run_id = _run_id(run_id)
+        status = self.status(run_id, reconcile=False)
+        if (
+            status.get("state") != "prepared"
+            or status.get("phase") != "dry-run-complete"
+            or status.get("terminal") is True
+            or status.get("transfer_started") is True
+            or status.get("original_service_authoritative") is True
+        ):
+            raise RunnerClientError(
+                "prepared run is not an unstarted dry-run; refusing discard"
+            )
+        active = self.active_run_id()
+        if active is not None:
+            raise RunnerClientError(
+                f"active DTU OTA run blocks prepared-run discard: {active}"
+            )
+
+        run_dir = self._run_dir(run_id)
+        self.adb.shell(
+            f"rm -rf '{run_dir}'; "
+            f"if [ \"$(cat '{REMOTE_BASE}/last_run_id' 2>/dev/null || true)\" = '{run_id}' ]; "
+            f"then rm -f '{REMOTE_BASE}/last_run_id'; fi"
+        )
+        if self.adb.shell(f"test -e '{run_dir}' && echo 1 || true") == "1":
+            raise RunnerClientError("prepared run directory still exists after discard")
+        last = self.adb.shell(
+            f"cat '{REMOTE_BASE}/last_run_id' 2>/dev/null || true"
+        ).strip()
+        if last == run_id:
+            raise RunnerClientError("prepared run is still referenced as last_run_id")
+        return {"ok": True, "discarded": True, "run_id": run_id}
+
     def _lifecycle(self, action: str, run_id: str | None = None) -> dict[str, Any] | None:
         run_id = _run_id(run_id or self.current_run_id())
         run_dir = self._run_dir(run_id)
