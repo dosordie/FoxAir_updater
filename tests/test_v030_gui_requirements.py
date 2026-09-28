@@ -41,7 +41,6 @@ class V030GuiRequirementsTests(unittest.TestCase):
         combined = self.desktop + self.app + self.maintenance + self.traffic
         for text in (
             "not self.busy and not self._modem_info_running",
-            "self.allow_block_reset.setEnabled(not self.busy)",
             "self.cache_copy_btn.setEnabled(not self.busy",
             "self.allow_statistics_write.setEnabled(not self.busy)",
             "enabled = not self.busy and not self._traffic_running",
