@@ -164,8 +164,35 @@ class MainWindow(runner.MainWindow):
         layout.addStretch()
         return widget
 
+    @staticmethod
+    def _original_state_core():
+        return base.backend_dir() / "updater/dtu_ota/original_state.py"
+
     def _original_status_run(self):
-        base.MainWindow._status_run(self)
+        if self.busy:
+            return
+        adb = self._require_adb()
+        core = self._original_state_core()
+        if not adb:
+            return
+        if not core.is_file():
+            QMessageBox.critical(
+                self,
+                "Originalzustands-Prüfung fehlt",
+                f"Der gemeinsame Originalzustands-Core wurde nicht gefunden:\n{core}",
+            )
+            return
+        self._run(
+            "original-status",
+            [
+                str(base.backend_python()),
+                str(core),
+                "--adb",
+                str(adb),
+                "check",
+            ],
+            str(base.backend_dir()),
+        )
 
     def _original_restore(self):
         if self._runner_active:
@@ -187,9 +214,34 @@ class MainWindow(runner.MainWindow):
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
-            == QMessageBox.Yes
+            != QMessageBox.Yes
         ):
-            self._backend("restore", ["run", "--restore", "original"])
+            return
+        adb = self._require_adb()
+        core = self._original_state_core()
+        if not adb:
+            return
+        if not core.is_file():
+            QMessageBox.critical(
+                self,
+                "Wiederherstellung fehlt",
+                f"Der gemeinsame Originalzustands-Core wurde nicht gefunden:\n{core}",
+            )
+            return
+        self._run(
+            "restore",
+            [
+                str(base.backend_python()),
+                str(core),
+                "--adb",
+                str(adb),
+                "--execute",
+                "--confirm",
+                "FOXAIR-RESTORE-ORIGINAL",
+                "restore",
+            ],
+            str(base.backend_dir()),
+        )
 
     def _runner_status_run(self):
         if self._runner_run_id:
@@ -372,6 +424,39 @@ class MainWindow(runner.MainWindow):
         return text
 
     def _done(self, op, code, output):
+        if op == "original-status":
+            runner.legacy.MainWindow._done(self, "handled-result", code, output)
+            value = self._runner_json(output)
+            if isinstance(value, dict):
+                checks = value.get("checks") if isinstance(value.get("checks"), dict) else {}
+                if value.get("original_ok") is True:
+                    self.status_text.setStyleSheet(
+                        "QLabel{background:#eef9f1;border:1px solid #16803a;padding:9px;}"
+                    )
+                    self.status_text.setText(
+                        "<b>Originalzustand vollständig bestätigt.</b><br>"
+                        "Originaldienst, Watchdogs und MQTT/Cloud laufen; kein autonomer "
+                        "Update-Lauf und kein Runtime-Hook ist aktiv."
+                    )
+                else:
+                    failed = [str(key) for key, ok in checks.items() if ok is not True]
+                    detail = ", ".join(failed) if failed else str(value.get("error") or "nicht eindeutig")
+                    self.status_text.setStyleSheet(
+                        "QLabel{background:#fff8e8;border:1px solid #b26a00;padding:9px;}"
+                    )
+                    self.status_text.setText(
+                        "<b>Originalzustand nicht vollständig bestätigt.</b><br>"
+                        + escape(detail)
+                    )
+            else:
+                self.status_text.setStyleSheet(
+                    "QLabel{background:#fff0f0;border:1px solid #b42318;padding:9px;}"
+                )
+                self.status_text.setText(
+                    "<b>Originalzustand konnte nicht ausgewertet werden.</b>"
+                )
+            return
+
         if op == "runner-prepare":
             value = self._runner_json(output)
             if code != 0 or value is None or value.get("ok") is False:
