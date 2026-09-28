@@ -1,9 +1,9 @@
-# Windows Updater v0.4.0
+# Windows Updater
 
 Die Windows-Version ist der empfohlene Bedienweg für den FoxAir Updater. Seit v0.4.0 wird das eigentliche Mainboard-OTA nach der Vorbereitung **autonom auf dem LTE-Modem** ausgeführt. Windows startet und überwacht den Vorgang, ist nach dem Start aber nicht mehr die Instanz, die den Transfer am Leben hält.
 
 > [!IMPORTANT]
-> Real bestätigt sind lokale und Remote-ADB-Verbindung, Backup/Diagnose, Vorprüfung, V3.3→V3.3 bis zur sicheren Gleichversionsablehnung sowie vollständige reale Mainboard-Firmwarewechsel **V3.3 → V3.4** und **V1.2 → V3.4**. **V3.5 (`82400644 / 0035`) ist als nächste Revision derselben Firmwarelinie bestätigt, aber noch nicht durch einen vollständigen realen Updatevorgang mit dem Updater validiert. Die untersuchte V3.5 stammt aus einer FoxAir BlueLine; entsprechende BlueLine- und GreenLine-Geräte mit Softwarecode `82400644` verwenden dieselbe Mainboard-Firmwarelinie und sind firmwareseitig untereinander kompatibel.** Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
+> Real bestätigt sind lokale und Remote-ADB-Verbindung, Backup/Diagnose, Vorprüfung, V3.3→V3.3 bis zur sicheren Gleichversionsablehnung sowie vollständige reale Mainboard-Firmwarewechsel **V3.3 → V3.4**, **V1.2 → V3.4** und Updates auf **V3.5 (`82400644 / 0035`)**. Die untersuchte V3.5 stammt aus einer FoxAir BlueLine; entsprechende BlueLine- und GreenLine-Geräte mit Softwarecode `82400644` verwenden dieselbe Mainboard-Firmwarelinie und sind firmwareseitig untereinander kompatibel. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
 
 Öffentliche Windows-Versionen stehen als Portable-ZIP und Setup-EXE auf der GitHub-Releases-Seite bereit:
 
@@ -51,14 +51,36 @@ ADB wird nicht mitgeliefert. Unterstützt werden:
 - manuelles Reconnect;
 - Speicherung von ADB-Pfad, Remote-IP/Port und Backup-Ziel.
 
-Remote-ADB auf einem Raspberry Pi kann beispielsweise so bereitgestellt werden:
+Für den empfohlenen Raspberry-Pi-Serverweg richtet der Linux-Installer den Remotezugriff bereits als systemd-Dienste ein. Auf einer frischen Installation bleiben sie zunächst deaktiviert.
+
+Auf dem Raspberry Pi:
 
 ```bash
-adb kill-server
-adb -a -P 5038 nodaemon server
+cd ~/FoxAir_updater
+./foxair-updater remote start
+./foxair-updater remote status
 ```
 
-Der Port sollte nur in einem vertrauenswürdigen lokalen Netz erreichbar sein.
+Für automatischen Start nach einem Reboot:
+
+```bash
+./foxair-updater remote enable
+```
+
+Der Raspberry Pi stellt der Windows-GUI zwei getrennte Netzwerkpfade bereit:
+
+```text
+Windows-GUI
+  ├─ ADB         → Raspberry Pi :5038 → LTE-Modem
+  └─ PHNIX Debug → Raspberry Pi :5039 → USB Interface 04 (read-only)
+```
+
+In der Windows-GUI wird **Remote – ADB-Server auf Raspberry Pi** gewählt, die Raspberry-Pi-IP eingetragen und Port `5038` verwendet. Der Remote-PHNIX-Debugkanal wird automatisch auf demselben Host mit **ADB-Port + 1** geöffnet, standardmäßig also TCP `5039`.
+
+Der Debugstream ist absichtlich nur lesend und ersetzt für den FoxAir Updater einen allgemeinen COM↔TCP-Forwarder. `ser2net` ist für diesen Remoteweg nicht erforderlich. Unter Windows wird weiterhin eine lokale `adb.exe` als ADB-Client benötigt.
+
+> [!WARNING]
+> TCP 5038 und 5039 nur in einem vertrauenswürdigen lokalen Netz verwenden und nicht per Router/Portweiterleitung ins Internet freigeben.
 
 ## Firmwareupdate
 
