@@ -4,10 +4,12 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTROLLER="$ROOT_DIR/tools/phnix_ota/phnix_local_ota_controller_hardened.py"
 MANIFEST_TOOL="$ROOT_DIR/tools/phnix_ota/create_firmware_manifest.py"
+AUTONOMOUS="$ROOT_DIR/updater/linux/autonomous_update.py"
 ADB_BIN="${FOX_AIR_ADB:-adb}"
 STATE_DIR="$ROOT_DIR/phnix-ota-state"
 FIRMWARE_DIR="$ROOT_DIR/firmware"
 DOWNLOAD_DIR="$ROOT_DIR/downloaded_firmware"
+LOG_DIR="$ROOT_DIR/logs"
 CACHE_BACKUP_DIR="$STATE_DIR/original-cache"
 CACHE_PENDING="$CACHE_BACKUP_DIR/cache.pending"
 REMOTE_CACHE="/cache/phnixIot_device_OTA"
@@ -50,8 +52,7 @@ FoxAir Updater
 Verwendung:
   ./foxair-updater status
   ./foxair-updater check MANIFEST
-  ./foxair-updater update MANIFEST --full --confirm
-  ./foxair-updater same-version MANIFEST --confirm
+  ./foxair-updater update MANIFEST [--confirm]
   ./foxair-updater restore
   ./foxair-updater download
   ./foxair-updater manifest FIRMWARE [--full] [--show] [--software-code CODE] [--display-version VERSION] [--target-ssid 0063]
@@ -62,13 +63,28 @@ angegeben, wird automatisch im lokalen Ordner ./firmware/ gesucht.
 
 Beispiele:
   ./foxair-updater status
-  ./foxair-updater check FW3.4.json
-  ./foxair-updater update FW3.4.json --full --confirm
-  ./foxair-updater same-version FW3.3.json --confirm
+  ./foxair-updater check FW3.5.json
+  ./foxair-updater update FW3.5.json
+  ./foxair-updater update FW3.5.json --confirm
   ./foxair-updater download
-  ./foxair-updater manifest FW3.4.bin --full
-  ./foxair-updater manifest FW3.4.bin --full --show
-  ./foxair-updater manifest FW3.4.bin --software-code 82400644 --display-version V3.4 --show
+  ./foxair-updater manifest FW3.5.bin --full
+  ./foxair-updater manifest FW3.5.bin --full --show
+
+Bei update ist die vollständige Firmware-/Manifestprüfung immer aktiv und kann
+nicht abgeschaltet werden. --full ist deshalb dort nicht mehr erforderlich.
+
+Der normale Updatepfad verwendet den autonomen DTU-Runner. Nach dem Start läuft
+der Mainboard-OTA auf dem LTE-Modem unabhängig von der Host-/ADB-Verbindung.
+Eine bereits installierte identische Firmware wird automatisch erkannt; ein
+separater same-version-Befehl ist nicht erforderlich.
+
+Ohne --confirm fragt update interaktiv vor dem Start nach. Für einen bewusst
+nicht-interaktiven Start kann --confirm weiterhin verwendet werden.
+
+Nach success oder same-version wird zuerst ein lokales Diagnosearchiv unter
+./logs/ erzeugt und verifiziert. Erst danach werden das terminale Ergebnis
+bestätigt und die zu diesem Lauf gehörenden FoxAir-Updater-Daten vom LTE-Modem
+entfernt. Bei Fehler-/Recovery-Zuständen bleiben die DTU-Diagnosedaten erhalten.
 
 --full beim Manifest-Befehl extrahiert SoftwareCode und Wire-Version direkt aus
 der Firmwaredatei und plausibilisiert das Cortex-M-Image. target_ssid ist fuer
@@ -77,24 +93,15 @@ FoxAir fest 0063 (Modbus Unit-ID 0x63).
 --show erzeugt dasselbe Manifest nur im Speicher und gibt das JSON auf stdout
 aus. Es wird dabei keine Manifestdatei geschrieben.
 
---full ist bei einem echten Update verpflichtend. Die zum Manifest gehoerende
-Firmware wird unmittelbar vor ADB-/Busaktivitaet erneut analysiert; extrahierte
-Identitaet, Dateigroesse und Hashes muessen strikt mit dem Manifest uebereinstimmen.
-
 Der Befehl download liest die aktuell im LTE-Cache vorhandene Mainboard-Firmware
 sowie wichtige LTE-/OTA-Dateien aus und speichert sie unter
 ./downloaded_firmware/<Zeitstempel>/. Auf dem Modem wird dabei nichts veraendert.
 
-Vor update und same-version wird eine eventuell vorhandene Originaldatei
-/cache/phnixIot_device_OTA zusaetzlich intern gesichert. same-version stellt sie
-nach erfolgreicher Gleichversionsablehnung wieder her; dasselbe gilt, wenn der
-normale update-Pfad terminal als same-version endet. restore stellt sie nach
-einem bestaetigten Pre-C5A8-Recovery wieder auf den Ausgangszustand zurueck.
-Ein offener Sicherungszustand verhindert absichtlich, dass ein neuer Lauf das
-noch benoetigte Originalbackup ueberschreibt.
+restore bleibt als Legacy-/Recovery-Werkzeug fuer eindeutig bestaetigte
+Pre-C5A8-Zustaende erhalten und gehoert nicht zum normalen autonomen Updatepfad.
 
 Beim Manifest-Befehl wird ohne --show die JSON-Datei standardmaessig neben der
-Firmware mit dem gleichen Basisnamen angelegt, z. B. FW3.4.bin -> FW3.4.json.
+Firmware mit dem gleichen Basisnamen angelegt, z. B. FW3.5.bin -> FW3.5.json.
 TXT
 }
 
@@ -366,14 +373,15 @@ if errors:
 PY
     then
         rm -f "$tmp"
-        die "--full Vorpruefung abgebrochen"
+        die "Vollanalyse der Firmware abgebrochen"
     fi
 
     rm -f "$tmp"
     printf '[OK] Vollanalyse: Firmwareidentitaet, Groesse und Hashes stimmen mit dem Manifest ueberein\n'
 }
 
-[[ -f "$CONTROLLER" ]] || die "Controller fehlt: $CONTROLLER"
+[[ -f "$CONTROLLER" ]] || die "Legacy-/Recovery-Controller fehlt: $CONTROLLER"
+[[ -f "$AUTONOMOUS" ]] || die "Autonomer Linux-Updater fehlt: $AUTONOMOUS"
 command -v python3 >/dev/null 2>&1 || die "python3 wurde nicht gefunden"
 
 command="${1:---help}"
@@ -384,73 +392,42 @@ case "$command" in
     status)
         [[ $# -eq 1 ]] || die "status benoetigt keine weiteren Argumente"
         require_adb
-        exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --check status
+        exec python3 "$AUTONOMOUS" \
+            --adb "$ADB_BIN" \
+            --logs-dir "$LOG_DIR" \
+            --root-dir "$ROOT_DIR" \
+            status
         ;;
     check)
         [[ $# -eq 2 ]] || die "Verwendung: ./foxair-updater check MANIFEST"
-        require_adb
         manifest="$(resolve_manifest "$2")"
-        exec python3 "$CONTROLLER" --adb "$ADB_BIN" run --manifest "$manifest"
-        ;;
-    update)
-        [[ $# -eq 4 ]] || die "Verwendung: ./foxair-updater update MANIFEST --full --confirm"
-        manifest="$(resolve_manifest "$2")"
-        full=0
-        confirm=0
-        for arg in "${@:3}"; do
-            case "$arg" in
-                --full) full=1 ;;
-                --confirm) confirm=1 ;;
-                *) die "Unbekannte update-Option: $arg" ;;
-            esac
-        done
-        (( confirm == 1 )) || die "Update benoetigt --confirm"
-        (( full == 1 )) || die "Echte Updates benoetigen zwingend --full"
         full_manifest_preflight "$manifest"
         require_adb
-        backup_update_cache
-        if python3 "$CONTROLLER" \
+        exec python3 "$AUTONOMOUS" \
             --adb "$ADB_BIN" \
-            run \
-            --manifest "$manifest" \
-            --execute \
-            --confirm PHNIX-FULL-UPDATE \
-            --state-dir "$STATE_DIR"; then
-            phase="$(latest_update_phase)" || die "Terminaler Host-Run-State des Updates fehlt"
-            if [[ "$phase" == "same-version" ]]; then
-                restore_update_cache
-            elif [[ "$phase" == "success" ]]; then
-                clear_update_cache_pending
-            else
-                die "Unerwarteter terminaler Updatezustand trotz Exit 0: $phase"
-            fi
-            exit 0
-        else
-            rc=$?
-            warn "Update nicht erfolgreich terminal beendet; das Original-Cache-Backup bleibt fuer einen gegebenenfalls zulaessigen Pre-C5A8-Restore erhalten."
-            exit "$rc"
-        fi
+            --logs-dir "$LOG_DIR" \
+            --root-dir "$ROOT_DIR" \
+            check --manifest "$manifest"
         ;;
-    same-version)
-        [[ $# -eq 3 && "$3" == "--confirm" ]] || die "Verwendung: ./foxair-updater same-version MANIFEST --confirm"
-        require_adb
-        manifest="$(resolve_manifest "$2")"
-        backup_update_cache
-        if python3 "$CONTROLLER" \
-            --adb "$ADB_BIN" \
-            same-version-test \
-            --manifest "$manifest" \
-            --execute \
-            --confirm PHNIX-C350-SAME-V33 \
-            --logger-confirm PASSIVE-LOGGER-RUNNING \
-            --state-dir "$STATE_DIR"; then
-            restore_update_cache
-            exit 0
-        else
-            rc=$?
-            warn "Gleichversionstest nicht sicher terminal beendet; Cache wird nicht automatisch veraendert. Bei bestaetigtem Pre-C5A8-Zustand ./foxair-updater restore verwenden."
-            exit "$rc"
+    update)
+        [[ $# -ge 2 && $# -le 3 ]] || die "Verwendung: ./foxair-updater update MANIFEST [--confirm]"
+        if [[ $# -eq 3 && "$3" != "--confirm" ]]; then
+            die "Unbekannte update-Option: $3"
         fi
+        manifest="$(resolve_manifest "$2")"
+        full_manifest_preflight "$manifest"
+        require_adb
+        autonomous_args=(
+            python3 "$AUTONOMOUS"
+            --adb "$ADB_BIN"
+            --logs-dir "$LOG_DIR"
+            --root-dir "$ROOT_DIR"
+            update --manifest "$manifest"
+        )
+        if [[ $# -eq 3 ]]; then
+            autonomous_args+=(--yes)
+        fi
+        exec "${autonomous_args[@]}"
         ;;
     restore)
         [[ $# -eq 1 ]] || die "restore benoetigt keine weiteren Argumente"
