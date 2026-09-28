@@ -13,15 +13,23 @@ class FakeAdb:
         self.commands = []
         self.pushed = []
         self.files = set()
+        self.ota_info = self._valid_ota_info()
         self.values = {
             "pidof phnixIot4G": "2002",
             "readlink /proc/2002/exe": "/data/phnixIot4G",
             "sha256sum '/data/phnixIot4G'": EXPECTED_SERVICE_SHA256.lower(),
-            "TracerPid": "0",
+            "TracerPid": "State:\tS (sleeping)\nTracerPid:\t0",
             "$4 == \"{helloworld}\"": "100\n101",
             ":1883": "tcp 0 0 10.0.0.2:4567 1.2.3.4:1883 ESTABLISHED",
             original_state.REMOTE_RUNNER_LOCK: "",
         }
+
+    @staticmethod
+    def _valid_ota_info():
+        raw = bytearray(220)
+        crc = original_state._crc16_x25(bytes(raw[4:220]))
+        raw[0:4] = crc.to_bytes(4, "little")
+        return bytes(raw)
 
     def shell(self, command, check=True):
         self.commands.append(command)
@@ -38,6 +46,11 @@ class FakeAdb:
                 return value
         return ""
 
+    def read_file(self, remote):
+        if remote == "/data/phnixIot_device_OTA_INFO":
+            return self.ota_info
+        return b""
+
     def push(self, local, remote):
         self.pushed.append((Path(local), remote))
 
@@ -48,6 +61,27 @@ class OriginalStateTests(unittest.TestCase):
         result = original_state.original_state_snapshot(adb)
         self.assertTrue(result["original_ok"])
         self.assertTrue(all(result["checks"].values()))
+
+    def test_original_state_rejects_invalid_ota_info_crc(self):
+        adb = FakeAdb()
+        adb.ota_info = bytes(220)
+        result = original_state.original_state_snapshot(adb)
+        self.assertFalse(result["original_ok"])
+        self.assertFalse(result["checks"]["ota_info_valid"])
+
+    def test_original_state_rejects_debugger_cloud_guard_http_or_staging(self):
+        cases = (
+            ("pidof gdbserver gdb", "123"),
+            ("iptables -S OUTPUT", "-A OUTPUT -p tcp --dport 1883 -j DROP"),
+            ("netstat -lnt", "tcp 0 0 127.0.0.1:8081 0.0.0.0:* LISTEN"),
+            ("ls -A '/data/phnix_local_ota'", "firmware.bin"),
+        )
+        for key, value in cases:
+            with self.subTest(key=key):
+                adb = FakeAdb()
+                adb.values[key] = value
+                result = original_state.original_state_snapshot(adb)
+                self.assertFalse(result["original_ok"])
 
     def test_active_autonomous_run_blocks_original_state_and_restore(self):
         adb = FakeAdb()
