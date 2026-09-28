@@ -129,6 +129,15 @@ class WindowsRunnerProductTests(unittest.TestCase):
         method = self.product.split("def _set_step", 1)[1].split("def _render_runner_status", 1)[0]
         self.assertIn("self.FLOW_KEY_ALIASES.get(key, key)", method)
 
+    def test_manual_preflight_is_discarded_instead_of_left_on_dtu(self):
+        done = self.runner.split("def _done", 1)[1].split("def _buttons", 1)[0]
+        self.assertIn('"runner-discard-prepared"', done)
+        self.assertIn('"discard-prepared"', done)
+        self.assertIn("Vorprüfungsdaten wurden wieder vom LTE-Modem entfernt", done)
+        self.assertIn('"runner-discard-prepared"', self.enduser)
+        self.assertIn('"discard-prepared"', self.cli)
+        self.assertIn("def discard_prepared", self.client)
+
     def test_manual_preflight_does_not_repeat_phase_below_flow_box(self):
         method = self.product.split("def _render_runner_status", 1)[1].split("def _update_debug_line", 1)[0]
         self.assertIn('phase == "dry-run-complete"', method)
