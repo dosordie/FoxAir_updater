@@ -27,6 +27,13 @@ class LinuxRemoteAccessTests(unittest.TestCase):
         self.assertNotIn("os.write(", self.debug)
         self.assertIn("while await reader.read(4096)", self.debug)
 
+    def test_fresh_install_keeps_remote_access_disabled(self):
+        self.assertNotIn("REMOTE_ACCESS_MODE", self.installer)
+        self.assertNotIn("Remotezugriff für Windows aktivieren", self.installer)
+        self.assertIn("Remotezugriff installiert und standardmäßig deaktiviert", self.installer)
+        self.assertIn("remote start", self.installer)
+        self.assertIn("remote enable", self.installer)
+
     def test_remote_control_manages_both_services(self):
         self.assertIn('ADB_SERVICE="foxair-adb-remote.service"', self.remote)
         self.assertIn('DEBUG_SERVICE="foxair-debug-stream.service"', self.remote)
