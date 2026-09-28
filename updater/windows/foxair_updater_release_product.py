@@ -184,17 +184,23 @@ class MainWindow(product.MainWindow):
         python = str(base.backend_python())
         adb_path = str(adb)
         cleanup_check = [python, str(core), "--adb", adb_path, "check"]
+        original_state = self._original_state_core()
+        if not original_state.is_file():
+            QMessageBox.critical(
+                self,
+                "Wiederherstellung fehlt",
+                f"Der gemeinsame Originalzustands-Core wurde nicht gefunden:\n{original_state}",
+            )
+            return
         restore = [
             python,
-            str(self.controller),
+            str(original_state),
             "--adb",
             adb_path,
-            "--output",
-            "json",
-            "--no-color",
-            "run",
-            "--restore",
-            "original",
+            "--execute",
+            "--confirm",
+            "FOXAIR-RESTORE-ORIGINAL",
+            "restore",
         ]
         cleanup = [
             python,

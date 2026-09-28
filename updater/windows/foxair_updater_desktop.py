@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 import threading
 from html import escape
@@ -21,7 +20,6 @@ from PySide6.QtWidgets import (
 )
 
 import foxair_updater_app as app
-import phnix_windows_controller_wrapper as windows_wrapper
 from updater.common.adb_transport import AdbClient
 from updater.common.phnix_modem_info import PhnixModemInfo, format_seconds, read_phnix_modem_info
 
@@ -40,7 +38,6 @@ class MainWindow(app.MainWindow):
         self._modem_signals.result.connect(self._modem_info_result)
         self._modem_signals.error.connect(self._modem_info_error)
         super().__init__()
-        self._refresh_block_state()
 
     def _ui(self):
         super()._ui()
@@ -63,33 +60,6 @@ class MainWindow(app.MainWindow):
         layout.insertWidget(insert_at, self.show_modem_diagnostics)
         insert_at += 1
 
-        separator = QLabel("<hr><b>Lokalen Windows-Blockzustand zurücksetzen</b>")
-        layout.insertWidget(insert_at, separator)
-        insert_at += 1
-
-        note = QLabel(
-            "Für Recovery-/Testfälle kann ein offener <code>cache.pending</code>-Zustand "
-            "nur nach eindeutig sicherer Controllerprüfung zurückgesetzt werden. Dabei wird "
-            "die vorhandene Restore-/Konsistenzlogik des Update-Schutzes verwendet; bei einem unklaren "
-            "oder möglicherweise bereits begonnenen Firmwaretransfer bleibt alles unverändert."
-        )
-        note.setWordWrap(True)
-        layout.insertWidget(insert_at, note)
-        insert_at += 1
-
-        self.block_reset_status = QLabel()
-        self.block_reset_status.setWordWrap(True)
-        layout.insertWidget(insert_at, self.block_reset_status)
-        insert_at += 1
-
-        self.allow_block_reset = QCheckBox("Blockzustand zurücksetzen erlauben")
-        self.allow_block_reset.toggled.connect(self._buttons)
-        layout.insertWidget(insert_at, self.allow_block_reset)
-        insert_at += 1
-
-        self.block_reset_btn = QPushButton("cache.pending-Blockzustand zurücksetzen")
-        self.block_reset_btn.clicked.connect(self._reset_block_pending)
-        layout.insertWidget(insert_at, self.block_reset_btn)
         return widget
 
     def _toggle_modem_diagnostics(self, visible: bool) -> None:
@@ -138,109 +108,6 @@ class MainWindow(app.MainWindow):
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
         return widget
-
-    @staticmethod
-    def _wrapper_pending_path() -> Path:
-        local = os.environ.get("LOCALAPPDATA")
-        base = Path(local) if local else Path.home() / "AppData" / "Local"
-        return (
-            base
-            / "FoxAir Updater"
-            / "windows-wrapper-state"
-            / "original-cache"
-            / "cache.pending"
-        )
-
-    def _refresh_block_state(self):
-        if not hasattr(self, "block_reset_status"):
-            return
-        marker = self._wrapper_pending_path()
-        if marker.exists():
-            self.block_reset_status.setStyleSheet(f"QLabel{{color:{app.YELLOW};font-weight:bold;}}")
-            self.block_reset_status.setText(
-                "Lokaler Blockzustand ist aktiv:<br><code>" + escape(str(marker)) + "</code>"
-            )
-        else:
-            self.block_reset_status.setStyleSheet(f"QLabel{{color:{app.GREEN};}}")
-            self.block_reset_status.setText("Kein lokaler cache.pending-Blockzustand vorhanden.")
-        self._buttons()
-
-    def _reset_block_pending(self, checked: bool = False, *, from_dry_run: bool = False):
-        if self.busy or (not from_dry_run and not self.allow_block_reset.isChecked()):
-            return
-        marker = self._wrapper_pending_path()
-        if not marker.exists():
-            self._refresh_block_state()
-            QMessageBox.information(self, "Blockzustand", "cache.pending ist bereits nicht vorhanden.")
-            return
-
-        run_state = self._latest_controller_run_state()
-        simulator_state = self._stopped_simulator_state()
-        if not windows_wrapper.dirty_state_reset_is_safe(run_state, simulator_state):
-            QMessageBox.warning(
-                self,
-                "Sicherheitszustand nicht zurücksetzbar",
-                "Ein kritischer Firmwaretransfer kann anhand des Controller-Run-State nicht sicher "
-                "ausgeschlossen werden. Der Zustand bleibt unverändert.",
-            )
-            return
-        if (
-            QMessageBox.warning(
-                self,
-                "Offenen Sicherheitszustand sicher zurücksetzen?",
-                "Es wurde ein offener Sicherheitszustand eines vorherigen Laufs gefunden. "
-                "Dies kann von einem nicht sauber beendeten Lauf stammen.\n\n"
-                "Der Controller bestätigt einen Zustand vor dem Firmwaretransfer. Die vorhandene "
-                "Restore- und Konsistenzprüfung des Update-Schutzes wird jetzt verwendet; Marker werden nicht "
-                "blind gelöscht.\n\nSicherheitszustand sicher zurücksetzen?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            != QMessageBox.Yes
-        ):
-            return
-
-        self.allow_block_reset.setChecked(False)
-        self._backend("restore", ["run", "--restore", "original"])
-
-    def _latest_controller_run_state(self) -> dict | None:
-        candidates = [path for path in self.state_dir.glob("*/run-state.json") if path.is_file()]
-        if not candidates:
-            return None
-        try:
-            value = __import__("json").loads(
-                max(candidates, key=lambda path: path.stat().st_mtime_ns).read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError):
-            return None
-        return value if isinstance(value, dict) else None
-
-    def _stopped_simulator_state(self) -> dict | None:
-        adb = self._adb_path()
-        if adb is None:
-            return None
-        try:
-            client = AdbClient(adb, env=self._process_env())
-            is_simulator = client.shell("test -f /data/.phnix_ota_simulator; echo $?") == "0"
-            first_status = client.shell("cat /tmp/phnix_ota_status.json")
-            running = client.shell("test -f /tmp/phnix_ota_hook/run.active; echo $?") == "0"
-            second_status = client.shell("cat /tmp/phnix_ota_status.json")
-            if not is_simulator or first_status != second_status:
-                return None
-            status = __import__("json").loads(second_status)
-        except (OSError, RuntimeError, ValueError):
-            return None
-        return {
-            "marker": "PHNIX-OTA-SIMULATOR-V1",
-            "status": status,
-            "runtime": {"running": running},
-        }
-
-    def _dry(self):
-        if self._wrapper_pending_path().exists():
-            self._reset_block_pending(from_dry_run=True)
-            return
-        super()._dry()
 
     def _refresh_modem_info(self):
         if self.busy or self._modem_info_running:
@@ -406,13 +273,6 @@ class MainWindow(app.MainWindow):
         if hasattr(self, "modem_refresh_btn"):
             self.modem_refresh_btn.setEnabled(
                 not self.busy and not self._modem_info_running and self._adb_ready()
-            )
-        if hasattr(self, "block_reset_btn"):
-            self.allow_block_reset.setEnabled(not self.busy)
-            self.block_reset_btn.setEnabled(
-                not self.busy
-                and self.allow_block_reset.isChecked()
-                and self._wrapper_pending_path().exists()
             )
 
 

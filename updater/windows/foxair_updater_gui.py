@@ -80,10 +80,8 @@ class MainWindow(QMainWindow):
         self.ota_monitoring_lost = False
         self.pending_manifest_output: Path | None = None
 
-        self.controller = backend_dir() / "tools/phnix_ota/phnix_local_ota_controller.py"
         self.manifest_tool = backend_dir() / "tools/phnix_ota/create_firmware_manifest.py"
-        self.state_dir = data_dir() / "phnix-ota-state"
-        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.original_state_tool = backend_dir() / "updater/dtu_ota/original_state.py"
 
         self.setWindowTitle(f"FoxAir Updater {APP_VERSION}")
         self.resize(1100, 780)
@@ -698,22 +696,6 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _backend(self, op, args):
-        adb = self._require_adb()
-        if not adb:
-            return
-        command = [
-            str(backend_python()),
-            str(self.controller),
-            "--adb",
-            str(adb),
-            "--output",
-            "json",
-            "--no-color",
-            *args,
-        ]
-        self._run(op, command, str(backend_dir()))
-
     def _manifest_command(self, *, full: bool, show: bool, output: Path | None = None):
         firmware = Path(self.firmware.text().strip())
         if not firmware.is_file():
@@ -934,18 +916,12 @@ class MainWindow(QMainWindow):
             self._run("reconnect", [str(adb), "reconnect"])
 
     def _reattach_ota(self):
-        """Reconnect ADB and read the existing OTA session without changing it."""
-        adb = self._require_adb()
-        if not adb:
-            return
-        command = [
-            str(backend_python()), str(self.controller), "--adb", str(adb),
-            "--output", "json", "--no-color", "status",
-        ]
-        self._run_sequence(
-            "ota-reattach",
-            [[str(adb), "reconnect"], command],
-            str(backend_dir()),
+        """Base-shell fallback; the product runner layer owns OTA reattachment."""
+        QMessageBox.information(
+            self,
+            "Autonomer DTU-Runner",
+            "Der Update-Status wird in der aktuellen Produktoberfläche direkt aus dem "
+            "persistenten DTU-Runner gelesen.",
         )
 
     def _backup_run(self):
@@ -973,43 +949,35 @@ class MainWindow(QMainWindow):
         self._run_sequence("backup", commands)
 
     def _status_run(self):
-        self._backend("status", ["run", "--check", "status"])
+        adb = self._require_adb()
+        if not adb:
+            return
+        self._run(
+            "original-status",
+            [
+                str(backend_python()),
+                str(self.original_state_tool),
+                "--adb",
+                str(adb),
+                "check",
+            ],
+            str(backend_dir()),
+        )
 
     def _dry(self):
-        manifest = Path(self.update_manifest.text().strip())
-        if manifest.is_file():
-            self.progress.setValue(0)
-            self._backend("dry", ["run", "--manifest", str(manifest)])
+        QMessageBox.information(
+            self,
+            "Autonomer DTU-Runner",
+            "Die Firmware-Vorprüfung wird in der aktuellen Produktoberfläche über den "
+            "autonomen DTU-Runner ausgeführt.",
+        )
 
     def _update_run(self):
-        manifest = Path(self.update_manifest.text().strip())
-        if not manifest.is_file() or not self.risk.isChecked():
-            return
-        if (
-            QMessageBox.warning(
-                self,
-                "Firmwareupdate starten",
-                "Ein Firmwareupdate verändert die Mainboard-Firmware und erfolgt auf eigenes "
-                "Risiko. Firmwareupdates wurden bereits auf mehreren Hardware- und "
-                "Firmwarevarianten erfolgreich durchgeführt. Nicht geprüfte Firmwareziele oder "
-                "Hardwarevarianten können trotzdem abweichendes Verhalten zeigen."
-                "\n\nFirmwareupdate jetzt starten?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            != QMessageBox.Yes
-        ):
-            return
-        self.progress.setValue(0)
-        update_args = [
-            "run", "--manifest", str(manifest), "--execute", "--confirm",
-            "PHNIX-FULL-UPDATE", "--state-dir", str(self.state_dir),
-        ]
-        if self.isolate_mqtt.isChecked():
-            update_args.append("--isolate-mqtt")
-        self._backend(
-            "update",
-            update_args,
+        QMessageBox.information(
+            self,
+            "Autonomer DTU-Runner",
+            "Firmwareupdates werden in der aktuellen Produktoberfläche ausschließlich über "
+            "den autonomen DTU-Runner gestartet.",
         )
 
     def _restore(self):
@@ -1021,21 +989,33 @@ class MainWindow(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
-            == QMessageBox.Yes
+            != QMessageBox.Yes
         ):
-            self._backend("restore", ["run", "--restore", "original"])
+            return
+        adb = self._require_adb()
+        if not adb:
+            return
+        self._run(
+            "restore",
+            [
+                str(backend_python()),
+                str(self.original_state_tool),
+                "--adb",
+                str(adb),
+                "--execute",
+                "--confirm",
+                "FOXAIR-RESTORE-ORIGINAL",
+                "restore",
+            ],
+            str(backend_dir()),
+        )
 
     def _same(self):
-        manifest = Path(self.same_manifest.text().strip())
-        if not manifest.is_file() or not self.logger.isChecked():
-            return
-        self._backend(
-            "same",
-            [
-                "same-version-test", "--manifest", str(manifest), "--execute", "--confirm",
-                "PHNIX-C350-SAME-V33", "--logger-confirm", "PASSIVE-LOGGER-RUNNING",
-                "--state-dir", str(self.state_dir),
-            ],
+        QMessageBox.information(
+            self,
+            "Gleiche Firmware",
+            "Eine identische Firmware wird vom autonomen DTU-Runner automatisch erkannt. "
+            "Ein separater Gleichversionstest ist nicht mehr erforderlich.",
         )
 
     def _manifest_preview_full(self):

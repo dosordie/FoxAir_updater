@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 SYSTEM_HEADER = b"#!/system/bin/sh\n"
-LEGACY_HEADER = b"#!/bin/sh\n"
+RUNTIME_HEADER = b"#!/bin/sh\n"
 
 
 def normalize_shell_bytes(raw: bytes) -> bytes:
@@ -15,19 +15,19 @@ def normalize_shell_bytes(raw: bytes) -> bytes:
     return raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
-def legacy_hook_bytes(raw: bytes) -> bytes:
-    """Return the controller-compatible runtime hook with deterministic LF."""
+def runtime_hook_bytes(raw: bytes) -> bytes:
+    """Return a deterministic DTU runtime hook suitable for source and packaging."""
     normalized = normalize_shell_bytes(raw)
-    if normalized.startswith(LEGACY_HEADER):
+    if normalized.startswith(RUNTIME_HEADER):
         return normalized
     if normalized.startswith(SYSTEM_HEADER):
-        return LEGACY_HEADER + normalized[len(SYSTEM_HEADER):]
+        return RUNTIME_HEADER + normalized[len(SYSTEM_HEADER):]
     raise RuntimeError("canonical runtime hook has unexpected header")
 
 
 def prepare(source: Path, output: Path) -> None:
     try:
-        written = legacy_hook_bytes(source.read_bytes())
+        written = runtime_hook_bytes(source.read_bytes())
     except RuntimeError as error:
         raise RuntimeError(f"{error}: {source}") from error
 
@@ -36,11 +36,11 @@ def prepare(source: Path, output: Path) -> None:
 
     verified = output.read_bytes()
     if verified != written:
-        raise RuntimeError(f"legacy runtime hook write verification failed: {output}")
-    if not verified.startswith(LEGACY_HEADER):
-        raise RuntimeError(f"legacy runtime hook header verification failed: {output}")
+        raise RuntimeError(f"runtime hook write verification failed: {output}")
+    if not verified.startswith(RUNTIME_HEADER):
+        raise RuntimeError(f"runtime hook header verification failed: {output}")
     if b"\r" in verified:
-        raise RuntimeError(f"legacy runtime hook still contains CR line endings: {output}")
+        raise RuntimeError(f"runtime hook still contains CR line endings: {output}")
 
 
 def main() -> int:

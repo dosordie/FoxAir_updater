@@ -190,22 +190,6 @@ class WindowsOtaResilienceTests(unittest.TestCase):
         self.assertIn("SERIAL_FALLBACK_TAIL_MS = 40 * 60 * 1000", lte)
         self.assertIn("SERIAL_FALLBACK_TAIL_MS,", lte)
 
-    def test_permanent_adb_detach_exits_before_another_remote_probe(self):
-        controller = (ROOT / "tools/phnix_ota/phnix_local_ota_controller.py").read_text(
-            encoding="utf-8"
-        )
-        loss_branch = controller.split("if monitoring_lost and not monitoring_loss_announced:", 1)[1]
-        detach = loss_branch.index('"monitoring-detached-passive"')
-        clean_return = loss_branch.index("return", detach)
-        next_probe = loss_branch.index('adb.run("get-state"', detach)
-        self.assertLess(detach, clean_return)
-        self.assertLess(clean_return, next_probe)
-        event = loss_branch[detach:clean_return]
-        for field in (
-            "phase=", "service_pid=", "offset=", "transfer_started=",
-            "original_service_authoritative=",
-        ):
-            self.assertIn(field, event)
 
 
 if __name__ == "__main__":

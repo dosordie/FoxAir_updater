@@ -4,7 +4,7 @@ import argparse
 import hashlib
 from pathlib import Path
 
-from prepare_legacy_restore_hook import LEGACY_HEADER, legacy_hook_bytes
+from prepare_runtime_hook import RUNTIME_HEADER, runtime_hook_bytes
 
 
 def sha256(path: Path) -> str:
@@ -25,13 +25,13 @@ def require_equal(source: Path, copied: Path) -> None:
 def require_normalized_hook(source: Path, copied: Path) -> None:
     if not copied.is_file():
         raise RuntimeError(f"Runtime-Hook fehlt: {copied}")
-    expected = legacy_hook_bytes(source.read_bytes())
+    expected = runtime_hook_bytes(source.read_bytes())
     raw = copied.read_bytes()
     if raw != expected:
         raise RuntimeError(
             f"Runtime-Hook entspricht nicht der LF-normalisierten kanonischen Quelle: {copied}"
         )
-    if not raw.startswith(LEGACY_HEADER):
+    if not raw.startswith(RUNTIME_HEADER):
         raise RuntimeError(f"Runtime-Hook hat keinen exakten LF-Header #!/bin/sh: {copied}")
     if b"\r" in raw:
         raise RuntimeError(f"Runtime-Hook enthält weiterhin CR-Zeilenenden: {copied}")
@@ -39,10 +39,6 @@ def require_normalized_hook(source: Path, copied: Path) -> None:
 
 def verify(root: Path, out: Path) -> None:
     pairs = [
-        (root / "tools/phnix_ota/phnix_local_ota_controller.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller_core.py"),
-        (root / "tools/phnix_ota/phnix_local_ota_controller_hardened.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller_hardened.py"),
-        (root / "updater/windows/phnix_windows_controller_wrapper.py", out / "backend/tools/phnix_ota/phnix_windows_controller_wrapper_core.py"),
-        (root / "updater/windows/phnix_windows_restore_grace_wrapper.py", out / "backend/tools/phnix_ota/phnix_local_ota_controller.py"),
         (root / "tools/phnix_ota/create_firmware_manifest.py", out / "backend/tools/phnix_ota/create_firmware_manifest.py"),
         (root / "tools/phnix_traffic/foxair_traffic_trace", out / "backend/tools/phnix_traffic/foxair_traffic_trace"),
         (root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh", out / "backend/updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
@@ -61,10 +57,6 @@ def verify(root: Path, out: Path) -> None:
     canonical = root / "updater/dtu_ota/payload/phnix_ota_runtime_hook"
     require_normalized_hook(
         canonical,
-        out / "backend/tools/phnix_ota/phnix_ota_runtime_hook",
-    )
-    require_normalized_hook(
-        canonical,
         out / "backend/updater/dtu_ota/payload/phnix_ota_runtime_hook",
     )
 
@@ -75,7 +67,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     verify(args.root.resolve(), args.out.resolve())
-    print("[OK] Gemeinsamer Controller/Common-Code und produktiver DTU-Runner wurden inhaltlich verifiziert.")
+    print("[OK] Gemeinsamer Common-Code, Originalzustands-Core und produktiver DTU-Runner wurden inhaltlich verifiziert.")
     return 0
 
 

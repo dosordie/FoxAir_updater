@@ -39,7 +39,7 @@ PHNIX Mainboard
 
 Der Runner speichert seinen Laufzustand auf dem LTE-Modem. Nach erfolgreichem Start kann deshalb ein Windows-/ADB-Verbindungsverlust den bereits laufenden Mainboard-Transfer nicht beenden. Nach Wiederherstellung der Verbindung liest die GUI den bestehenden Lauf wieder ein; sie startet dabei keinen zweiten OTA-Vorgang.
 
-Die älteren PHNIX-Controllerdateien unter `tools/phnix_ota` bleiben für Diagnose-, Recovery- und Entwicklungsfunktionen erhalten. Der produktive Mainboard-OTA wird jedoch über `updater/dtu_ota` gestartet.
+Der alte Host-OTA-Controller ist aus dem Produktpfad entfernt. Firmwareupdate, Status, Diagnose, Recovery und Originalzustandsprüfung verwenden die gemeinsamen Komponenten unter `updater/dtu_ota`. Der Windows-Build enthält keinen `phnix_local_ota_controller*`- oder Windows-Controller-Wrapper mehr.
 
 ## ADB
 

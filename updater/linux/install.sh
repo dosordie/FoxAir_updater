@@ -156,7 +156,6 @@ ok "Lokaler Update-/Diagnose-Logordner bereit: $INSTALL_DIR/logs"
 # Normalfall den Launcher im Projekt-Hauptverzeichnis.
 chmod 755 \
     "$INSTALL_DIR/foxair-updater" \
-    "$INSTALL_DIR/tools/phnix_ota/phnix_local_ota_controller.py" \
     "$INSTALL_DIR/tools/phnix_ota/create_firmware_manifest.py" \
     "$INSTALL_DIR/updater/dtu_ota/payload/phnix_ota_runtime_hook" \
     "$INSTALL_DIR/updater/linux/autonomous_update.py" \
@@ -187,9 +186,9 @@ fi
 info "Prüfe FoxAir-Updater-Dateien"
 (
     cd "$INSTALL_DIR"
-    python3 tools/phnix_ota/phnix_local_ota_controller.py --help >/dev/null
     python3 tools/phnix_ota/create_firmware_manifest.py --help >/dev/null
     python3 updater/dtu_ota/cli.py --help >/dev/null
+    python3 updater/dtu_ota/original_state.py --help >/dev/null
     python3 updater/linux/autonomous_update.py --help >/dev/null
     ./foxair-updater --help >/dev/null
 )
