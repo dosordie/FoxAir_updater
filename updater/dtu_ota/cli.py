@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = commands.add_parser("start", help="start a prepared run detached on the DTU")
     start.add_argument("--run-id", required=True)
+    discard = commands.add_parser(
+        "discard-prepared",
+        help="remove an unstarted dry-run after verifying it is safe to discard",
+    )
+    discard.add_argument("--run-id", required=True)
     for name in ("status", "log", "abort-request", "ack", "cleanup"):
         item = commands.add_parser(name)
         item.add_argument("--run-id")
@@ -70,6 +75,8 @@ def main() -> int:
             )
         elif args.command == "start":
             value = client.start(args.run_id)
+        elif args.command == "discard-prepared":
+            value = client.discard_prepared(args.run_id)
         elif args.command == "status":
             value = client.status(args.run_id, reconcile=not args.no_reconcile)
         elif args.command == "log":
