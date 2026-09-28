@@ -5,11 +5,21 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_TOOL="$ROOT_DIR/tools/phnix_ota/create_firmware_manifest.py"
 AUTONOMOUS="$ROOT_DIR/updater/linux/autonomous_update.py"
 ORIGINAL_STATE="$ROOT_DIR/updater/dtu_ota/original_state.py"
+REMOTE_ACCESS="$ROOT_DIR/updater/linux/remote_access.sh"
 ADB_BIN="${FOX_AIR_ADB:-adb}"
 FIRMWARE_DIR="$ROOT_DIR/firmware"
 DOWNLOAD_DIR="$ROOT_DIR/downloaded_firmware"
 LOG_DIR="$ROOT_DIR/logs"
 REMOTE_CACHE="/cache/phnixIot_device_OTA"
+
+# Wenn der integrierte Remote-ADB-Dienst läuft, verwendet auch der lokale
+# Linux-Updater genau diesen Server. So konkurrieren nicht zwei ADB-Server
+# (5037/5038) um dasselbe USB-Modem.
+if [[ -z "${ADB_SERVER_SOCKET:-}" && "$(uname -s 2>/dev/null || true)" == "Linux" ]] \
+   && command -v systemctl >/dev/null 2>&1 \
+   && systemctl is-active --quiet foxair-adb-remote.service 2>/dev/null; then
+    export ADB_SERVER_SOCKET="tcp:127.0.0.1:5038"
+fi
 
 # Portable canonical-path helper: GNU readlink -f exists on Linux, but BSD
 # readlink on macOS lacks -f. Prefer realpath (brew coreutils or /bin/realpath),
@@ -35,6 +45,7 @@ Verwendung:
   ./foxair-updater restore
   ./foxair-updater download
   ./foxair-updater manifest FIRMWARE [--full] [--show] [--software-code CODE] [--display-version VERSION] [--target-ssid 0063]
+  ./foxair-updater remote {start|stop|restart|status|enable|disable}
   ./foxair-updater version
 
 MANIFEST und FIRMWARE können als Pfad angegeben werden. Wird nur ein Dateiname
@@ -48,6 +59,13 @@ Beispiele:
   ./foxair-updater download
   ./foxair-updater manifest FW3.5.bin --full
   ./foxair-updater manifest FW3.5.bin --full --show
+  ./foxair-updater remote status
+  ./foxair-updater remote enable
+
+remote steuert den integrierten Netzwerkzugriff des Raspberry Pi:
+ADB auf TCP 5038 und den ausschließlich lesenden PHNIX-Debugstrom auf TCP 5039.
+Der Debug-Port wird anhand USB VID 1e0e / PID 9001 / Interface 04 automatisch
+gefunden; eine feste /dev/ttyUSB-Nummer ist nicht erforderlich.
 
 Bei update ist die vollständige Firmware-/Manifestprüfung immer aktiv und kann
 nicht abgeschaltet werden. --full ist deshalb dort nicht mehr erforderlich.
@@ -338,6 +356,12 @@ case "$command" in
         [[ $# -eq 1 ]] || die "download benoetigt keine weiteren Argumente"
         require_adb
         download_device_files
+        ;;
+    remote)
+        [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || die "remote ist nur unter Linux/Raspberry Pi verfügbar"
+        [[ -x "$REMOTE_ACCESS" ]] || die "Remotezugriffs-Helfer fehlt: $REMOTE_ACCESS"
+        shift
+        exec "$REMOTE_ACCESS" "$@"
         ;;
     manifest)
         [[ $# -ge 2 ]] || die "Verwendung: ./foxair-updater manifest FIRMWARE [--full] [--show] [--software-code CODE --display-version VERSION]"
