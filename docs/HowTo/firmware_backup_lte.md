@@ -79,8 +79,6 @@ Die aktuelle Windows-Version ist als Portable-ZIP und Setup-EXE verfügbar:
 
 - [FoxAir Updater – GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases)
 
-Aktueller dokumentierter Stand: **v0.3.9**.
-
 Die GUI bietet unter anderem:
 
 - lokale ADB-Verbindung direkt per USB;
@@ -342,4 +340,5 @@ Auch hier gilt: ausgelesene Originaldateien nicht öffentlich hochladen oder wei
 
 - [`PHNIX_UPDATER_ENDANWENDER.md`](PHNIX_UPDATER_ENDANWENDER.md)
 - [`FIRMWARE_MANIFEST.md`](FIRMWARE_MANIFEST.md)
-- [`../RELEASE_NOTES_WINDOWS_v0.3.9.md`](../RELEASE_NOTES_WINDOWS_v0.3.9.md)
+- [`firmware_update_windows.md`](firmware_update_windows.md)
+- [`../../updater/linux/README.md`](../../updater/linux/README.md)
