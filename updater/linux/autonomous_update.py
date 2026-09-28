@@ -27,7 +27,7 @@ for candidate in (Path(__file__).resolve().parents[2], Path.cwd()):
 from updater.common.adb_transport import AdbClient, TransportError
 from updater.common.firmware_manifest import ManifestError
 from updater.dtu_ota import diagnostics, diagnostics_current_run
-from updater.dtu_ota.client import DtuOtaClient, REMOTE_BASE, RunnerClientError
+from updater.dtu_ota.client import DtuOtaClient, RunnerClientError
 from updater.dtu_ota.package import PackageError
 
 POLL_SECONDS = 2.0
@@ -203,24 +203,9 @@ def finalize_status(
 
 def discard_prepared_run(client: DtuOtaClient, status: dict[str, Any]) -> None:
     run_id = str(status.get("run_id") or "").strip()
-    if (
-        not run_id
-        or status.get("state") != "prepared"
-        or status.get("phase") != "dry-run-complete"
-        or status.get("terminal") is True
-        or status.get("transfer_started") is True
-        or status.get("original_service_authoritative") is True
-    ):
-        raise CliError("Vorprüfungs-Lauf ist nicht eindeutig nur vorbereitet; automatische Entfernung verweigert")
-    if client.active_run_id() is not None:
-        raise CliError("Ein aktiver DTU-Runner verhindert das Entfernen des Vorprüfungs-Laufs")
-
-    run_dir = f"{REMOTE_BASE}/runs/{run_id}"
-    client.adb.shell(
-        f"rm -rf '{run_dir}'; "
-        f"if [ \"$(cat '{REMOTE_BASE}/last_run_id' 2>/dev/null || true)\" = '{run_id}' ]; "
-        f"then rm -f '{REMOTE_BASE}/last_run_id'; fi"
-    )
+    if not run_id:
+        raise CliError("Vorprüfungs-Lauf enthält keine Run-ID")
+    client.discard_prepared(run_id)
 
 
 def run_check(
