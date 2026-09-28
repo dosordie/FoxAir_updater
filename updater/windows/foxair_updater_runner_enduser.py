@@ -32,6 +32,7 @@ class MainWindow(user_gui.MainWindow):
         "runner-abort",
         "runner-ack",
         "runner-cleanup",
+        "runner-discard-prepared",
     }
 
     def __init__(self):
