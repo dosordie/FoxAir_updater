@@ -1,3 +1,6 @@
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -56,6 +59,40 @@ class ControllerFreeProductTests(unittest.TestCase):
             "updater/windows/prepare_legacy_restore_hook.py",
         ):
             self.assertFalse(Path(path).exists(), path)
+
+
+    def test_windows_backend_can_be_prepared_without_legacy_controller(self):
+        with tempfile.TemporaryDirectory() as temp:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "updater/windows/prepare_windows_backend.py",
+                    "--root",
+                    ".",
+                    "--out",
+                    temp,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            backend = Path(temp) / "backend"
+            for path in (
+                backend / "updater/dtu_ota/cli.py",
+                backend / "updater/dtu_ota/original_state.py",
+                backend / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
+                backend / "tools/phnix_ota/create_firmware_manifest.py",
+            ):
+                self.assertTrue(path.is_file(), path)
+            legacy_names = {
+                "phnix_local_ota_controller.py",
+                "phnix_local_ota_controller_hardened.py",
+                "phnix_windows_controller_wrapper_core.py",
+            }
+            self.assertFalse(
+                any(path.name in legacy_names for path in backend.rglob("*") if path.is_file())
+            )
 
 
 if __name__ == "__main__":
