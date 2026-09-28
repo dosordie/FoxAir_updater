@@ -11,7 +11,7 @@ class LinuxRemoteAccessTests(unittest.TestCase):
         cls.debug = Path("updater/linux/remote_debug_stream.py").read_text(encoding="utf-8")
 
     def test_remote_adb_uses_expected_network_port(self):
-        self.assertIn("adb -a -P $REMOTE_ADB_PORT nodaemon server", self.installer)
+        self.assertIn("ExecStart=$adb_path -a -P $REMOTE_ADB_PORT nodaemon server", self.installer)
         self.assertIn("REMOTE_ADB_PORT=5038", self.installer)
         self.assertIn("foxair-adb-remote.service", self.installer)
 
