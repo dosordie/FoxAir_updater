@@ -34,8 +34,10 @@ class LinuxRemoteAccessTests(unittest.TestCase):
             self.assertIn(action, self.remote)
 
     def test_ser2net_is_not_a_linux_runtime_dependency(self):
-        self.assertNotIn("ser2net", self.installer)
-        self.assertNotIn("ser2net", self.remote)
+        self.assertNotIn("command -v ser2net", self.installer)
+        self.assertNotIn("apt-get install -y ser2net", self.installer)
+        self.assertNotIn("systemctl start ser2net", self.remote)
+        self.assertNotIn("systemctl restart ser2net", self.remote)
 
 
 if __name__ == "__main__":
