@@ -1,6 +1,6 @@
 # Firmware-Backup des LTE-Modems über Micro-USB
 
-Stand: 29. August 2026
+Stand: 28. September 2026
 
 Diese Anleitung beschreibt, wie man sich per **Micro-USB** mit dem LTE-Modem verbindet und Firmware-/Statusdateien mit **ADB (Android Debug Bridge, Bestandteil der Android SDK Platform Tools)** sichert.
 
@@ -135,26 +135,64 @@ phnixIot4G
 
 Die Datei `/cache/phnixIot_device_OTA` ist nur vorhanden, solange sie vom originalen PHNIX-Dienst noch nicht entfernt oder durch einen späteren OTA-Auftrag ersetzt wurde.
 
-## 4.3 Remote ADB über Raspberry Pi
+## 4.3 Raspberry Pi als Remote-Server für die Windows-GUI
 
-Auf dem Raspberry Pi:
+Ist der FoxAir Updater auf dem Raspberry Pi installiert, richtet der Linux-Installer den Netzwerkzugriff bereits mit ein. Er bleibt nach einer frischen Installation zunächst deaktiviert.
+
+Einmalig für die aktuelle Sitzung starten:
 
 ```bash
-adb kill-server
-adb -a -P 5038 nodaemon server
+cd ~/FoxAir_updater
+./foxair-updater remote start
+```
+
+Status prüfen:
+
+```bash
+./foxair-updater remote status
+```
+
+Für automatischen Start nach einem Reboot:
+
+```bash
+./foxair-updater remote enable
+```
+
+Der Raspberry Pi stellt dabei zwei Verbindungen für die Windows-GUI bereit:
+
+```text
+Windows-GUI
+  ├─ ADB         → Raspberry Pi :5038 → LTE-Modem
+  └─ PHNIX Debug → Raspberry Pi :5039 → USB Interface 04 (read-only)
 ```
 
 Danach in der Windows-GUI:
 
 1. **Remote – ADB-Server auf Raspberry Pi** auswählen.
-2. IP-Adresse eintragen.
+2. IP-Adresse des Raspberry Pi eintragen.
 3. Port `5038` verwenden.
 4. **ADB prüfen** anklicken.
 
-Der Pi-Befehl bleibt im Vordergrund und wird mit **Strg+C** beendet.
+Im Remote-Modus verwendet die Windows-GUI für den PHNIX-Debugmonitor automatisch denselben Host auf **ADB-Port + 1**. Bei ADB-Port `5038` ist der Debugstream deshalb TCP `5039`. Unter Windows wird weiterhin eine lokale `adb.exe` als Client benötigt.
+
+Der PHNIX-Debugstream ist ausschließlich lesend. Der Raspberry Pi erkennt den passenden SIMCom-Port automatisch anhand VID `1e0e`, PID `9001` und USB-Interface `04`; eine feste Zuordnung wie `/dev/ttyUSB4` ist nicht nötig. Für diesen FoxAir-Updater-Remoteweg wird kein `ser2net` benötigt.
+
+Zum Beenden:
+
+```bash
+./foxair-updater remote stop
+```
+
+Ein dauerhaft aktivierter Remotezugriff kann mit
+
+```bash
+./foxair-updater remote disable
+```
+
+wieder deaktiviert werden.
 
 > [!IMPORTANT]
-> Den Remote-ADB-Port nur kurzfristig und nur in einem vertrauenswürdigen lokalen Netz freigeben.
+> TCP 5038 und 5039 nur in einem vertrauenswürdigen lokalen Netz verwenden und nicht per Router/Portweiterleitung ins Internet freigeben.
 
 # 5. Windows – manuelle PowerShell-Alternative
 
