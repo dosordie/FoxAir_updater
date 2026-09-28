@@ -1,6 +1,6 @@
 # Firmwaremanifest
 
-Stand: 29. August 2026
+Stand: 28. September 2026
 
 > [!NOTE]
 > Für Windows steht dieselbe Manifest-Logik direkt in der **FoxAir-Updater-GUI** zur Verfügung. Öffentliche Windows-Versionen gibt es unter [GitHub Releases](https://github.com/dosordie/FoxAir_updater/releases).
@@ -241,15 +241,23 @@ Image Base            -> 0x08050000
 
 ## Vollprüfung unmittelbar vor dem Update
 
-Unter Linux:
+Unter Linux/Raspberry Pi:
 
 ```bash
-./foxair-updater update FW3.4.json --full --confirm
+./foxair-updater update FW3.4.json
 ```
 
-Unter Windows wird dieser Full-Abgleich von der Windows-Sicherheitshülle automatisch unmittelbar vor einem echten Update durchgeführt.
+Für einen bewusst nicht-interaktiven Aufruf:
 
-Der V3.3→V3.4-Live-Lauf bestätigt, dass der Full-Abgleich mit einem realen erfolgreichen Versionswechsel zusammen funktioniert. Er beweist nicht, dass beliebige andere Firmware-/Hardwarekombinationen kompatibel sind.
+```bash
+./foxair-updater update FW3.4.json --confirm
+```
+
+Die vollständige Firmware-/Manifestprüfung ist im aktuellen autonomen Linux-Updatepfad **immer verpflichtend aktiv**. Der frühere Update-Schalter `--full` ist deshalb nicht mehr erforderlich und nicht mehr vorgesehen. `--full` bleibt weiterhin eine Option des **Manifest-Werkzeugs** zum Extrahieren und Prüfen der Firmwareidentität.
+
+Unter Windows führt die Sicherheitshülle denselben vollständigen Abgleich automatisch unmittelbar vor einem echten Update durch.
+
+Die realen Firmwareläufe bestätigen, dass dieser Full-Abgleich zusammen mit dem autonomen DTU-Runner funktioniert. Das beweist nicht, dass beliebige andere Firmware-/Hardwarekombinationen kompatibel sind.
 
 ## Warum die Trennung beim OTA wichtig ist
 
