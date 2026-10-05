@@ -5,7 +5,7 @@ Stand: 28. September 2026
 Der Linux-/Raspberry-Pi-Weg verwendet für normale Mainboard-Firmwareupdates denselben **autonomen DTU-Runner** wie die Windows-Version. Der Raspberry Pi bzw. Linux-Rechner ist nur noch Host für Vorbereitung, Start, Statusanzeige und lokale Archivierung. Nach dem Start läuft der eigentliche OTA-Vorgang persistent auf dem LTE-Modem weiter.
 
 > [!IMPORTANT]
-> Mehrere Firmwarestände und Hardwarekonfigurationen wurden real mit dem FoxAir Updater getestet, einschließlich vollständiger Firmwarewechsel bis V3.5. Nicht jede denkbare Hardware-/Firmwarekombination und nicht jeder Fehlerfall ist in gleicher Tiefe live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
+> Mehrere Firmwarestände und Hardwarekonfigurationen wurden real mit dem FoxAir Updater getestet, einschließlich vollständiger Firmwarewechsel bis V3.5 sowie eines erfolgreich bestätigten Downgrades **V3.5 → V3.4**. Nicht jede denkbare Hardware-/Firmwarekombination und nicht jeder Fehlerfall ist in gleicher Tiefe live validiert. Firmwareupdates erfolgen auf eigenes Risiko.
 
 ## Schnellinstallation
 
