@@ -11,7 +11,7 @@ Die Einrichtung der USB-/ADB-Verbindung zum LTE-Modem ist identisch mit dem Verb
 > [!CAUTION]
 > Ein Firmwareupdate verändert die Firmware des Mainboards und erfolgt **auf eigenes Risiko**. Während des laufenden Updates Wärmepumpe und LTE-Modem **nicht stromlos machen**.
 >
-> Real erfolgreich bestätigt sind inzwischen vollständige Firmwarewechsel **V3.3 → V3.4**, **V1.2 (Auslieferungszustand) → V3.4** sowie reale Updates auf **V3.5 (`82400644 / 0035`)**.
+> Real erfolgreich bestätigt sind inzwischen vollständige Firmwarewechsel **V3.3 → V3.4**, **V1.2 (Auslieferungszustand) → V3.4**, reale Updates auf **V3.5 (`82400644 / 0035`)** sowie der Downgrade **V3.5 → V3.4**.
 >
 > Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** verwenden dieselbe Mainboard-Firmwarelinie. Die V3.5 ist deshalb für entsprechende BL- und GL-Geräte dieser `82400644`-Familie untereinander kompatibel. Bei unbekannten Modellen sollte vor dem Update trotzdem immer der tatsächlich ausgelesene Mainboard-Softwarecode geprüft werden.
 >
@@ -146,4 +146,4 @@ Die Wartungsfunktionen für persistente Statistikzähler gehören **nicht** zum 
 11. Bei Verbindungsverlust nach Wiederherstellung **Status prüfen** verwenden; dadurch wird kein zweiter OTA gestartet.
 12. Anschließend bei Bedarf **Protokoll speichern…** und die automatischen Logs sichern.
 
-Real erfolgreich durchgeführt wurden unter anderem **V3.3 → V3.4**, **V1.2 (Auslieferungszustand) → V3.4** sowie vollständige Updates auf **V3.5**. Die untersuchte V3.5 stammt aus einer BlueLine und gehört zur selben `82400644`-Firmwarelinie wie die entsprechenden GreenLine-Geräte.
+Real erfolgreich durchgeführt wurden unter anderem **V3.3 → V3.4**, **V1.2 (Auslieferungszustand) → V3.4**, vollständige Updates auf **V3.5** sowie der Downgrade **V3.5 → V3.4**. Die untersuchte V3.5 stammt aus einer BlueLine und gehört zur selben `82400644`-Firmwarelinie wie die entsprechenden GreenLine-Geräte.
