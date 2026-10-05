@@ -3,7 +3,7 @@
 Stand: 28. September 2026
 
 > [!CAUTION]
-> Mehrere vollständige Mainboard-Firmwarewechsel wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt, darunter **V3.3 → V3.4**, **V1.2 → V3.4** sowie reale Updates auf **V3.5**. Der jeweils aktuelle Teststand steht in der Projekt-`README.md`.
+> Mehrere vollständige Mainboard-Firmwarewechsel wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt, darunter **V3.3 → V3.4**, **V1.2 → V3.4**, reale Updates auf **V3.5** sowie der Downgrade **V3.5 → V3.4**. Der jeweils aktuelle Teststand steht in der Projekt-`README.md`.
 >
 > Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. Für BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** handelt es sich um dieselbe Mainboard-Firmwarelinie. Die V3.5 ist damit zwischen entsprechenden BL- und GL-Geräten dieser Firmwarefamilie kompatibel. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind nicht in gleicher Tiefe live validiert. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
 
@@ -204,6 +204,7 @@ Real getestet bzw. bestätigt sind unter anderem:
 - V3.3 → V3.3 bis zur sicheren Gleichversionsablehnung ohne C5A8;
 - vollständiger V3.3 → V3.4-Transfer und terminaler Abschluss;
 - vollständiger V1.2 → V3.4-Versionswechsel;
+- vollständiger Downgrade V3.5 → V3.4 mit terminalem Abschluss;
 - V3.5 als `82400644 / 0035` bestätigt; Quelle ist eine **BlueLine (BL)**, dieselbe Firmwarelinie wird bei entsprechenden **GreenLine-/GL-Geräten** mit `82400644` verwendet; vollständige Updates auf V3.5 wurden inzwischen real erfolgreich durchgeführt;
 - C36E Status 5 / Board-Step 12 als terminale Erfolgsgrenze;
 - Rückkehr in den normalen LTE-/Cloudzustand;
