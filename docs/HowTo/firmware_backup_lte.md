@@ -11,6 +11,8 @@ Diese Anleitung beschreibt, wie man sich per **Micro-USB** mit dem LTE-Modem ver
 > - **Linux / Raspberry Pi:** `adb` beziehungsweise der Linux-Launcher `./foxair-updater`.
 >
 > Es muss **nur einer dieser Wege** verwendet werden.
+>
+> **Systemvoraussetzung für die Windows-GUI:** Mindestens **Windows 10**. Windows 7 und Windows 8/8.1 werden vom FoxAir Updater nicht unterstützt. Der manuelle ADB-Weg ist davon unabhängig und hängt von der eingesetzten ADB-Version ab.
 
 > [!IMPORTANT]
 > Der Windows-Backup-Pfad wurde real getestet. ADB-Verbindung, Originalstatus und das read-only Backup der LTE-Dateien funktionieren sowohl mit lokal angeschlossenem Modem als auch über Remote-ADB zum Raspberry Pi.
