@@ -7,7 +7,9 @@ Stand: 28. September 2026
 >
 > Die untersuchte **V3.5 stammt von einer FoxAir BlueLine (BL)**. Für BlueLine und GreenLine (GL) mit Mainboard-Softwarecode **`82400644`** handelt es sich um dieselbe Mainboard-Firmwarelinie. Die V3.5 ist damit zwischen entsprechenden BL- und GL-Geräten dieser Firmwarefamilie kompatibel. Weitere Firmwarestände, Mainboardfamilien und Fehlerfälle sind nicht in gleicher Tiefe live validiert. Ein Firmwareupdate bleibt ein Eingriff in das Mainboard und erfolgt auf eigenes Risiko.
 
-Diese Seite fasst den normalen Endanwenderweg zusammen. Unter Windows ist die grafische Anwendung der empfohlene Weg. Die ausführliche Schritt-für-Schritt-Anleitung für Windows steht unter:
+Diese Seite fasst den normalen Endanwenderweg zusammen. Unter Windows ist die grafische Anwendung der empfohlene Weg. Die Windows-GUI benötigt **mindestens Windows 10**; Windows 7 und Windows 8/8.1 werden nicht unterstützt. Die Linux-/Raspberry-Pi-Version ist eine Alternative.
+
+Die ausführliche Schritt-für-Schritt-Anleitung für Windows steht unter:
 
 **[`firmware_update_windows.md`](firmware_update_windows.md)**
 
