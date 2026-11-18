@@ -4,6 +4,8 @@ Stand: 28. September 2026
 
 Diese Anleitung beschreibt **nur den normalen Firmware-Update-Ablauf für Endanwender unter Windows**.
 
+**Systemvoraussetzung:** Die Windows-GUI des FoxAir Updaters benötigt **mindestens Windows 10**. Windows 7 und Windows 8/8.1 werden nicht unterstützt. Alternativ kann der Updater unter Linux / Raspberry Pi verwendet werden.
+
 Die Einrichtung der USB-/ADB-Verbindung zum LTE-Modem ist identisch mit dem Verbindungsweg für das Firmware-Backup und wird separat beschrieben:
 
 **[LTE-Modem verbinden / Firmware-Backup](firmware_backup_lte.md)**
