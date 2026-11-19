@@ -2,17 +2,6 @@ name: Windows Updater Build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "updater/windows/**"
-      - "updater/common/**"
-      - "updater/dtu_ota/**"
-      - "tools/phnix_ota/**"
-      - ".github/workflows/windows-build.yml"
-      - "LICENSE"
-      - "README.md"
 
 permissions:
   contents: read
