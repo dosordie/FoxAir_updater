@@ -2,6 +2,9 @@ name: Windows Updater Build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/dtu-v1-build-profiles
 
 permissions:
   contents: read
