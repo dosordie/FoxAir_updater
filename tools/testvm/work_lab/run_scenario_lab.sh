@@ -20,6 +20,9 @@ fail() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 [[ ${EUID} -eq 0 ]] || fail "run as root: sudo $0 [seconds] [label]"
 [[ "$RUN_SECS" =~ ^[0-9]+$ ]] || fail "seconds must be numeric"
 (( RUN_SECS >= 5 && RUN_SECS <= 3600 )) || fail "seconds must be 5..3600"
+if [[ -n "${LAB_OTA_OFFER_FILE:-}" ]]; then
+  [[ -z "${REUSE_NETNS_PID:-}" ]] || fail "native OTA requires a fresh network namespace"
+fi
 for path in "$ROOTFS/data/phnixIot4G" "$ROOTFS/usr/bin/qemu-arm-static" \
             "$TOOLS/at_emulator.py" "$TOOLS/at_rules.json"; do
   [[ -e "$path" ]] || fail "missing: $path"
@@ -300,6 +303,9 @@ fi
         --board-version "${BOARD_VERSION:-0033}"
         --timing-profile "${OTA_TIMING_PROFILE:-fast}"
       )
+      if [[ "${DTU_V10_AT_PROFILE:-0}" == 1 ]]; then
+        rs485_args+=(--legacy-final-padding)
+      fi
     elif [[ "${V33_DOWNLOAD_PROBE:-0}" == 1 || "${LOCAL_OTA_HANDLER:-0}" == 1 ]]; then
       rs485_args+=(--v33-ota-handshake)
     fi
@@ -454,13 +460,14 @@ fi
       lab_gdb_pid=$!
     fi
     if [[ -n "${LAB_OTA_OFFER_FILE:-}" ]]; then
-      while kill -0 "$app_timeout_pid" 2>/dev/null; do
+      while :; do
         if grep -q "c37b-status-ack for=wait-status5-ack .*63 10 c3 7b 00 02 04 00 63 00 05 34 69" "$run_dir/ttyHSL2-transcript.txt" &&
            grep -q "transfer-complete bytes=$FIRMWARE_HTTP_SIZE " "$run_dir/ttyHSL2-transcript.txt" &&
            grep -q "\"result\": 200, \"bytes\": $FIRMWARE_HTTP_SIZE," "$run_dir/firmware-http-transcript.jsonl"; then
           echo "CONFIRMED: HTTP download, full RS485 transfer and status 5 ACK"
           exit 0
         fi
+        kill -0 "$app_timeout_pid" 2>/dev/null || break
         sleep 2
       done
       wait "$app_timeout_pid"

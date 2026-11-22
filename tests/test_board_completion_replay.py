@@ -52,6 +52,20 @@ class CompletionReplayTests(unittest.TestCase):
                 payload=bytes(damaged), firmware=self.firmware,
             )
 
+    def test_v10_requires_zero_padding_on_short_final_block(self):
+        block = self.total_blocks
+        final = self.firmware[(block - 1) * 168:]
+        kwargs = {
+            "ssid": 0x63, "total": block, "block": block,
+            "block_size": 168, "total_blocks": block, "firmware": self.firmware,
+        }
+        payload = final.ljust(168, b"\0")
+        self.assertEqual(completion_replay_ack(**kwargs, payload=payload, padding=b"\0")[0], 2)
+        with self.assertRaisesRegex(RuntimeError, "firmware mismatch"):
+            completion_replay_ack(**kwargs, payload=payload)
+        with self.assertRaisesRegex(RuntimeError, "firmware mismatch"):
+            completion_replay_ack(**kwargs, payload=b"\xff" + payload[1:], padding=b"\0")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -230,6 +230,10 @@ Testläufen ausschließlich vom lokalen MQTT-Broker.
 Die Lab-Einheit erlaubt bis zu 16.384 Dateideskriptoren. V1.0 hält während
 der Übertragung OTA-Statusdateien offen und erreichte mit der bisherigen
 VM-Grenze von 1.024 nur rund 250 Blöcke.
+Der Peer prüft beim kurzen V1.0-Schlussblock den beobachteten Registercount
+`0x54` und Null-Padding. Bei V1.2 bleibt die bestehende Prüfung auf
+`FF`-Padding aktiv. Beide Pfade vergleichen die rekonstruierten Nutzbytes
+mit der Firmware-Datei.
 
 ```sh
 sudo foxair-fake-adbctl native-ota V1.0

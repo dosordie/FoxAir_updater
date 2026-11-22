@@ -71,7 +71,7 @@ def board_software_info_frame(board_version: str) -> bytes:
 
 def completion_replay_ack(
     *, ssid: int, total: int, block: int, block_size: int,
-    total_blocks: int, payload: bytes, firmware: bytes,
+    total_blocks: int, payload: bytes, firmware: bytes, padding: bytes = b"\xff",
 ) -> tuple[int, bytes]:
     """Validate an already completed C5A8 block and repeat its C371 ACK."""
     if (ssid, total, block_size) != (0x63, total_blocks, 168):
@@ -85,7 +85,7 @@ def completion_replay_ack(
         )
     start = (block - 1) * block_size
     expected = firmware[start:start + block_size]
-    expected_padded = expected + b"\xff" * (block_size - len(expected))
+    expected_padded = expected + padding * (block_size - len(expected))
     if payload != expected_padded:
         raise RuntimeError(f"firmware mismatch in completion replay block {block}")
     ack_b = 2 if block == total_blocks else 1
@@ -113,6 +113,8 @@ def parse_args():
     )
     parser.add_argument("--firmware", help="firmware staged by the updater; loaded after C357")
     parser.add_argument("--board-version", default="0033", help="installed four-digit wire version")
+    parser.add_argument("--legacy-final-padding", action="store_true",
+                        help="validate the V1.0 short final block with zero padding")
     parser.add_argument(
         "--timing-profile", default="fast", choices=tuple(TIMING_PROFILES),
         help="fast developer timing or measured V3.4 live-update timing",
@@ -482,6 +484,12 @@ def main():
                     ssid = int.from_bytes(frame[7:9], "big")
                     total = int.from_bytes(frame[9:11], "big")
                     block = int.from_bytes(frame[11:13], "big")
+                    padding = b"\0" if args.legacy_final_padding else b"\xff"
+                    if args.legacy_final_padding:
+                        count = int.from_bytes(frame[4:6], "big")
+                        short_final = block == total_blocks and len(expected_firmware) % 168
+                        if count != (0x54 if short_final else 0x57):
+                            raise RuntimeError(f"bad V1.0 C5A8 register count at block {block}")
                     if completion_state in {"wait-status3-ack", "wait-status5-ack"}:
                         # A restarted phnixIot4G may reload its last durable
                         # 64-KiB OTA_INFO checkpoint after the board has
@@ -496,7 +504,7 @@ def main():
                         retry_ack_b, retry_ack = completion_replay_ack(
                             ssid=ssid, total=total, block=block,
                             block_size=block_size, total_blocks=total_blocks,
-                            payload=replay_payload, firmware=expected_firmware,
+                            payload=replay_payload, firmware=expected_firmware, padding=padding,
                         )
                         os.write(fd, retry_ack)
                         to_app.write(retry_ack)
@@ -535,7 +543,7 @@ def main():
                         duplicate_expected = expected_firmware[
                             duplicate_start:duplicate_start + block_size
                         ]
-                        duplicate_padded = duplicate_expected + b"\xff" * (
+                        duplicate_padded = duplicate_expected + padding * (
                             block_size - len(duplicate_expected)
                         )
                         if duplicate_payload != duplicate_padded:
@@ -568,7 +576,7 @@ def main():
                     payload = frame[13:13 + block_size]
                     start = (block - 1) * block_size
                     expected = expected_firmware[start:start + block_size]
-                    expected_padded = expected + b"\xff" * (block_size - len(expected))
+                    expected_padded = expected + padding * (block_size - len(expected))
                     if payload != expected_padded:
                         raise RuntimeError(f"firmware mismatch at block {block}")
                     reconstructed.extend(payload[:len(expected)])
@@ -621,11 +629,11 @@ def main():
                         if reconstructed != expected_firmware:
                             raise RuntimeError("final reconstructed firmware mismatch")
                         real_last_bytes = offered_size - start
-                        if len(expected) != real_last_bytes or payload[real_last_bytes:] != b"\xff" * (168-real_last_bytes):
+                        if len(expected) != real_last_bytes or payload[real_last_bytes:] != padding * (168-real_last_bytes):
                             raise RuntimeError("unexpected final-block offset/length/padding")
                         transcript.write(
                             f"{time.time():.6f} VERIFIED final-block offset_before={start} "
-                            f"real_bytes={len(expected)} ff_padding={block_size-len(expected)} "
+                            f"real_bytes={len(expected)} {padding.hex()}_padding={block_size-len(expected)} "
                             f"offset_after_ack={start+block_size} ackB={ack_b}\n"
                             f"{time.time():.6f} VERIFIED transfer-complete bytes={len(reconstructed)} "
                             f"sha256={digest}; awaiting status 3/5 acknowledgements\n"

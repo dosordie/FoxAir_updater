@@ -17,6 +17,8 @@ printf '%s  %s\n' "$digest" "$firmware" | sha256sum -c
 work=$(mktemp -d "$lab/native-ota-$profile.XXXXXX")
 cleanup() { rm -rf -- "$work"; }
 trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 cp -a "$lab/rootfs" "$work/"
 ln -s "$lab/tools" "$work/tools"
 for dev in ttyGS0 ttyHSL2 smd8; do
