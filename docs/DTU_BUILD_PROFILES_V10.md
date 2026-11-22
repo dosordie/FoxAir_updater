@@ -1,4 +1,4 @@
-# LTE-DTU Build-Profile: V1.0 & V1.2 (Entwicklungsbranch)
+# LTE-DTU Build-Profile: V1.0 & V1.2
 
 Stand: 2026-11-22. Zugehörig: [Issue #66](https://github.com/dosordie/FoxAir_updater/issues/66).
 
@@ -11,16 +11,14 @@ Der Updater erkennt **vor dem Upload eines OTA-Pakets** den tatsächlich install
 | DTU-Software | Build-ID (Anfang) | Implementierungsstatus | OTA |
 |---|---|---|---|
 | V1.2 | `af4dcae1` | unveränderter validierter Hook/Supervisor | **freigegeben** |
-| V1.0 | `d25ea21f` | separater Hook/Supervisor eingebunden; VM-End-to-End-Test ausstehend | **experimentell aktiviert (nur Entwicklungsbranch)** |
+| V1.0 | `d25ea21f` | eigener Hook/Supervisor; vollständiger OTA in VM bestätigt | **freigegeben** |
 | andere | unbekannt | keine Profilzuordnung | **gesperrt** |
 
-**Wichtig: Die V1.0-Sperre ist nur in diesem Entwicklungsbranch aufgehoben.**
-Ein echter V1.0-Firmwaretransfer kann aus der Windows-GUI gestartet werden.
-Dieser Build ist ausschließlich für die isolierte Test-VM vorgesehen; GDB- und
-Crash/Resume-Semantik sind nicht abschließend validiert. **Nicht auf Produktivgeräte
-anwenden oder als Stable veröffentlichen.** `main` bleibt unverändert.
-Die vollständigen SHA256/ELF-Build-IDs sind in
-`updater/dtu_ota/build_profiles.py` fest hinterlegt.
+Beide erkannten DTU-Builds sind mit eigenen Hook-/Supervisor-Payloads im
+Updater freigegeben. Unbekannte Dienst-Binärdateien bleiben gesperrt. Die
+vollständigen SHA256/ELF-Build-IDs sind in `updater/dtu_ota/build_profiles.py`
+fest hinterlegt. **Die Freigabe gilt für genau diese beiden Binär-Builds**,
+nicht automatisch für andere V1.0-/V1.2-Varianten.
 
 Der Branch enthält jetzt `phnix_ota_runtime_hook_v10` und
 `dtu_ota_supervisor_v10.sh`. Die Paketvorbereitung wählt die Payload-Dateien
@@ -30,11 +28,11 @@ Das UART-Sendeflag wird als ein Byte gelesen. V1.0 sichert und restauriert
 OTA_INFO ohne Statistikdatei. Die unvalidierten Cancel-Probe-Aktionen sind
 aus der V1.0-Hookdatei entfernt.
 
-Der experimentelle V1.0-Hook kann jetzt direkt vom Windows-Build über die
-normale Vorprüfung und den autonomen Runner gegen die VM getestet werden.
-**Der bisherige MQTT-Simulatortest belegt nicht, dass diese Sequenz funktioniert.**
-Die Validierung des tatsächlichen Runner-/GDB-Einstiegs und der Crash-Recovery
-ist noch ausdrücklich offen.
+Der vollständige V1.0-OTA wurde über den Windows-Updater mit autonomem Runner,
+GDB-Hook und originalem PHNIX-V1.0-Dienst in der QEMU-Test-VM bis zur terminalen
+Mainboardbestätigung erfolgreich getestet. Der V1.2-OTA-Start wurde ebenfalls
+geprüft. Crash-/Resume-Szenarien wurden separat getestet. Die VM simuliert das
+Mainboard; dieser Nachweis ist nicht mit einem Hardware-Flash-Test gleichzusetzen.
 
 ## Benutzerprüfung: völlig read-only
 
@@ -53,8 +51,8 @@ python3 updater/dtu_ota/cli.py --adb adb \
 
 `identify` liest ausschließlich SHA256 der Originaldatei. Das Ergebnis liefert
 `dtu_software_version`, `elf_build_id`, `ota_enabled` und `ota_status`.
-Für V1.0 lautet der Status **`experimental-vm-test`**. `prepare` (Windows-GUI
-und Linux) wählt den separaten V1.0-Hook/Supervisor automatisch aus und
+Für beide bekannten Builds lautet der Status **`supported`**. `prepare`
+(Windows-GUI und Linux) wählt den passenden Hook/Supervisor automatisch aus und
 prüft deren Integrität. Unbekannte Builds werden weiterhin **vor** dem
 Staging abgewiesen.
 
@@ -70,7 +68,8 @@ python3 devtools/phnix_ota_v10/verify_static.py PFAD_ZU/phnixIot4G
 ```
 
 Er vergleicht exakte SHA256, Bytezahl, ELF-Build-ID und 18 ARM-GDB-Stellen.
-`PASS` ist **keine** Bestätigung für funktionierende GDB-Injektion/OTA-Resume.
+`PASS` bestätigt nur die statische Dateiintegrität; die dynamischen OTA-Tests
+sind eigenständig zu bewerten.
 
 Optionaler, lesender RAM-Test mit **laufender V1.0-DTU**:
 
@@ -80,13 +79,13 @@ python3 devtools/phnix_ota_v10/probe_runtime.py --adb adb
 
 Der Probe liest aus dem genau identifizierten V1.0-Prozess vier **je 1 Byte**
 lange RAM-Felder (`dtu_run_step`, `dtu_sta`, `board_ota_step`,
-`uart_send_flag`). Die angenommene `11/4/12/0`-Idle-Semantik stammt
-bisher aus V1.2 und ist **für V1.0 noch eine Hypothese**. Keine GDB-/OTA-Aktion.
+`uart_send_flag`). Die Byte-Werte sind Diagnoseinformationen und ersetzen keinen OTA-Ende-Check.
+Keine GDB-/OTA-Aktion.
 
 ## Dateien dieses Branches
 
 - `updater/dtu_ota/build_profiles.py`: feste SHA-Pins, Build-ID-Metadaten und
-  Freigabe-Flag; V1.0 nur in diesem Featurebranch für VM-Tests freigegeben.
+  Freigabe-Flag für beide bekannten Dienst-Builds.
 - `updater/dtu_ota/client.py`: automatische profilspezifische Hook-/Supervisor-
   Auswahl vor jedem Paketbau/Staging; V1.2 bleibt auf dem bisherigen Hook.
 - `updater/dtu_ota/package.py`: profilspezifische Freigabe für V1.0/V1.2;
@@ -100,27 +99,25 @@ bisher aus V1.2 und ist **für V1.0 noch eine Hypothese**. Keine GDB-/OTA-Aktion
 - `tests/test_dtu_build_profiles.py`,
   `tests/test_dtu_v10_static_checker.py` und angepasste Fake-ADB-Fixtures.
 
-## Noch **nicht** validiert / produktiv freigegeben
+## Teststatus / Release
 
-Diese Punkte sind die nächsten Schritte aus Issue #66:
+- V1.0: Vollständiger Windows-Updater-OTA über den autonomen Hook bis zur
+  erfolgreichen Mainboard-Simulatorbestätigung (Status 5) bestätigt.
+- V1.2: Originaldienst startet korrekt, OTA-Download mit korrekter MD5 und
+  Beginn des Blocktransfers bestätigt; bestehender V1.2-Hook unverändert.
+- Crash-/Resume-Szenarien: im Simulator getestet.
+- Paketintegrität: SHA256-/Build-ID-Pinning und getrennte V1.0-/V1.2-
+  Hook-/Supervisor-Auswahl erhalten. Unbekannte Builds bleiben gesperrt.
 
-1. Der V1.0-Hook ist implementiert, aber C350/C36E/C357/C5A8 und die
-   terminalen Breakpoints müssen gegen den **vollständigen autonomen
-   Runner/ADB-/QEMU-Pfad** getestet werden.
-2. Der neue Supervisor besitzt die eigenen V1.0-Readiness-Adressen und
-   Allowlist. Dynamische Prüfung der Neustarts und Zustandsübergänge ausstehend.
-3. V1.0 hat keine Statistikdatei; das getrennte OTA_INFO-Backup/Restore
-   (220 Byte) im V1.0-Pfad muss noch dynamisch bestätigt werden.
-4. Host-/DTU-seitige Recovery-, Watchdog-, Resume-, Restore- und
-   Crash-after-C5A8-Pfade in Test-VM durchspielen.
-5. **Erst nach bestandenen Tests** V1.0 auch für reale Geräte freigeben,
-   in `main` übernehmen und als neues Stable-Release veröffentlichen.
+Die in der VM erzeugten Mainboardantworten sind keine tatsächliche
+Flash-Erfolgskontrolle auf realer Hardware. Für Release-Betrieb gelten die
+bekannten Hinweise in README.md.
 
-Der Windows-Portable-/Setup-Build enthält beide V1.0-Payloads; der
+Der Windows-Portable-/Setup-Build enthält sowohl V1.0- als auch V1.2-Payloads; der
 Windows-Backend-Verifier prüft, dass sie tatsächlich im Artefakt landen.
 Die produktiv nachgewiesene V1.2-Hookdatei
 `updater/dtu_ota/payload/phnix_ota_runtime_hook` wurde **nicht editiert**.
-Auch `dtu_ota_supervisor.sh` bleibt zunächst exakt beim bewährten V1.2-Verhalten.
+Auch `dtu_ota_supervisor.sh` bleibt beim bewährten V1.2-Verhalten.
 
 ## Validierung / Testanweisung
 
