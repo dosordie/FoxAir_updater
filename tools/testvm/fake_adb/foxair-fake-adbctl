@@ -55,6 +55,7 @@ Board und OTA-Szenarien:
                                  im DTU_runner-Branch bleibt QEMU-GDB frei;
                                  nur der produktive Runtime-Hook verbindet sich
   board-version NNNN             Mainboard-Version setzen und Runner neu starten (0033/0034)
+  dtu-version V1.0|V1.2          ADB-Identitaetsprofil umschalten; V1.0 nur Erkennung
   cancel-scenario NAME           vorhandene Cancel-ACK-Funktion des RS485-Fakers verwenden
   handshake-scenario NAME        vorhandene C350/C357-Fehlerbilder verwenden
   same-version-scenario NAME     vorhandene C350-Status0/Status1-Fehlerbilder verwenden
@@ -111,6 +112,28 @@ EOF
 cmd=${1:-status}
 shift || true
 case "$cmd" in
+    dtu-version)
+        need_root dtu-version
+        state_dir=${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}
+        marker="$state_dir/dtu-v1.0-identity"
+        case "${1:-}" in
+            V1.0)
+                fixture="$state_dir/fixtures/phnixIot4G-v1.0"
+                expected=57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c
+                if ! printf '%s  %s\n' "$expected" "$fixture" | sha256sum --check --status; then
+                    echo "V1.0-Originaldatei fehlt oder SHA256 stimmt nicht: $fixture" >&2
+                    exit 1
+                fi
+                touch "$marker"
+                echo "DTU V1.0: ADB-Erkennung aktiv, OTA gesperrt"
+                ;;
+            V1.2)
+                rm -f -- "$marker"
+                echo "DTU V1.2: normaler Simulatorpfad aktiv"
+                ;;
+            *) usage; exit 2 ;;
+        esac
+        ;;
     ui)
         need_root ui
         exec python3 "$INSTALL_DIR/foxair_fake_adb_tui.py"

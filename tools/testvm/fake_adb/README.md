@@ -206,6 +206,14 @@ sudo foxair-fake-adbctl modem-log status
 
 ## Terminaloberfläche
 
+Mit `sudo foxair-fake-adbctl dtu-version V1.0` lässt sich der ADB-Endpunkt
+auf einen reinen Identifikationstest umstellen. Dazu muss die geprüfte
+Originaldatei privat unter `/var/lib/foxair-fake-adb/fixtures/phnixIot4G-v1.0`
+liegen. Der Endpunkt ermittelt ihren SHA-256 aus den tatsächlichen Bytes.
+In diesem Modus sind OTA und ADB-Dateitransfers gesperrt. Mit
+`sudo foxair-fake-adbctl dtu-version V1.2` kehrt der Endpunkt zum normalen
+QEMU-Simulator zurück. Die Mainboard-Version bleibt separat einstellbar.
+
 Die wichtigsten Zustände und Simulatoraktionen sind auch über eine kleine,
 rein textbasierte Oberfläche erreichbar:
 

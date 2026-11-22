@@ -9,6 +9,7 @@ filesystem. The selected backend owns path mapping (QEMU rootfs, dedicated ADB
 from __future__ import annotations
 
 import argparse
+import hashlib
 import asyncio
 import hashlib
 import importlib.util
@@ -197,10 +198,21 @@ class FakeAdbServer:
         return None
 
     def execute_shell(self, command: str) -> tuple[int, bytes]:
+        if self.v10_identity_mode():
+            if command.strip() == "sha256sum '/data/phnixIot4G' 2>/dev/null | awk '{print $1}'":
+                try:
+                    binary = self.state_root / "fixtures" / "phnixIot4G-v1.0"
+                    return 0, (hashlib.sha256(binary.read_bytes()).hexdigest() + "\n").encode("ascii")
+                except OSError:
+                    return 1, b"V1.0 identity fixture unavailable\n"
+            return 1, b"V1.0 simulator profile allows build identification only\n"
         generic = self.generic_file_shell(command)
         if generic is not None:
             return generic
         return self.sim.shell(command)
+
+    def v10_identity_mode(self) -> bool:
+        return (self.state_root / "dtu-v1.0-identity").exists()
 
     async def select_transport(self, writer: asyncio.StreamWriter, *, modern: bool, serial: str | None = None) -> tuple[bool, bool]:
         if serial is not None and serial != self.serial:
@@ -301,6 +313,11 @@ class FakeAdbServer:
             req_id = header[:4]
             length = struct.unpack("<I", header[4:])[0]
             if req_id == b"QUIT":
+                return
+            if self.v10_identity_mode():
+                message = b"V1.0 simulator profile disables ADB file sync"
+                writer.write(b"FAIL" + struct.pack("<I", len(message)) + message)
+                await writer.drain()
                 return
             if req_id not in {b"STAT", b"LIST", b"RECV", b"SEND"}:
                 message = b"unsupported sync request"
