@@ -45,7 +45,7 @@ def _patch_supervisor_terminal_race(path: Path, payload: bytes) -> bytes:
     replacement is intentionally exact and fails package construction if the
     expected source block changes, preventing a silent partial patch.
     """
-    if path.name != "dtu_ota_supervisor.sh":
+    if path.name not in {"dtu_ota_supervisor.sh", "dtu_ota_supervisor_v10.sh"}:
         return payload
     count = payload.count(_SUPERVISOR_HOOK_EXIT_OLD)
     if count != 1:
@@ -166,8 +166,9 @@ class DtuOtaPackage:
                 raise PackageError(f"invalid {field}")
         if not re.fullmatch(r"[0-9a-f]{40}", str(value["expected_service_build_id"])):
             raise PackageError("invalid expected_service_build_id")
-        # Host-side safety gate, independent of DTU supervisor fixed allowlist.
-        # V1.0 cannot be packaged while its hook/recovery are unverified.
+        # Host-side build-pair pinning, independently of the DTU supervisor.
+        # This feature branch allows the exact V1.0 build with its separate
+        # experimental payload for VM validation (not a stable OTA release).
         try:
             service_profile = lookup_build(str(value["expected_service_sha256"]))
         except DtuBuildIdentificationError as error:
