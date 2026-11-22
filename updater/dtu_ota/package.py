@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from updater.common.firmware_manifest import FirmwareManifest
+from .build_profiles import lookup_build, DtuBuildIdentificationError
 
 
 PACKAGE_SCHEMA = "foxair-dtu-ota-package-v1"
@@ -165,6 +166,14 @@ class DtuOtaPackage:
                 raise PackageError(f"invalid {field}")
         if not re.fullmatch(r"[0-9a-f]{40}", str(value["expected_service_build_id"])):
             raise PackageError("invalid expected_service_build_id")
+        # Host-side safety gate, independent of DTU supervisor fixed allowlist.
+        # V1.0 cannot be packaged while its hook/recovery are unverified.
+        try:
+            service_profile = lookup_build(str(value["expected_service_sha256"]))
+        except DtuBuildIdentificationError as error:
+            raise PackageError("unknown DTU service SHA256") from error
+        if not service_profile.ota_enabled or service_profile.elf_build_id != value["expected_service_build_id"]:
+            raise PackageError("DTU build is not OTA-approved or build ID does not match")
         for field in ("restart_service_before_update", "isolate_mqtt"):
             if not isinstance(value[field], bool):
                 raise PackageError(f"{field} must be boolean")
