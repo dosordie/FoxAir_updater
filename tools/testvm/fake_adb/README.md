@@ -235,6 +235,13 @@ Der Peer prüft beim kurzen V1.0-Schlussblock den beobachteten Registercount
 `FF`-Padding aktiv. Beide Pfade vergleichen die rekonstruierten Nutzbytes
 mit der Firmware-Datei.
 
+Am 22.11.2026 bestätigten beide QEMU-Läufe den vollständigen V3.4-Transfer
+(1.726 Blöcke, 289.806 Nutzbytes, passender SHA-256), die Status-5-Quittung
+und die MQTT-Abschlussmeldung `0053`. Die VM-Protokolle stehen unter
+`/opt/phnix-lab/logs/native-ota-v10-20261122-144817` und
+`/opt/phnix-lab/logs/native-ota-v12-20261122-142804`.
+Der Test deckt den lokalen MQTT-Startweg und das simulierte Mainboard ab.
+
 ```sh
 sudo foxair-fake-adbctl native-ota V1.0
 sudo foxair-fake-adbctl native-ota V1.2
