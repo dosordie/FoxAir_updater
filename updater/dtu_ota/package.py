@@ -176,8 +176,7 @@ class DtuOtaPackage:
         if not re.fullmatch(r"[0-9a-f]{40}", str(value["expected_service_build_id"])):
             raise PackageError("invalid expected_service_build_id")
         # Host-side build-pair pinning, independently of the DTU supervisor.
-        # This feature branch allows the exact V1.0 build with its separate
-        # experimental payload for VM validation (not a stable OTA release).
+        # V1.0 requires the exact, separate V1.0 payload pair.
         try:
             service_profile = lookup_build(str(value["expected_service_sha256"]))
         except DtuBuildIdentificationError as error:
