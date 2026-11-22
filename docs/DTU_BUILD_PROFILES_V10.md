@@ -106,7 +106,8 @@ Auch `dtu_ota_supervisor.sh` bleibt zunächst exakt beim bewährten V1.2-Verhalt
 ## Validierung / Testanweisung
 
 ```sh
-python3 -m unittest tests.test_dtu_build_profiles tests.test_dtu_v10_static_checker tests.test_phnix_modem_info
+python3 -m unittest discover -s tests -p "test_dtu_*.py"
+python3 -m unittest discover -s tests -p "test_phnix_modem_info.py"
 python3 -m unittest discover -s tests -p "test_*.py"
 sh -n updater/dtu_ota/payload/phnix_ota_runtime_hook
 sh -n updater/dtu_ota/payload/dtu_ota_supervisor.sh
