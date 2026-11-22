@@ -213,6 +213,7 @@ liegen. Der Endpunkt ermittelt ihren SHA-256 aus den tatsächlichen Bytes.
 In diesem Modus sind OTA und ADB-Dateitransfers gesperrt. Mit
 `sudo foxair-fake-adbctl dtu-version V1.2` kehrt der Endpunkt zum normalen
 QEMU-Simulator zurück. Die Mainboard-Version bleibt separat einstellbar.
+In der Terminaloberfläche öffnet `D` dieselbe DTU-Profilwahl.
 
 Die wichtigsten Zustände und Simulatoraktionen sind auch über eine kleine,
 rein textbasierte Oberfläche erreichbar:

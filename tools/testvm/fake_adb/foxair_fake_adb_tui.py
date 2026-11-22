@@ -306,7 +306,9 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 0, 27, state["verdict"], curses.color_pair(color) | curses.A_BOLD)
     add(stdscr, 0, 55, f"Auto 2s | {state['refreshed']}")
     add(stdscr, 2, 0, f"Szenario:       {scenario.get('scenario', '-')}")
-    add(stdscr, 3, 0, f"Board-Version:  {scenario.get('board_version', '-')}")
+    v10 = (STATE_DIR / "dtu-v1.0-identity").exists()
+    dtu_label = "V1.0 (nur Erkennung)" if v10 else "V1.2"
+    add(stdscr, 3, 0, f"Board-Version:  {scenario.get('board_version', '-')}   DTU: {dtu_label}")
     add(stdscr, 4, 0, f"PHNIX-PID(s):   {', '.join(map(str, state['pids'])) or '-'}")
     add(stdscr, 5, 0, f"Szenario-PID:   {state['runner_pid'] or '-'}")
     add(stdscr, 6, 0, f"ADB / Debug:    {'online' if state['adb_online'] else 'offline'} / {state['modem_log']}")
@@ -330,7 +332,7 @@ def draw(stdscr, state: dict, message: str) -> None:
         add(stdscr, 18, 17, detail_lines[1])
     if state["error"]:
         add(stdscr, 19, 0, state["error"], curses.color_pair(1))
-    add(stdscr, 20, 0, "[R] Status  [S] Szenario  [B] Board-Version  [X] Reset  [F] Reparieren", curses.A_BOLD)
+    add(stdscr, 20, 0, "[R] Status [S] Szenario [B] Board [D] DTU [X] Reset [F] Reparieren", curses.A_BOLD)
     add(stdscr, 21, 0, "[C] Dienst-Crash  [M] Modem-Log  [A] ADB an/aus  [L] Logs  [Q] Ende", curses.A_BOLD)
     if message:
         add(stdscr, min(22, height - 1), 0, message, curses.color_pair(4))
@@ -371,6 +373,14 @@ def main(stdscr) -> None:
             if value:
                 code, output = run("board-version", value, timeout=90)
                 result_screen(stdscr, "Board-Version", code, output)
+        elif key in (ord("d"), ord("D")):
+            value = choose(stdscr, "DTU-Profil auswaehlen", [
+                ("V1.2", "Regulaerer OTA-Simulator"),
+                ("V1.0", "Build-Erkennung, OTA gesperrt"),
+            ])
+            if value and confirm(stdscr, f"ADB-Endpunkt auf DTU {value} umstellen?"):
+                code, output = run("dtu-version", value)
+                result_screen(stdscr, "DTU-Profil", code, output)
         elif key in (ord("x"), ord("X")):
             value = choose(stdscr, "Reset-Szenario auswaehlen", list(SCENARIOS))
             if value and confirm(stdscr, f"Laufzustand loeschen und '{value}' neu starten?"):
