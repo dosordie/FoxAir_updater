@@ -30,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional remote ADB server, for example tcp:192.168.10.70:5038",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("identify", help="read-only DTU-Build-Erkennung; V1.0-OTA bleibt gesperrt")
 
     prepare = commands.add_parser("prepare", aliases=["dry-run"], help="upload and verify only; never starts OTA")
     prepare.add_argument("--manifest", type=Path, required=True)
@@ -67,7 +68,9 @@ def main() -> int:
         env["ADB_SERVER_SOCKET"] = args.adb_server_socket
     client = DtuOtaClient(AdbClient(args.adb, args.serial, env=env))
     try:
-        if args.command in {"prepare", "dry-run"}:
+        if args.command == "identify":
+            value = client.identify_build()
+        elif args.command in {"prepare", "dry-run"}:
             value = client.prepare(
                 manifest_path=args.manifest, firmware_path=args.firmware, run_id=args.run_id,
                 mode=args.mode, restart_service_before_update=args.restart_service_before_update,
