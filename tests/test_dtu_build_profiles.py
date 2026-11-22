@@ -40,7 +40,7 @@ class DtuBuildProfileTests(unittest.TestCase):
         self.assertIs(lookup_build(V10.service_sha256.upper()), V10)
         self.assertTrue(V12.ota_enabled)
         self.assertFalse(V10.ota_enabled)
-        self.assertIsNone(V10.hook_filename)
+        self.assertEqual(V10.hook_filename, "phnix_ota_runtime_hook_v10")
         self.assertTrue(V12.has_statistics_file)
         self.assertFalse(V10.has_statistics_file)
 

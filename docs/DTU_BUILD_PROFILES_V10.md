@@ -11,13 +11,26 @@ Der Updater erkennt **vor dem Upload eines OTA-Pakets** den tatsächlich install
 | DTU-Software | Build-ID (Anfang) | Implementierungsstatus | OTA |
 |---|---|---|---|
 | V1.2 | `af4dcae1` | unveränderter validierter Hook/Supervisor | **freigegeben** |
-| V1.0 | `d25ea21f` | statische Symbole / Signaturen, Laufzeit nicht validiert | **gesperrt** |
+| V1.0 | `d25ea21f` | separater Hook/Supervisor implementiert, dynamischer Hook-Test ausstehend | **gesperrt** |
 | andere | unbekannt | keine Profilzuordnung | **gesperrt** |
 
 Wichtig: **V1.0 wird derzeit erkannt, aber es wird weder ein Updatepaket
 hochgeladen noch GDB gestartet noch eine Datei auf der DTU verändert.**
 Die vollen SHA256/ELF-Build-IDs sind als Konstanten in
 `updater/dtu_ota/build_profiles.py` hinterlegt.
+
+Der Branch enthält jetzt `phnix_ota_runtime_hook_v10` und
+`dtu_ota_supervisor_v10.sh`. Die Paketvorbereitung wählt die Payload-Dateien
+anhand des erkannten Profils. Die V1.0-Dateien verwenden die 18 dokumentierten
+Einstiegskandidaten, den JSON-Puffer bei `0xA2160` und die V1.0-RAM-Adressen.
+Das UART-Sendeflag wird als ein Byte gelesen. V1.0 sichert und restauriert
+OTA_INFO ohne Statistikdatei. Die unvalidierten Cancel-Probe-Aktionen sind
+aus der V1.0-Hookdatei entfernt.
+
+Die Sperre bleibt aktiv, bis der autonome Runner mit dieser Payload über
+ADB gegen einen tatsächlich laufenden V1.0-QEMU-Prozess geprüft wurde.
+Der bereits erfolgreiche lokale MQTT-Simulatortest verwendet einen anderen
+Startweg und belegt diese Hook-Sequenz noch nicht.
 
 ## Benutzerprüfung: völlig read-only
 

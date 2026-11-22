@@ -106,14 +106,18 @@ class DtuOtaClient:
             raise RunnerClientError(str(error)) from error
         if not profile.ota_enabled:
             raise RunnerClientError(describe_build(profile)["reason"])
-        if profile != V12:
-            raise RunnerClientError("Noch kein freigegebener Hook für diesen DTU-Build.")
+        payload_sources = self.source_root / "updater/dtu_ota/payload"
+        hook = self.hook if profile == V12 else payload_sources / profile.hook_filename
+        supervisor = (
+            self.supervisor if profile == V12
+            else payload_sources / "dtu_ota_supervisor_v10.sh"
+        )
         run_id = _run_id(run_id or time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 10000:04d}")
         manifest = FirmwareManifest.load(manifest_path)
         firmware = manifest.resolve_firmware(manifest_path, firmware_path)
         package = DtuOtaPackage.build(
-            run_id=run_id, manifest=manifest, firmware=firmware, hook=self.hook,
-            supervisor=self.supervisor, mode=mode,
+            run_id=run_id, manifest=manifest, firmware=firmware, hook=hook,
+            supervisor=supervisor, mode=mode,
             restart_service_before_update=restart_service_before_update,
             isolate_mqtt=isolate_mqtt,
             expected_service_sha256=profile.service_sha256,
@@ -124,9 +128,9 @@ class DtuOtaClient:
         self.adb.shell(f"mkdir -p '{payload}' '{run_dir}/state'")
         with tempfile.TemporaryDirectory() as temp:
             supervisor_path = Path(temp) / "dtu_ota_supervisor.sh"
-            supervisor_path.write_bytes(shell_payload_bytes(self.supervisor))
+            supervisor_path.write_bytes(shell_payload_bytes(supervisor))
             hook_path = Path(temp) / "runtime_hook"
-            hook_path.write_bytes(shell_payload_bytes(self.hook))
+            hook_path.write_bytes(shell_payload_bytes(hook))
             package_path = Path(temp) / "package.json"
             package_path.write_bytes(package.canonical_bytes())
             command_path = Path(temp) / "ota-command.json"
