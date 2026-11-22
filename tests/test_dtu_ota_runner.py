@@ -29,6 +29,8 @@ class FakeAdb:
 
     def shell(self, command, check=True):
         self.commands.append((command, check))
+        if "sha256sum '/data/phnixIot4G'" in command:
+            return "7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7"
         if command.startswith("cat '") and "/status.json'" in command:
             run_id = command.split("/runs/", 1)[1].split("/", 1)[0]
             return json.dumps({
