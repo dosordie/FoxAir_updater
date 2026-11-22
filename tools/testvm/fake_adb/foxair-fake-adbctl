@@ -56,6 +56,7 @@ Board und OTA-Szenarien:
                                  nur der produktive Runtime-Hook verbindet sich
   board-version NNNN             Mainboard-Version setzen und Runner neu starten (0033/0034)
   dtu-version V1.0|V1.2          ADB-Identitaetsprofil umschalten; V1.0 nur Erkennung
+  native-ota V1.0|V1.2           Kompletten Cloud-OTA-Test im isolierten Lab starten
   cancel-scenario NAME           vorhandene Cancel-ACK-Funktion des RS485-Fakers verwenden
   handshake-scenario NAME        vorhandene C350/C357-Fehlerbilder verwenden
   same-version-scenario NAME     vorhandene C350-Status0/Status1-Fehlerbilder verwenden
@@ -112,6 +113,22 @@ EOF
 cmd=${1:-status}
 shift || true
 case "$cmd" in
+    native-ota)
+        need_root native-ota
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        case "$1" in
+            V1.0) unit=foxair-native-ota-v10 ;;
+            V1.2) unit=foxair-native-ota-v12 ;;
+            *) usage; exit 2 ;;
+        esac
+        lab_root=${FOXAIR_QEMU_LAB_ROOT:-/opt/phnix-lab}
+        systemd-run --collect --no-block --unit="$unit" \
+            --property=LimitNOFILE=16384 \
+            --setenv=FOXAIR_QEMU_LAB_ROOT="$lab_root" \
+            --setenv=FOXAIR_FAKE_ADB_STATE="${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}" \
+            /bin/bash "$lab_root/tools/run_native_ota_lab.sh" "$1"
+        echo "Fortschritt und Ergebnis: journalctl -u $unit -f"
+        ;;
     dtu-version)
         need_root dtu-version
         state_dir=${FOXAIR_FAKE_ADB_STATE:-/var/lib/foxair-fake-adb}

@@ -1,0 +1,1 @@
+{"cmd":"CMD_OTA","code":"0033","param":{"softwareCode":"82400644","softwareVer":"V3.4","ssid":"0063","fileMD5":"149A586EDE6F035B385762EA48C71605","fileSize":289806,"otaFileDownloadAddr":"http://127.0.0.1:8081/phnixIot_device_OTA"}}

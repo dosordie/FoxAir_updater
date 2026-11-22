@@ -215,6 +215,27 @@ In diesem Modus sind OTA und ADB-Dateitransfers gesperrt. Mit
 QEMU-Simulator zurück. Die Mainboard-Version bleibt separat einstellbar.
 In der Terminaloberfläche öffnet `D` dieselbe DTU-Profilwahl.
 
+Für den vollständigen Test über MQTT und HTTP öffnet `U` die Auswahl
+zwischen den beiden Originaldiensten. Beide Varianten laufen in eigenen
+QEMU-Dateisystemkopien mit lokalem Testbroker und einem Netzwerk-Namespace
+ohne Standardroute. Die Quelle für V1.0 ist dieselbe private Fixture-Datei
+wie bei der Build-Erkennung. Das Mainboard startet mit V3.3 und erhält die
+lokale V3.4-Datei `/opt/phnix-lab/fixtures/phnixIot_device_OTA.v3.4`.
+Unter `L` stehen das Mainboard-Protokoll und das Ergebnisjournal pro DTU zur
+Verfügung. Der Test bestätigt Erfolg erst nach HTTP-Download, validierten
+Firmware-Blöcken und Quittierung von Status 5.
+V1.2 verwendet im isolierten QEMU-Prozess die bekannte Signalbehandlung
+für den emulationsbedingten `SIGFPE`. Das OTA-Angebot kommt in beiden
+Testläufen ausschließlich vom lokalen MQTT-Broker.
+Die Lab-Einheit erlaubt bis zu 16.384 Dateideskriptoren. V1.0 hält während
+der Übertragung OTA-Statusdateien offen und erreichte mit der bisherigen
+VM-Grenze von 1.024 nur rund 250 Blöcke.
+
+```sh
+sudo foxair-fake-adbctl native-ota V1.0
+sudo foxair-fake-adbctl native-ota V1.2
+```
+
 Die wichtigsten Zustände und Simulatoraktionen sind auch über eine kleine,
 rein textbasierte Oberfläche erreichbar:
 

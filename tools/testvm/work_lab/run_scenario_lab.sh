@@ -7,7 +7,7 @@ TOOLS="$LAB_ROOT/tools"
 RUN_SECS="${1:-35}"
 LABEL="${2:-at-emulator}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-RUN_DIR="$LAB_ROOT/logs/${LABEL}-${STAMP}"
+RUN_DIR="${LAB_LOG_ROOT:-$LAB_ROOT/logs}/${LABEL}-${STAMP}"
 MQTT_HOST="a1LABTEST01.iot-as-mqtt.eu-central-1.aliyuncs.com"
 TLS_DIR="$LAB_ROOT/state/tls"
 V33_FIXTURE="$LAB_ROOT/fixtures/phnixIot_device_OTA.v3.3"
@@ -126,6 +126,11 @@ fi
   rootfs="$1"; tools="$2"; run_dir="$3"; run_secs="$4"; tls_dir="$5"; mqtt_host="$6"; v33_fixture="$7"
   cleanup() {
     set +e
+    if [[ -n "${LAB_OTA_OFFER_FILE:-}" ]]; then
+      for pid in "${app_timeout_pid:-}" "${lab_gdb_pid:-}"; do
+        [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+      done
+    fi
     for pid in "${firmware_pid:-}" "${mqtt_ready_pid:-}" "${mqtt_pid:-}" "${credential_pid:-}" "${qmux_pid:-}" "${rs485_pid:-}" \
                "${emu_pid:-}" "${cat_gs0:-}" \
                "${soc_gs0:-}" "${soc_smd8:-}" "${soc_hsl2:-}"; do
@@ -180,6 +185,10 @@ fi
     elif [[ "${OTA_0033_PARSE_PROBE:-0}" == 1 ]]; then
       mqtt_args+=(--probe-topic "/a1LABTEST01/LABDEVICE001/user/OTA_GET"
                   --probe-payload-file "$tools/ota_0033_parse_probe.json")
+    elif [[ -n "${LAB_OTA_OFFER_FILE:-}" ]]; then
+      mqtt_args+=(--probe-topic "/a1LABTEST01/LABDEVICE001/user/OTA_GET"
+                  --probe-payload-file "$LAB_OTA_OFFER_FILE"
+                  --probe-delay "${LAB_OTA_OFFER_DELAY:-5}")
     elif [[ "${V33_DOWNLOAD_PROBE:-0}" == 1 ]]; then
       mqtt_args+=(--probe-topic "/a1LABTEST01/LABDEVICE001/user/OTA_GET"
                   --probe-payload-file "${PROBE_PAYLOAD_FILE:-$tools/ota_0033_v33_download_probe.json}")
@@ -280,7 +289,9 @@ fi
     )
     if [[ "${V33_FULL_TRANSFER:-0}" == 1 || "${LOCAL_OTA_FULL_TRANSFER:-0}" == 1 ]]; then
       rs485_firmware="$rootfs/data/phnix_local_ota/phnixIot_device_OTA.bin"
-      if [[ "${RS485_USE_DOWNLOADED_CACHE:-0}" == 1 ]]; then
+      if [[ -n "${LAB_OTA_OFFER_FILE:-}" ]]; then
+        rs485_firmware="$FIRMWARE_HTTP_FILE"
+      elif [[ "${RS485_USE_DOWNLOADED_CACHE:-0}" == 1 ]]; then
         rs485_firmware="$rootfs/cache/phnixIot_device_OTA"
       fi
       rs485_args+=(
@@ -423,9 +434,40 @@ fi
       chroot "$rootfs" /usr/bin/qemu-arm-static "${qemu_env[@]}" -L / -strace "$app_path" \
       > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log"
   else
+    lab_gdb_args=()
+    if [[ "${LAB_QEMU_SIGFPE_COMPAT:-0}" == 1 ]]; then
+      [[ -n "${LAB_OTA_OFFER_FILE:-}" && -z "${REUSE_NETNS_PID:-}" ]] || exit 94
+      command -v gdb-multiarch >/dev/null || exit 94
+      lab_gdb_args=(-g 12345)
+    fi
     timeout -k 2 "${run_secs}s" chroot "$rootfs" \
-      /usr/bin/qemu-arm-static "${qemu_env[@]}" -L / -strace "$app_path" \
-      > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log"
+      /usr/bin/qemu-arm-static "${qemu_env[@]}" "${lab_gdb_args[@]}" -L / -strace "$app_path" \
+      > "$run_dir/stdout.log" 2> "$run_dir/qemu-strace.log" &
+    app_timeout_pid=$!
+    if (( ${#lab_gdb_args[@]} )); then
+      gdb-multiarch -nx -q -batch \
+        -ex "set tcp auto-retry on" -ex "set tcp connect-timeout 5" \
+        -ex "handle SIGILL nostop noprint pass" \
+        -ex "handle SIGFPE nostop noprint nopass" \
+        -ex "target remote 127.0.0.1:12345" -ex continue \
+        > "$run_dir/qemu-signal-compat.log" 2>&1 &
+      lab_gdb_pid=$!
+    fi
+    if [[ -n "${LAB_OTA_OFFER_FILE:-}" ]]; then
+      while kill -0 "$app_timeout_pid" 2>/dev/null; do
+        if grep -q "c37b-status-ack for=wait-status5-ack .*63 10 c3 7b 00 02 04 00 63 00 05 34 69" "$run_dir/ttyHSL2-transcript.txt" &&
+           grep -q "transfer-complete bytes=$FIRMWARE_HTTP_SIZE " "$run_dir/ttyHSL2-transcript.txt" &&
+           grep -q "\"result\": 200, \"bytes\": $FIRMWARE_HTTP_SIZE," "$run_dir/firmware-http-transcript.jsonl"; then
+          echo "CONFIRMED: HTTP download, full RS485 transfer and status 5 ACK"
+          exit 0
+        fi
+        sleep 2
+      done
+      wait "$app_timeout_pid"
+      echo "OTA process ended without the required board confirmation" >&2
+      exit 1
+    fi
+    wait "$app_timeout_pid"
   fi
 ' bash "$ROOTFS" "$TOOLS" "$RUN_DIR" "$RUN_SECS" "$TLS_DIR" "$MQTT_HOST" "$V33_FIXTURE"
 rc=$?
@@ -433,6 +475,12 @@ set -e
 printf '%s\n' "$rc" > "$RUN_DIR/exit-code.txt"
 
 printf 'RUN_DIR=%s\nEXIT_CODE=%s\n' "$RUN_DIR" "$rc"
+if [[ -n "${LAB_OTA_OFFER_FILE:-}" ]]; then
+  if [[ -f "$RUN_DIR/ttyHSL2-transcript.txt" ]]; then
+    grep -E 'VERIFIED (transfer-complete|promotion)' "$RUN_DIR/ttyHSL2-transcript.txt" || true
+  fi
+  exit "$rc"
+fi
 printf '\n=== AT summary ===\n'
 if [[ -f "$RUN_DIR/smd8-transcript.txt" ]]; then
   sed -n '1,24p' "$RUN_DIR/smd8-transcript.txt"

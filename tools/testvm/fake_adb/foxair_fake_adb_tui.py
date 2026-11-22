@@ -263,10 +263,16 @@ def log_screen(stdscr) -> None:
             (str(ota_dir / "hook.log"), "OTA-Hook-Protokoll"),
             (str(ota_dir / "launcher.log"), "OTA-Launcher-Protokoll"),
         ])
+    for version, suffix in (("V1.0", "v10"), ("V1.2", "v12")):
+        logs = sorted((LAB_ROOT / "logs").glob(f"native-ota-{suffix}-*/ttyHSL2-transcript.txt"))
+        if logs:
+            options.append((str(logs[-1]), f"Cloud-OTA {version}: Mainboard live"))
     options.extend([
         (str(STATE_DIR / "qemu-adb/scenario-lab.out"), "Launcher-Log (nur Startfehler; oft leer)"),
         ("journal:foxair-fake-adb.service", "Fake-ADB-Dienst"),
         ("journal:foxair-debug-stream.service", "Debugstream-Dienst"),
+        ("journal:foxair-native-ota-v10.service", "Lokaler Cloud-OTA-Test V1.0"),
+        ("journal:foxair-native-ota-v12.service", "Lokaler Cloud-OTA-Test V1.2"),
     ])
     target = choose(stdscr, "Log auswaehlen", options)
     if not target:
@@ -306,6 +312,7 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 0, 27, state["verdict"], curses.color_pair(color) | curses.A_BOLD)
     add(stdscr, 0, 55, f"Auto 2s | {state['refreshed']}")
     add(stdscr, 2, 0, f"Szenario:       {scenario.get('scenario', '-')}")
+    add(stdscr, 9, 0, "[U] Lokalen Cloud-OTA-Test starten (V1.0 / V1.2)", curses.A_BOLD)
     v10 = (STATE_DIR / "dtu-v1.0-identity").exists()
     dtu_label = "V1.0 (nur Erkennung)" if v10 else "V1.2"
     add(stdscr, 3, 0, f"Board-Version:  {scenario.get('board_version', '-')}   DTU: {dtu_label}")
@@ -381,6 +388,14 @@ def main(stdscr) -> None:
             if value and confirm(stdscr, f"ADB-Endpunkt auf DTU {value} umstellen?"):
                 code, output = run("dtu-version", value)
                 result_screen(stdscr, "DTU-Profil", code, output)
+        elif key in (ord("u"), ord("U")):
+            value = choose(stdscr, "Lokalen Cloud-OTA-Test auswaehlen", [
+                ("V1.2", "Originaldienst V1.2"),
+                ("V1.0", "Originaldienst V1.0"),
+            ])
+            if value and confirm(stdscr, f"Isolierten OTA-Test mit DTU {value} starten?"):
+                code, output = run("native-ota", value)
+                result_screen(stdscr, "Lab-Auftrag", code, output)
         elif key in (ord("x"), ord("X")):
             value = choose(stdscr, "Reset-Szenario auswaehlen", list(SCENARIOS))
             if value and confirm(stdscr, f"Laufzustand loeschen und '{value}' neu starten?"):

@@ -210,13 +210,16 @@ def handle_client(raw, peer, context, args, runtime_requests):
                     stream.sendall(b"\x90" + bytes((2 + len(granted),))
                                    + struct.pack("!H", record["packet_id"]) + granted)
                     if not probe_sent and args.probe_topic and args.probe_topic in subscribed:
-                        probe = (Path(args.probe_payload_file).read_bytes().rstrip(b"\r\n")
-                                 if args.probe_payload_file
-                                 else bytes.fromhex(args.probe_payload_hex or ""))
-                        send_probe(stream, args.probe_topic, probe, 0x7001,
-                                   args.transcript, "LAB_PROBE_SENT")
                         probe_sent = True
                         base = time.monotonic()
+                        if args.probe_delay:
+                            scheduled.append((base + args.probe_delay, args.probe_payload_file))
+                        else:
+                            probe = (Path(args.probe_payload_file).read_bytes().rstrip(b"\r\n")
+                                     if args.probe_payload_file
+                                     else bytes.fromhex(args.probe_payload_hex or ""))
+                            send_probe(stream, args.probe_topic, probe, 0x7001,
+                                       args.transcript, "LAB_PROBE_SENT")
                         for spec in args.scheduled_probe:
                             delay_text, probe_path = spec.split(":", 1)
                             scheduled.append((base + float(delay_text), probe_path))
@@ -250,8 +253,11 @@ def main():
     parser.add_argument("--probe-topic")
     parser.add_argument("--probe-payload-hex")
     parser.add_argument("--probe-payload-file")
+    parser.add_argument("--probe-delay", type=float, default=0)
     parser.add_argument("--scheduled-probe", action="append", default=[], metavar="SECONDS:FILE")
     args = parser.parse_args()
+    if args.probe_delay < 0 or (args.probe_delay and not args.probe_payload_file):
+        parser.error("--probe-delay requires a payload file and a nonnegative delay")
 
     runtime_requests = queue.Queue()
     if args.control_socket:

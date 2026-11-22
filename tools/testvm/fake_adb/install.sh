@@ -131,6 +131,8 @@ fetch tools/testvm/fake_adb/foxair_fake_adb_tui.py "$INSTALL_DIR/foxair_fake_adb
 fetch tools/testvm/fake_adb/gdb_warm_detach.gdb "$INSTALL_DIR/gdb_warm_detach.gdb"
 fetch tools/testvm/fake_adb/gdb_original_ota_1fe40.gdb "$INSTALL_DIR/gdb_original_ota_1fe40.gdb"
 fetch tools/testvm/work_lab/run_scenario_lab.sh "$LAB_ROOT/tools/run_scenario_lab.sh"
+fetch tools/testvm/work_lab/run_native_ota_lab.sh "$LAB_ROOT/tools/run_native_ota_lab.sh"
+fetch tools/testvm/work_lab/ota_v34_lab_offer.json "$LAB_ROOT/tools/ota_v34_lab_offer.json"
 fetch tools/testvm/work_lab/rs485_fault_emulator.py "$LAB_ROOT/tools/rs485_fault_emulator.py"
 fetch tools/testvm/work_lab/mqtt_scenario_stub.py "$LAB_ROOT/tools/mqtt_scenario_stub.py"
 fetch tools/testvm/work_lab/mqtt_ready_bridge.py "$LAB_ROOT/tools/mqtt_ready_bridge.py"
