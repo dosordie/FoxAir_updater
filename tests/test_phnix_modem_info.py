@@ -55,13 +55,16 @@ def padded(text: str, size: int) -> bytes:
 
 
 class FakeAdb:
-    def __init__(self, memory: dict[int, bytes], pid: str = "1234"):
+    def __init__(self, memory: dict[int, bytes], pid: str = "1234", service_hash: str | None = None):
         self.memory = memory
         self.pid = pid
+        self.service_hash = service_hash or "7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7"
         self.commands: list[str] = []
 
     def shell(self, command: str, check: bool = True) -> str:
         self.commands.append(command)
+        if "sha256sum '/data/phnixIot4G'" in command:
+            return self.service_hash
         if command == "pidof phnixIot4G":
             return self.pid
 
@@ -246,6 +249,14 @@ class PhnixModemInfoTests(unittest.TestCase):
         self.assertEqual(info.imei, "860147123456789")
         self.assertEqual(info.cloud.mqtt_state, 2)
         self.assertGreaterEqual(len(info.read_errors), 2)
+
+    def test_v10_diagnostic_never_reads_v12_memory(self):
+        v10 = "57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c"
+        adb = FakeAdb(self._live_memory(), service_hash=v10)
+        info = read_phnix_modem_info(adb)
+        self.assertIsNone(info.pid)
+        self.assertTrue(any("V1.0" in error for error in info.read_errors))
+        self.assertFalse(any("dd if=/proc/" in cmd for cmd in adb.commands))
 
     def test_missing_process_returns_unavailable_model(self):
         info = read_phnix_modem_info(FakeAdb({}, pid=""))

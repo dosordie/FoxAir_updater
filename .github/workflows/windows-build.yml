@@ -2,6 +2,9 @@ name: Windows Updater Build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/dtu-v1-build-profiles
 
 permissions:
   contents: read
@@ -47,9 +50,32 @@ jobs:
           python -m py_compile updater/dtu_ota/package.py
           python updater/dtu_ota/cli.py --help > $null
 
+      - name: Test V1.0/V1.2 build profiles and experimental payload
+        shell: powershell
+        run: |
+          python -m unittest discover -s tests -p "test_dtu_build_profiles.py"
+          python -m unittest discover -s tests -p "test_dtu_v10_payload.py"
+          python -m unittest discover -s tests -p "test_dtu_v10_runtime_probe.py"
+          python -m unittest discover -s tests -p "test_dtu_v10_static_checker.py"
+          python -m unittest discover -s tests -p "test_dtu_ota_runner.py"
+          python -m unittest discover -s tests -p "test_phnix_modem_info.py"
+
       - name: Build portable package
         shell: cmd
         run: updater\windows\build_windows_portable.bat
+
+      - name: Verify both DTU payloads are bundled into Windows
+        shell: powershell
+        run: |
+          $payload = "dist/FoxAir_Updater/backend/updater/dtu_ota/payload"
+          foreach ($name in @("phnix_ota_runtime_hook",
+                               "phnix_ota_runtime_hook_v10",
+                               "dtu_ota_supervisor.sh",
+                               "dtu_ota_supervisor_v10.sh")) {
+            $file = Join-Path $payload $name
+            if (-not (Test-Path $file)) { throw "Windows artifact missing $file" }
+          }
+          python updater/windows/verify_windows_backend.py --root . --out dist/FoxAir_Updater
 
       - name: Install Inno Setup
         shell: powershell

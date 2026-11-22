@@ -1,0 +1,133 @@
+{
+  "source_sha256": "57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c",
+  "build_id": "d25ea21f8c4edc95c820c570da4a3399d8bd1cbc",
+  "description": "Static-only ARM32 ELF breakpoint candidates. These are NOT authorized live hook addresses.",
+  "entries": [
+    {
+      "name": "mqtt_scheduler_init_loop",
+      "v12": "0x1fdac",
+      "v10_candidate": "0x1f3c0",
+      "v10_machine_bytes_8": "070000eae5fcffeb",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "mqtt_yield_injection",
+      "v12": "0x1fe40",
+      "v10_candidate": "0x1f44c",
+      "v10_machine_bytes_8": "483d00e30a3040e3",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "ota_parser_entry",
+      "v12": "0x19958",
+      "v10_candidate": "0x193f8",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "c350_post_parser",
+      "v12": "0x1c4bc",
+      "v10_candidate": "0x1be6c",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "c36e_receive",
+      "v12": "0x1ba04",
+      "v10_candidate": "0x1b434",
+      "v10_machine_bytes_8": "30482de90cb08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "c357_send",
+      "v12": "0x1cea0",
+      "v10_candidate": "0x1c898",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "c5a8_send",
+      "v12": "0x1c7cc",
+      "v10_candidate": "0x1c164",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "dtu_run_step_set",
+      "v12": "0x1d2f8",
+      "v10_candidate": "0x1ccf4",
+      "v10_machine_bytes_8": "04b02de500b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "ota_can_update_publish",
+      "v12": "0x18d04",
+      "v10_candidate": "0x189e8",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "ota_success_publish",
+      "v12": "0x191c0",
+      "v10_candidate": "0x18db8",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "ota_failure_publish",
+      "v12": "0x19264",
+      "v10_candidate": "0x18e48",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "cancel_0073_handler",
+      "v12": "0x19764",
+      "v10_candidate": "0x19310",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "cancel_c36c_handler",
+      "v12": "0x1b51c",
+      "v10_candidate": "0x1af4c",
+      "v10_machine_bytes_8": "00482de904b08de2",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "cancel_pending_clear",
+      "v12": "0x1b5a8",
+      "v10_candidate": "0x1afd8",
+      "v10_machine_bytes_8": "803109e3123040e3",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "cancel_c36a_send_call",
+      "v12": "0x1dacc",
+      "v10_candidate": "0x1d49c",
+      "v10_machine_bytes_8": "49f5ffeb9a0000ea",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "cancel_step10_setter",
+      "v12": "0x1db94",
+      "v10_candidate": "0x1d564",
+      "v10_machine_bytes_8": "f7fdffeb680000ea",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "ota_success_step12_boundary",
+      "v12": "0x1da3c",
+      "v10_candidate": "0x1d40c",
+      "v10_machine_bytes_8": "000000eabe0000ea",
+      "status": "static-only—not runtime validated"
+    },
+    {
+      "name": "ota_failure_step12_boundary",
+      "v12": "0x1d748",
+      "v10_candidate": "0x1d148",
+      "v10_machine_bytes_8": "000000ea6f0100ea",
+      "status": "static-only—not runtime validated"
+    }
+  ]
+}

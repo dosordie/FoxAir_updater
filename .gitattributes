@@ -3,5 +3,6 @@
 foxair-updater text eol=lf
 updater/dtu_ota/payload/dtu_ota_supervisor.sh text eol=lf
 updater/dtu_ota/payload/phnix_ota_runtime_hook text eol=lf
+updater/dtu_ota/payload/phnix_ota_runtime_hook_v10 text eol=lf
 tools/phnix_traffic/foxair_traffic_trace text eol=lf
 *.md text eol=lf

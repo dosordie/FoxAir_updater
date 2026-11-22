@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from updater.common.firmware_manifest import FirmwareManifest
+from .build_profiles import lookup_build, DtuBuildIdentificationError
 
 
 PACKAGE_SCHEMA = "foxair-dtu-ota-package-v1"
@@ -44,7 +45,7 @@ def _patch_supervisor_terminal_race(path: Path, payload: bytes) -> bytes:
     replacement is intentionally exact and fails package construction if the
     expected source block changes, preventing a silent partial patch.
     """
-    if path.name != "dtu_ota_supervisor.sh":
+    if path.name not in {"dtu_ota_supervisor.sh", "dtu_ota_supervisor_v10.sh"}:
         return payload
     count = payload.count(_SUPERVISOR_HOOK_EXIT_OLD)
     if count != 1:
@@ -97,6 +98,15 @@ class DtuOtaPackage:
         expected_service_build_id: str = EXPECTED_SERVICE_BUILD_ID,
     ) -> "DtuOtaPackage":
         manifest.validate_file(firmware)
+        # A V1.0 package must never accidentally contain the V1.2 GDB hook.
+        # This is a source-selection guard in addition to the independent
+        # exact-build checks performed by the target-side supervisor.
+        if expected_service_sha256.upper() == (
+            "57B415B0143F598E81BCCB9D5D5C4EE848DF817B79DC1493C3CFDB6D8C96409C"
+        ):
+            if (hook.name != "phnix_ota_runtime_hook_v10"
+                    or supervisor.name != "dtu_ota_supervisor_v10.sh"):
+                raise PackageError("V1.0 requires its dedicated hook and supervisor payload")
         value: dict[str, Any] = {
             "schema": PACKAGE_SCHEMA,
             "run_id": run_id,
@@ -165,6 +175,14 @@ class DtuOtaPackage:
                 raise PackageError(f"invalid {field}")
         if not re.fullmatch(r"[0-9a-f]{40}", str(value["expected_service_build_id"])):
             raise PackageError("invalid expected_service_build_id")
+        # Host-side build-pair pinning, independently of the DTU supervisor.
+        # V1.0 requires the exact, separate V1.0 payload pair.
+        try:
+            service_profile = lookup_build(str(value["expected_service_sha256"]))
+        except DtuBuildIdentificationError as error:
+            raise PackageError("unknown DTU service SHA256") from error
+        if not service_profile.ota_enabled or service_profile.elf_build_id != value["expected_service_build_id"]:
+            raise PackageError("DTU build is not OTA-approved or build ID does not match")
         for field in ("restart_service_before_update", "isolate_mqtt"):
             if not isinstance(value[field], bool):
                 raise PackageError(f"{field} must be boolean")

@@ -1,6 +1,12 @@
 name: Release Windows
 
 on:
+  # Explicit one-off release trigger committed to main after merging the
+  # validated V1.0/V1.2 profile implementation. Unrelated pushes never publish.
+  push:
+    branches: [main]
+    paths:
+      - ".github/release-requests/windows-v0.5.2.txt"
   workflow_dispatch:
     inputs:
       version:
@@ -29,6 +35,8 @@ jobs:
   release-windows:
     name: Build and publish Windows release
     runs-on: windows-latest
+    env:
+      RELEASE_VERSION: ${{ github.event_name == 'push' && '0.5.2' || inputs.version }}
 
     steps:
       - name: Checkout selected ref
@@ -38,7 +46,7 @@ jobs:
           ref: ${{ github.ref }}
 
       - name: Validate release branch
-        if: ${{ !inputs.build_only }}
+        if: ${{ github.event_name == 'push' || !inputs.build_only }}
         shell: pwsh
         run: |
           if ("${{ github.ref_name }}" -ne "main") {
@@ -48,13 +56,13 @@ jobs:
       - name: Validate version and tag
         shell: pwsh
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
             throw "Version must use x.y.z, for example 0.4.0"
           }
-          if ("${{ inputs.build_only }}" -ne "true") {
+          if ("${{ github.event_name }}" -eq "push" -or "${{ inputs.build_only }}" -ne "true") {
             git fetch origin main --tags
             $tag = "windows-v$env:VERSION"
             if (git tag --list $tag) {
@@ -65,7 +73,7 @@ jobs:
       - name: Set Windows release version
         shell: pwsh
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -92,7 +100,7 @@ jobs:
       - name: Verify synchronized Windows version
         shell: pwsh
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           $ErrorActionPreference = 'Stop'
           $app = Select-String -Path updater/windows/foxair_updater_app.py -Pattern '^APP_VERSION\s*=\s*"(.+)"$'
@@ -141,6 +149,8 @@ jobs:
         run: |
           sh -n updater/dtu_ota/payload/phnix_ota_runtime_hook
           sh -n updater/dtu_ota/payload/dtu_ota_supervisor.sh
+          sh -n updater/dtu_ota/payload/phnix_ota_runtime_hook_v10
+          sh -n updater/dtu_ota/payload/dtu_ota_supervisor_v10.sh
 
       - name: Build portable package
         shell: cmd
@@ -157,7 +167,7 @@ jobs:
       - name: Verify release assets
         shell: pwsh
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           $ErrorActionPreference = 'Stop'
           $portable = "dist/FoxAir_Updater_Portable_v$env:VERSION.zip"
@@ -195,6 +205,11 @@ jobs:
           if (-not (Test-Path (Join-Path $portableCheck 'backend/updater/dtu_ota/payload/phnix_ota_runtime_hook'))) {
             throw 'Portable ZIP does not contain the DTU runtime hook payload'
           }
+          foreach ($name in @('phnix_ota_runtime_hook_v10', 'dtu_ota_supervisor_v10.sh')) {
+            if (-not (Test-Path (Join-Path $portableCheck "backend/updater/dtu_ota/payload/$name"))) {
+              throw "Portable ZIP missing V1.0-specific OTA payload: $name"
+            }
+          }
           if (Test-Path (Join-Path $portableCheck 'backend/tools/dtu_ota_runner')) {
             throw 'Portable ZIP unexpectedly contains the obsolete tools/dtu_ota_runner package'
           }
@@ -216,26 +231,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Packaged statistics counter core did not start with private runtime' }
 
       - name: Upload build-only portable ZIP
-        if: ${{ inputs.build_only }}
+        if: ${{ github.event_name != 'push' && inputs.build_only }}
         uses: actions/upload-artifact@v4
         with:
-          name: FoxAir_Updater_Portable_v${{ inputs.version }}_${{ github.ref_name }}
-          path: dist/FoxAir_Updater_Portable_v${{ inputs.version }}.zip
+          name: FoxAir_Updater_Portable_v${{ env.RELEASE_VERSION }}_${{ github.ref_name }}
+          path: dist/FoxAir_Updater_Portable_v${{ env.RELEASE_VERSION }}.zip
           if-no-files-found: error
 
       - name: Upload build-only Windows setup
-        if: ${{ inputs.build_only }}
+        if: ${{ github.event_name != 'push' && inputs.build_only }}
         uses: actions/upload-artifact@v4
         with:
-          name: FoxAir_Updater_Setup_v${{ inputs.version }}_${{ github.ref_name }}
-          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ inputs.version }}.exe
+          name: FoxAir_Updater_Setup_v${{ env.RELEASE_VERSION }}_${{ github.ref_name }}
+          path: updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ env.RELEASE_VERSION }}.exe
           if-no-files-found: error
 
       - name: Commit release version and push tag
-        if: ${{ !inputs.build_only }}
+        if: ${{ github.event_name == 'push' || !inputs.build_only }}
         shell: pwsh
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           $ErrorActionPreference = 'Stop'
           git config user.name 'github-actions[bot]'
@@ -256,32 +271,33 @@ jobs:
           git push origin $tag
 
       - name: Create GitHub Release
-        if: ${{ !inputs.build_only }}
+        if: ${{ github.event_name == 'push' || !inputs.build_only }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: windows-v${{ inputs.version }}
-          name: FoxAir Updater Windows v${{ inputs.version }}
-          prerelease: ${{ inputs.prerelease }}
+          tag_name: windows-v${{ env.RELEASE_VERSION }}
+          name: FoxAir Updater Windows v${{ env.RELEASE_VERSION }}
+          prerelease: ${{ github.event_name != 'push' && inputs.prerelease }}
           body: |
-            FoxAir Updater für Windows – Portable ZIP und Setup EXE.
+            FoxAir Updater Windows v0.5.2 – Portable ZIP und Setup EXE.
 
-            - Vollständige Mainboard-Firmwarewechsel V3.3 → V3.4 sowie V1.2 → V3.4 wurden auf realer FoxAir-/PHNIX-Hardware erfolgreich durchgeführt.
-            - Der produktive Mainboard-OTA läuft über den autonomen DTU-Runner. Nach erfolgreichem Start führt das LTE-Modem den Updatevorgang selbstständig weiter; ein kurzfristiger Windows-/ADB-Verbindungsverlust beendet den laufenden OTA nicht.
-            - Der gespeicherte Runner-Zustand kann über „Status prüfen“ erneut eingelesen werden, ohne einen zweiten Updatevorgang zu starten.
-            - 100 % Fortschritt bedeutet nur vollständige Firmwareübertragung; erst die finale Mainboardbestätigung Status 5 / Board-Step 12 gilt als terminaler Erfolg.
-            - MQTT bleibt beim normalen Vollupdate standardmäßig verbunden. Die MQTT-Isolierung ist optional unter „Erweitert → MQTT bei Update aus“ verfügbar.
-            - Der kontrollierte phnixIot4G-Neustart kann vor dem Update angefordert werden und wird durch den Runner anhand einer neuen stabilen Dienstinstanz verifiziert.
-            - Shell-Payloads werden vor Hashing und Übertragung auf LF normalisiert, damit Windows-Checkouts keine nicht ausführbaren CRLF-Hooks erzeugen.
-            - Read-only Backup, Vorprüfung, Manifest-Prüfung, Status/Wiederherstellung, LTE-/Modemdiagnose und Protokollexport sind integriert.
-            - Die Wartungsoberfläche unterstützt ausgewählte persistente PHNIX-Statistikzähler mit Backup sowie Datei-/RAM-Verifikation.
-            - Portable ZIP und Setup EXE sind derzeit nicht kommerziell code-signiert; Windows SmartScreen kann deshalb beim ersten Start „Weitere Informationen“ → „Trotzdem ausführen“ verlangen.
-            - ADB ist nicht enthalten; die GUI verweist auf den SIMCom USB-Treiber und die offiziellen Android Platform Tools.
-            - Lokaler und optionaler Remote-ADB-Modus über einen Raspberry Pi werden unterstützt.
-            - Der autonome DTU-Runner liegt produktiv unter updater/dtu_ota; Test- und Simulatorcode bleibt davon getrennt.
+            ### Neu in v0.5.2
+            - **DTU V1.0 unterstützt:** Automatische Erkennung des geprüften `phnixIot4G`-Builds anhand SHA256/ELF-Build-ID und separater V1.0-Runtime-Hook sowie Supervisor.
+            - **DTU V1.2 weiterhin unterstützt:** Bestehender Runtime-Hook und Supervisor bleiben unverändert.
+            - Vollständiger V1.0-OTA wurde im QEMU-Mainboard-Simulator mit dem autonomen Windows-Runner bis zum terminalen Boardstatus 5 erfolgreich getestet.
+            - V1.2-OTA-Start, Firmware-Download und Blocktransfer wurden ebenfalls im Simulator bestätigt; die bisherigen produktiven V1.2-Funktionen bleiben erhalten.
+            - Crash-/Resume-Abläufe sind im Simulator getestet.
+            - Der Updater lehnt unbekannte oder nicht exakt unterstützte DTU-Dienst-Builds weiterhin vor dem OTA ab.
 
-            Weitere technische Details stehen in README.md und unter docs/.
+            ### Hinweise
+            - DTU-Software V1.0/V1.2 ist **nicht** gleich Mainboard-Firmware V3.4/V3.5.
+            - 100 % übertragene Bytes sind noch kein terminaler Erfolg: Entscheidend ist die bestätigte Boardmeldung (Status 5).
+            - Für den normalen Updatevorgang bleibt MQTT verbunden; nach Beginn arbeitet der autonome DTU-Runner unabhängig von der Windows-/ADB-Verbindung.
+            - Portable ZIP und Setup EXE sind nicht kommerziell code-signiert und können Windows SmartScreen auslösen.
+            - ADB/Android Platform Tools sind separat erforderlich; lokaler ADB- und Remote-ADB-Modus werden unterstützt.
+
+            Weitere Hinweise und die dokumentierten, fest gepinnten DTU-Builds stehen in README.md und docs/DTU_BUILD_PROFILES_V10.md.
           files: |
-            dist/FoxAir_Updater_Portable_v${{ inputs.version }}.zip
-            updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ inputs.version }}.exe
+            dist/FoxAir_Updater_Portable_v${{ env.RELEASE_VERSION }}.zip
+            updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ env.RELEASE_VERSION }}.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

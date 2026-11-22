@@ -34,14 +34,12 @@ def prepare_backend(root: Path, out: Path) -> None:
 
     for source in sorted((root / "updater/dtu_ota").glob("*.py")):
         copy_file(source, backend / "updater/dtu_ota" / source.name)
-    copy_file(
-        root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh",
-        backend / "updater/dtu_ota/payload/dtu_ota_supervisor.sh",
-    )
-    prepare_runtime_hook(
-        root / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
-        backend / "updater/dtu_ota/payload/phnix_ota_runtime_hook",
-    )
+    payload = root / "updater/dtu_ota/payload"
+    packaged_payload = backend / "updater/dtu_ota/payload"
+    for name in ("dtu_ota_supervisor.sh", "dtu_ota_supervisor_v10.sh"):
+        copy_file(payload / name, packaged_payload / name)
+    for name in ("phnix_ota_runtime_hook", "phnix_ota_runtime_hook_v10"):
+        prepare_runtime_hook(payload / name, packaged_payload / name)
 
     verify(root, out)
 

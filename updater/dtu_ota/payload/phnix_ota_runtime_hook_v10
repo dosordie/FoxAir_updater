@@ -1,0 +1,677 @@
+#!/bin/sh
+# Experimental V1.0 runtime bridge. Pending dynamic hook and resume validation.
+# Target: ARM32 ELF Build-ID d25ea21f8c4edc95c820c570da4a3399d8bd1cbc
+set -eu
+
+SERVICE=/data/phnixIot4G
+EXPECTED_SHA256=57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c
+STATE_DIR=/tmp/phnix_ota_hook
+GDB_SCRIPT=$STATE_DIR/runtime.gdb
+HELPER_PID=$STATE_DIR/helper.pid
+GDB_PID=$STATE_DIR/gdb.pid
+GDBSERVER_PID=$STATE_DIR/gdbserver.pid
+WATCHDOG_PIDS=$STATE_DIR/watchdogs.pids
+RUN_ACTIVE=$STATE_DIR/run.active
+SAFE_TO_CLEAN=$STATE_DIR/safe-to-clean
+TRANSFER_STARTED=$STATE_DIR/transfer-started
+INJECTION_STARTED=$STATE_DIR/injection-started
+ORIGINAL_SERVICE_OWNS=$STATE_DIR/original-service-owns
+STATE_BACKUP=$STATE_DIR/original-state
+DEFAULT_STATUS=/tmp/phnix_ota_status.json
+GDB_BIN=/usr/bin/gdb
+YIELD_BREAK_CONDITION=
+if test -f /data/phnixIot4G.tls-lab; then
+    test -x /usr/bin/gdb-multiarch && GDB_BIN=/usr/bin/gdb-multiarch
+    # qemu-user reaches 0x1f44c once with uart_send_flag=1 during cold boot.
+    # The physical DTU hook intentionally retains its live-validated behavior;
+    # only the lab skips that simulator-only early hit.
+    YIELD_BREAK_CONDITION='condition 1 *(unsigned char *)0xa0728 == 0 && *(unsigned char *)0x1292fc == 12'
+fi
+
+fail() {
+    printf '{"phase":"error","terminal":true,"message":"%s"}\n' "$1" > "${STATUS:-$DEFAULT_STATUS}"
+    echo "ERROR: $1" >&2
+    exit 1
+}
+
+write_status_json() {
+    printf '%s\n' "$JSON_STATUS" > "$STATUS.new"
+    mv "$STATUS.new" "$STATUS"
+}
+
+service_pid() {
+    PID=
+    for candidate in $(pidof phnixIot4G 2>/dev/null || true); do
+        test "$(awk '{print $3}' "/proc/$candidate/stat" 2>/dev/null || true)" = Z && continue
+        PID=$candidate
+        break
+    done
+    if test -z "$PID" && test -f /data/phnixIot4G.tls-lab; then
+        for proc in /proc/[0-9]*; do
+            cmd=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || true)
+            case "$cmd" in *qemu-arm-static*phnixIot4G.tls-lab*) basename "$proc"; return 0 ;; esac
+        done
+    fi
+    printf '%s\n' "$PID"
+}
+
+watchdog_pids() {
+    WDS=$(ps | awk '$4 == "{helloworld}" {print $1}')
+    if test -z "$WDS" && test -f /data/phnixIot4G.tls-lab; then
+        # The VM scenario supervisor replaces the physical watchdog pair.
+        # Signals to these sentinel PIDs are deliberately best-effort.
+        WDS='4001
+4002'
+    fi
+    printf '%s\n' "$WDS"
+}
+
+verify() {
+    test -x "$SERVICE" || fail "original service missing"
+    ACTUAL_SHA256=$(sha256sum "$SERVICE" | awk '{print $1}')
+    test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || fail "service build mismatch"
+    test -x "$GDB_BIN" || fail "gdb missing"
+    test -x /usr/bin/gdbserver || test -f /data/phnixIot4G.tls-lab || fail "gdbserver missing"
+    busybox --list | grep -qx httpd || fail "busybox httpd missing"
+    PID=$(service_pid)
+    test -n "$PID" || fail "original service not running"
+    WDS=$(watchdog_pids)
+    test -n "$WDS" || fail "service watchdog not found"
+    WDS_JSON=$(printf '%s\n' "$WDS" | awk 'BEGIN{s=""} {s=s sep $1; sep=","} END{print s}')
+    TRACER=$(awk '/^TracerPid:/ {print $2}' "/proc/$PID/status")
+    test "$TRACER" = 0 || fail "service is already traced"
+    printf '{"phase":"verified","terminal":false,"service_pid":%s,"watchdogs":[%s]}\n' "$PID" "$WDS_JSON" > "${STATUS:-$DEFAULT_STATUS}"
+    echo "verified service_pid=$PID watchdogs=$WDS sha256=$ACTUAL_SHA256"
+}
+
+start_debug_server() {
+    LOG_PATH=$1
+    if test -f /data/phnixIot4G.tls-lab; then
+        # QEMU already exposes the guest at the same remote-GDB endpoint.
+        rm -f "$GDBSERVER_PID"
+        printf 'using existing QEMU GDB stub on 127.0.0.1:12345\n' > "$LOG_PATH"
+        return 0
+    fi
+    gdbserver --attach 127.0.0.1:12345 "$PID" > "$LOG_PATH" 2>&1 &
+    echo $! > "$GDBSERVER_PID"
+}
+
+clear_saved_debugger() {
+    for saved in "$GDB_PID" "$GDBSERVER_PID"; do
+        test -f "$saved" || continue
+        old=$(cat "$saved" 2>/dev/null || true)
+        case "$old" in ''|*[!0-9]*) continue ;; esac
+        cmd=$(tr '\000' ' ' < "/proc/$old/cmdline" 2>/dev/null || true)
+        case "$cmd" in *gdb*) kill -TERM "$old" 2>/dev/null || true ;; esac
+    done
+    rm -f "$GDB_PID" "$GDBSERVER_PID"
+    sleep 1
+}
+
+resume_watchdogs() {
+    if test -f "$WATCHDOG_PIDS"; then
+        while read -r pid; do
+            test -n "$pid" && kill -CONT "$pid" 2>/dev/null || true
+        done < "$WATCHDOG_PIDS"
+    fi
+}
+
+remove_cloud_guard() {
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -D OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP 2>/dev/null || true
+        iptables -D INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP 2>/dev/null || true
+    fi
+}
+
+backup_persistent_state() {
+    rm -rf "$STATE_BACKUP"
+    mkdir -p "$STATE_BACKUP"
+    cp -p /data/phnixIot_device_OTA_INFO "$STATE_BACKUP/OTA_INFO"
+    test "$(wc -c < "$STATE_BACKUP/OTA_INFO")" = 220 || fail "OTA_INFO backup is not 220 bytes"
+    sha256sum "$STATE_BACKUP/OTA_INFO" | awk '{print $1}' > "$STATE_BACKUP/OTA_INFO.sha256"
+}
+
+restore_persistent_state() {
+    test -f "$STATE_BACKUP/OTA_INFO" || fail "OTA_INFO backup missing"
+    cp -p "$STATE_BACKUP/OTA_INFO" /data/.phnixIot_device_OTA_INFO.restore
+    test "$(sha256sum /data/.phnixIot_device_OTA_INFO.restore | awk '{print $1}')" = "$(cat "$STATE_BACKUP/OTA_INFO.sha256")" || fail "OTA_INFO restore verification failed"
+    mv /data/.phnixIot_device_OTA_INFO.restore /data/phnixIot_device_OTA_INFO
+    sync
+    test "$(sha256sum /data/phnixIot_device_OTA_INFO | awk '{print $1}')" = "$(cat "$STATE_BACKUP/OTA_INFO.sha256")" || fail "OTA_INFO post-restore verification failed"
+    touch "$SAFE_TO_CLEAN"
+}
+
+cleanup_original_state() {
+    if test -f "$GDB_PID"; then
+        kill -INT "$(cat "$GDB_PID")" 2>/dev/null || true
+    fi
+    if test -f "$GDBSERVER_PID"; then
+        kill -TERM "$(cat "$GDBSERVER_PID")" 2>/dev/null || true
+    fi
+    PID=$(service_pid || true)
+    test -n "$PID" && kill -CONT "$PID" 2>/dev/null || true
+    resume_watchdogs
+    remove_cloud_guard
+    rm -f "$HELPER_PID" "$GDB_PID" "$GDBSERVER_PID" "$RUN_ACTIVE" "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED" "$ORIGINAL_SERVICE_OWNS"
+}
+
+cleanup() {
+    if test -f "$RUN_ACTIVE" && ! test -f "$SAFE_TO_CLEAN"; then
+        PID=$(service_pid || true)
+        if test -f "$ORIGINAL_SERVICE_OWNS"; then
+            # From the accepted C36E status 1 onward, the original service owns
+            # the OTA. Stopping it as a debugger-failure fallback would be more
+            # dangerous than losing our observation channel.
+            test -n "$PID" && kill -CONT "$PID" 2>/dev/null || true
+            printf '{"phase":"original-service-active-unmonitored","terminal":false,"recovery_required":true,"original_service_authoritative":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
+            echo "ACCEPTED OTA CONTINUES UNDER ORIGINAL SERVICE; WATCHDOGS REMAIN PAUSED; OPTIONAL MQTT ISOLATION IS PRESERVED" >&2
+        else
+            test -n "$PID" && kill -STOP "$PID" 2>/dev/null || true
+            printf '{"phase":"guarded-hold","terminal":false,"recovery_required":true}\n' > "${STATUS:-$DEFAULT_STATUS}"
+            echo "ACTIVE PRE-C5A8 OTA LEFT IN GUARDED HOLD; PROTECTIVE GUARDS REMAIN ACTIVE" >&2
+        fi
+        return
+    fi
+    cleanup_original_state
+}
+
+stop_hook() {
+    if test -f "$RUN_ACTIVE" && ! test -f "$SAFE_TO_CLEAN" && test "${FORCE:-0}" != 1; then
+        fail "active OTA is not terminal; refusing unsafe cleanup"
+    fi
+    if test -f "$HELPER_PID"; then
+        PID=$(cat "$HELPER_PID")
+        test "$PID" != "$$" && kill -TERM "$PID" 2>/dev/null || true
+    fi
+    cleanup_original_state
+    printf '{"phase":"stopped","terminal":true}\n' > "$STATUS"
+}
+
+restore_original_hook() {
+    # A C5A8 marker means real firmware blocks have started. From that point
+    # the original service is authoritative and must not be interrupted by a
+    # generic restore command.
+    mkdir -p "$STATE_DIR"
+    if test -f "$TRANSFER_STARTED" || test -f "$ORIGINAL_SERVICE_OWNS"; then
+        fail "firmware transfer has started; refusing automatic restore"
+    fi
+    ACTIVE=0
+    test -f "$RUN_ACTIVE" && ACTIVE=1
+    INJECTED=0
+    test -f "$INJECTION_STARTED" && INJECTED=1
+    if test "$ACTIVE" = 1 && test -f "$STATE_BACKUP/OTA_INFO"; then
+        restore_persistent_state
+    else
+        touch "$SAFE_TO_CLEAN"
+    fi
+    if test "$INJECTED" = 1; then
+        # A parser call already in flight would continue after SIGCONT and can
+        # emit a delayed C350. Terminate that process and let the original
+        # watchdog start a fresh, unmodified instance instead.
+        OLD_PID=$(service_pid || true)
+        # SIGKILL is deliberate here. SIGTERM/SIGCONT could let the traced
+        # thread execute the pending parser call before it handles TERM.
+        # SIGKILL cannot be caught and therefore cannot emit a delayed C350.
+        test -n "$OLD_PID" && kill -KILL "$OLD_PID" 2>/dev/null || true
+        test -f "$GDB_PID" && kill -INT "$(cat "$GDB_PID")" 2>/dev/null || true
+        test -f "$GDBSERVER_PID" && kill -TERM "$(cat "$GDBSERVER_PID")" 2>/dev/null || true
+    fi
+    if test -f "$HELPER_PID"; then
+        OLD_HELPER=$(cat "$HELPER_PID")
+        test "$OLD_HELPER" != "$$" && kill -TERM "$OLD_HELPER" 2>/dev/null || true
+        sleep 1
+    fi
+    if test "$INJECTED" = 1; then
+        resume_watchdogs
+        remove_cloud_guard
+        NEW_PID=
+        COUNT=0
+        while test "$COUNT" -lt 20; do
+            NEW_PID=$(service_pid || true)
+            test -n "$NEW_PID" && test "$NEW_PID" != "$OLD_PID" && break
+            COUNT=$((COUNT + 1))
+            sleep 1
+        done
+        test -n "$NEW_PID" && test "$NEW_PID" != "$OLD_PID" || fail "original service did not restart after injected restore"
+    fi
+    cleanup_original_state
+    printf '{"phase":"original-restored","terminal":true,"recovery_required":false}\n' > "$STATUS"
+}
+
+attach_test() {
+    verify
+    mkdir -p "$STATE_DIR"
+    PID=$(service_pid)
+    watchdog_pids > "$WATCHDOG_PIDS"
+    trap cleanup EXIT INT TERM
+    touch "$SAFE_TO_CLEAN"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    start_debug_server "$STATE_DIR/gdbserver-test.log"
+    sleep 1
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+target remote 127.0.0.1:12345
+info threads
+x/1ub 0x129189
+x/1ub 0x1292fc
+x/1ub 0xa0728
+detach
+quit
+EOF
+    printf '{"phase":"attach-test","terminal":false}\n' > "$STATUS"
+    if ! "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/attach-test.log" 2>&1; then
+        fail "read-only GDB attach/detach test failed"
+    fi
+    printf '{"phase":"attach-test-ok","terminal":true}\n' > "$STATUS"
+    echo "attach/detach test passed"
+}
+
+breakpoint_test() {
+    verify
+    mkdir -p "$STATE_DIR"
+    PID=$(service_pid)
+    watchdog_pids > "$WATCHDOG_PIDS"
+    trap cleanup EXIT INT TERM
+    touch "$SAFE_TO_CLEAN"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    start_debug_server "$STATE_DIR/gdbserver-breakpoint-test.log"
+    sleep 1
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+target remote 127.0.0.1:12345
+break *0x1f3c0
+break *0x1ccf4
+break *0x1be6c
+break *0x1c898
+break *0x1c164
+break *0x189e8
+break *0x18db8
+break *0x18e48
+break *0x1d40c
+break *0x1d148
+info breakpoints
+delete breakpoints
+detach
+quit
+EOF
+    printf '{"phase":"breakpoint-test","terminal":false}\n' > "$STATUS"
+    if ! "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/breakpoint-test.log" 2>&1; then
+        fail "GDB breakpoint install/remove test failed"
+    fi
+    printf '{"phase":"breakpoint-test-ok","terminal":true}\n' > "$STATUS"
+    echo "breakpoint install/remove test passed"
+}
+
+make_gdb_script() {
+    RESUME_MODE=${RESUME_MODE:-0}
+    if test "$RESUME_MODE" = 1; then
+        SIGFPE_POLICY=pass
+        test -f /data/phnixIot4G.tls-lab && SIGFPE_POLICY="nopass"
+        # Keep breakpoint numbering identical to the normal path so the shared
+        # monitor can keep disabling C357/C5A8 breakpoints 4 and 5.
+        START_TO_FIRST_C36E=$(cat <<EOF
+break *0x1f44c
+disable 1
+break *0x1be6c
+disable 2
+break *0x1b434
+shell echo '{"phase":"resume-wait-mainboard","terminal":false}' > $STATUS
+continue
+EOF
+)
+    else
+        JSON=$(tr -d '\r\n' < "$COMMAND")
+        ESCAPED=$(printf '%s' "$JSON" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        if test -f /data/phnixIot4G.tls-lab; then
+        # qemu-user raises an emulation-only SIGFPE while executing the
+        # injected parser path.  Passing it through terminates the simulated
+        # service.  Real hardware deliberately keeps the validated `pass`
+        # behaviour below.
+        SIGFPE_POLICY=nopass
+        # qemu-user can close its GDB remote connection in the small window
+        # after the valid yield breakpoint has returned to a batch script.
+        # Keep the physical-DTU flow below untouched; only the simulator puts
+        # parser injection directly into breakpoint 1's command list.  The
+        # parser-return command continues to the first C36E stop, where the
+        # shared, real-validated state machine resumes.
+        START_TO_FIRST_C36E=$(cat <<EOF
+break *0x1f44c
+$YIELD_BREAK_CONDITION
+thbreak *0x1be6c
+commands 2
+  silent
+  printf "PHNIX post-parser pc=0x%x\n", \$pc
+  shell echo '{"phase":"c350","terminal":false,"c350_sent":true}' > $STATUS
+  continue
+end
+break *0x1b434
+commands 1
+  silent
+  printf "PHNIX yield pc=0x%x uart=%u step=%u\n", \$pc, *(unsigned char *)0xa0728, *(unsigned char *)0x1292fc
+  disable 1
+  set \$return_pc = \$pc
+  set {char[512]} 0xa2160 = "$ESCAPED"
+  shell touch $INJECTION_STARTED
+  shell echo '{"phase":"parser-injection","terminal":false,"armed":true,"active":false}' > $STATUS
+  set \$r0 = 0xa2160
+  set \$lr = \$return_pc
+  set \$pc = 0x193f8
+  continue
+end
+shell echo '{"phase":"waiting-for-yield-loop","terminal":false}' > $STATUS
+continue
+EOF
+)
+    else
+        SIGFPE_POLICY=pass
+        START_TO_FIRST_C36E=$(cat <<EOF
+break *0x1f44c
+$YIELD_BREAK_CONDITION
+
+shell echo '{"phase":"waiting-for-yield-loop","terminal":false}' > $STATUS
+continue
+printf "PHNIX yield pc=0x%x uart=%u step=%u\n", \$pc, *(unsigned char *)0xa0728, *(unsigned char *)0x1292fc
+if \$pc != 0x1f44c || *(unsigned char *)0xa0728 != 0 || *(unsigned char *)0x1292fc != 12
+  shell echo '{"phase":"precondition-rejected","terminal":true,"armed":false,"active":false,"recovery_required":false}' > $STATUS
+  shell touch $SAFE_TO_CLEAN
+  detach
+  quit
+end
+disable 1
+set \$return_pc = \$pc
+set {char[512]} 0xa2160 = "$ESCAPED"
+shell touch $INJECTION_STARTED
+shell echo '{"phase":"parser-injection","terminal":false,"armed":true,"active":false}' > $STATUS
+set \$r0 = 0xa2160
+set \$lr = \$return_pc
+set \$pc = 0x193f8
+break *0x1be6c
+continue
+printf "PHNIX post-parser pc=0x%x\n", \$pc
+if \$pc != 0x1be6c
+  shell echo '{"phase":"parser-rejected","terminal":true,"armed":false,"active":false,"c350_sent":false,"recovery_required":false}' > $STATUS
+  shell $0 _restore-state --status $STATUS
+  detach
+  quit
+end
+shell echo '{"phase":"c350","terminal":false,"c350_sent":true}' > $STATUS
+disable 2
+break *0x1b434
+continue
+EOF
+)
+        fi
+    fi
+    cat > "$GDB_SCRIPT" <<EOF
+set architecture arm
+set pagination off
+set confirm off
+set print thread-events off
+set auto-load safe-path /
+set libthread-db-search-path /lib
+handle SIGILL nostop noprint pass
+handle SIGFPE nostop noprint $SIGFPE_POLICY
+file /data/phnixIot4G
+target remote 127.0.0.1:12345
+set \$launcher_armed = 1
+set \$local_ota_active = 0
+set \$terminal_pending = 0
+set \$resume_mode = $RESUME_MODE
+
+$START_TO_FIRST_C36E
+printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\n", \$pc, *(unsigned char *)(\$r0+1), *(unsigned char *)(\$r0+3)
+if \$pc != 0x1b434 || *(unsigned char *)(\$r0+1) != 0x63
+  shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false,"c350_sent":true,"c36e_seen":true}' > $STATUS
+  if \$resume_mode == 0
+    shell $0 _restore-state --status $STATUS
+  end
+  detach
+  quit
+end
+if \$resume_mode == 1
+  # Re-attach may happen before C36E1 or after it. Any active OTA status 1..6
+  # is safe to observe; the original PHNIX state machine remains authoritative.
+  if *(unsigned char *)(\$r0+3) == 0 || *(unsigned char *)(\$r0+3) > 6
+    shell echo '{"phase":"resume-handshake-rejected","terminal":false,"recovery_required":true}' > $STATUS
+    detach
+    quit
+  end
+  set \$local_ota_active = 1
+  shell touch $ORIGINAL_SERVICE_OWNS
+  shell echo '{"phase":"resume-observing","terminal":false,"armed":true,"active":true,"c36e_seen":true}' > $STATUS
+else
+  if *(unsigned char *)(\$r0+3) == 0
+    set \$launcher_armed = 0
+    shell $0 _restore-state --status $STATUS
+    shell echo '{"phase":"same-version","terminal":true,"c350_sent":true,"c36e_seen":true,"c36e_status":0,"ssid_match":true,"c357_sent":false,"c5a8_sent":false,"state_restored":true,"recovery_required":false}' > $STATUS
+    detach
+    quit
+  end
+  if *(unsigned char *)(\$r0+3) != 1
+    shell echo '{"phase":"c36e-rejected","terminal":true,"armed":false,"active":false,"c350_sent":true,"c36e_seen":true,"recovery_required":true}' > $STATUS
+    shell $0 _restore-state --status $STATUS
+    detach
+    quit
+  end
+  set \$local_ota_active = 1
+  shell touch $ORIGINAL_SERVICE_OWNS
+  shell echo '{"phase":"accepted","terminal":false,"armed":true,"active":true,"c350_sent":true,"c36e_seen":true,"c36e_status":1}' > $STATUS
+end
+break *0x1c898
+break *0x1c164
+break *0x1ccf4
+break *0x189e8
+break *0x18db8
+break *0x18e48
+break *0x1d40c
+break *0x1d148
+while \$local_ota_active == 1
+  set \$ota_event_handled = 0
+  continue
+  printf "PHNIX ota-event pc=0x%x step=%u pending=%u\n", \$pc, *(unsigned char *)0x1292fc, \$terminal_pending
+  if \$pc == 0x1b434
+    set \$ota_event_handled = 1
+    printf "PHNIX later-c36e status=%u\n", *(unsigned char *)(\$r0+3)
+  end
+  if \$pc == 0x1c898
+    set \$ota_event_handled = 1
+    disable 4
+    shell echo '{"phase":"c357","terminal":false,"c350_sent":true,"c36e_seen":true,"c36e_status":1,"c357_sent":true}' > $STATUS
+  end
+  if \$pc == 0x1c164
+    set \$ota_event_handled = 1
+    disable 5
+    shell touch $TRANSFER_STARTED
+    shell echo '{"phase":"c5a8","terminal":false,"c350_sent":true,"c36e_seen":true,"c36e_status":1,"c357_sent":true,"c5a8_sent":true}' > $STATUS
+  end
+  if \$pc == 0x1ccf4
+    set \$ota_event_handled = 1
+    if \$launcher_armed == 1 && \$r0 == 7
+      set \$r0 = 11
+    end
+  end
+  if \$pc == 0x189e8
+    set \$ota_event_handled = 1
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x18db8
+    set \$ota_event_handled = 1
+    set \$terminal_pending = 1
+    shell echo '{"phase":"success-report","terminal":false}' > $STATUS
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x18e48
+    set \$ota_event_handled = 1
+    set \$terminal_pending = 2
+    shell echo '{"phase":"failure-report","terminal":false}' > $STATUS
+    set \$r0 = 0
+    set \$pc = \$lr
+  end
+  if \$pc == 0x1d40c
+    set \$ota_event_handled = 1
+    if (\$terminal_pending == 1 || \$resume_mode == 1) && *(unsigned char *)0x1292fc == 12
+      set \$local_ota_active = 0
+      set \$launcher_armed = 0
+      shell echo '{"phase":"success","terminal":true,"board_ota_step":12}' > $STATUS
+      shell touch $SAFE_TO_CLEAN
+      detach
+      quit
+    else
+      shell echo '{"phase":"invalid-success-boundary","terminal":false,"recovery_required":true}' > $STATUS
+      shell kill -STOP $PID
+      detach
+      quit
+    end
+  end
+  if \$pc == 0x1d148
+    set \$ota_event_handled = 1
+    if (\$terminal_pending == 2 || \$resume_mode == 1) && *(unsigned char *)0x1292fc == 12
+      set \$local_ota_active = 0
+      set \$launcher_armed = 0
+      shell echo '{"phase":"failed","terminal":true,"board_ota_step":12}' > $STATUS
+      shell touch $SAFE_TO_CLEAN
+      detach
+      quit
+    else
+      shell echo '{"phase":"invalid-failure-boundary","terminal":false,"recovery_required":true}' > $STATUS
+      shell kill -STOP $PID
+      detach
+      quit
+    end
+  end
+  if \$ota_event_handled == 0
+    shell echo '{"phase":"debugger-unexpected-stop","terminal":false,"recovery_required":true}' > $STATUS
+    shell kill -STOP $PID
+    detach
+    quit
+  end
+end
+EOF
+}
+
+run_hook() {
+    test "$BUILD_ID" = d25ea21f8c4edc95c820c570da4a3399d8bd1cbc || fail "requested Build-ID mismatch"
+    test "$ALLOW" = 0023,0053,0083 || fail "publish allow-list mismatch"
+    test -r "$COMMAND" || fail "OTA command missing"
+    verify
+    if test "$ISOLATE_MQTT" = 1; then
+        command -v iptables >/dev/null 2>&1 || fail "iptables missing; MQTT cannot be isolated"
+    fi
+    mkdir -p "$STATE_DIR"
+    backup_persistent_state
+    rm -f "$SAFE_TO_CLEAN" "$TRANSFER_STARTED" "$INJECTION_STARTED" "$ORIGINAL_SERVICE_OWNS"
+    touch "$RUN_ACTIVE"
+    echo $$ > "$HELPER_PID"
+    trap cleanup EXIT INT TERM
+    PID=$(service_pid)
+    watchdog_pids > "$WATCHDOG_PIDS"
+    if test "$ISOLATE_MQTT" = 1; then
+        iptables -I OUTPUT -o rmnet_data0 -p tcp --dport 1883 -j DROP
+        iptables -I INPUT -i rmnet_data0 -p tcp --sport 1883 -j DROP
+    fi
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    make_gdb_script
+    printf '{"phase":"attaching","terminal":false}\n' > "$STATUS"
+    start_debug_server "$STATE_DIR/gdbserver.log"
+    sleep 1
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/gdb.log" 2>&1 &
+    echo $! > "$GDB_PID"
+    GDB_RC=0
+    wait "$(cat "$GDB_PID")" || GDB_RC=$?
+    if ! grep -q '"terminal":true' "$STATUS" 2>/dev/null; then
+        printf '{"phase":"debugger-ended-before-terminal","terminal":false,"recovery_required":true,"gdb_exit_code":%s}\n' "$GDB_RC" > "$STATUS"
+        fail "runtime debugger ended before a terminal OTA state (gdb exit $GDB_RC)"
+    fi
+    test "$GDB_RC" = 0 || fail "runtime debugger failed after terminal OTA state (gdb exit $GDB_RC)"
+}
+
+
+resume_hook() {
+    test "$BUILD_ID" = d25ea21f8c4edc95c820c570da4a3399d8bd1cbc || fail "requested Build-ID mismatch"
+    test "$ALLOW" = 0023,0053,0083 || fail "publish allow-list mismatch"
+    test ! -f "$SAFE_TO_CLEAN" || fail "OTA session is already terminal"
+    test -f "$RUN_ACTIVE" || fail "active OTA marker missing"
+    test -f "$ORIGINAL_SERVICE_OWNS" || test -f "$TRANSFER_STARTED" || fail "authoritative OTA marker missing"
+    clear_saved_debugger
+    verify
+    touch "$RUN_ACTIVE" "$ORIGINAL_SERVICE_OWNS"
+    echo $$ > "$HELPER_PID"
+    trap cleanup EXIT INT TERM
+    PID=$(service_pid)
+    watchdog_pids > "$WATCHDOG_PIDS"
+    while read -r wd; do kill -STOP "$wd" 2>/dev/null || true; done < "$WATCHDOG_PIDS"
+    RESUME_MODE=1
+    make_gdb_script
+    printf '{"phase":"resume-attaching","terminal":false}\n' > "$STATUS"
+    start_debug_server "$STATE_DIR/gdbserver-resume.log"
+    sleep 1
+    "$GDB_BIN" -q -batch -x "$GDB_SCRIPT" > "$STATE_DIR/gdb-resume.log" 2>&1 &
+    echo $! > "$GDB_PID"
+    GDB_RC=0
+    wait "$(cat "$GDB_PID")" || GDB_RC=$?
+    grep -q '"terminal":true' "$STATUS" 2>/dev/null || fail "resume debugger ended before a terminal OTA state (gdb exit $GDB_RC)"
+    test "$GDB_RC" = 0 || fail "resume debugger failed after terminal OTA state (gdb exit $GDB_RC)"
+}
+
+hold_hook() {
+    if ! test -f "$RUN_ACTIVE"; then
+        fail "no active local OTA run"
+    fi
+    PID=$(service_pid || true)
+    test -n "$PID" || fail "original service missing during hold"
+    kill -STOP "$PID"
+    printf '{"phase":"guarded-hold","terminal":false,"recovery_required":true}\n' > "$STATUS"
+    echo "guarded hold active; cloud remains blocked and watchdogs remain paused"
+}
+
+ACTION=${1:-}
+shift || true
+STATUS=$DEFAULT_STATUS
+BUILD_ID=
+COMMAND=
+ALLOW=
+FORCE=0
+LIVE_CONFIRM=
+LOGGER_CONFIRM=
+JSON_STATUS=
+ISOLATE_MQTT=0
+while test $# -gt 0; do
+    case "$1" in
+        --status) STATUS=$2; shift 2 ;;
+        --build-id) BUILD_ID=$2; shift 2 ;;
+        --command) COMMAND=$2; shift 2 ;;
+        --allow-publish) ALLOW=$2; shift 2 ;;
+        --live-confirm) LIVE_CONFIRM=$2; shift 2 ;;
+        --logger-confirm) LOGGER_CONFIRM=$2; shift 2 ;;
+        --json) JSON_STATUS=$2; shift 2 ;;
+        --isolate-mqtt) ISOLATE_MQTT=1; shift ;;
+        --force) FORCE=1; shift ;;
+        *) fail "unknown argument: $1" ;;
+    esac
+done
+
+case "$ACTION" in
+    verify) verify ;;
+    attach-test) attach_test ;;
+    breakpoint-test) breakpoint_test ;;
+
+    c350-breakpoint-test) c350_breakpoint_test ;;
+
+    c350-probe) c350_probe_hook ;;
+    _write-status) write_status_json ;;
+    _restore-state) restore_persistent_state ;;
+    restore-original) restore_original_hook ;;
+
+    run) run_hook ;;
+    resume) resume_hook ;;
+    hold) hold_hook ;;
+    cancel) echo "ERROR: live cancel is disabled until C36A/C36C runtime hooks are validated" >&2; exit 2 ;;
+    stop) stop_hook ;;
+    *) echo "usage: $0 verify|attach-test|breakpoint-test|cancel-breakpoint-test|c350-breakpoint-test|c350-probe|cancel-probe|cancel-probe-resume|run|resume|hold|cancel|stop|restore-original [options]" >&2; exit 2 ;;
+esac

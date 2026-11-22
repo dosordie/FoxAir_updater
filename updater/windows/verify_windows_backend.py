@@ -42,6 +42,7 @@ def verify(root: Path, out: Path) -> None:
         (root / "tools/phnix_ota/create_firmware_manifest.py", out / "backend/tools/phnix_ota/create_firmware_manifest.py"),
         (root / "tools/phnix_traffic/foxair_traffic_trace", out / "backend/tools/phnix_traffic/foxair_traffic_trace"),
         (root / "updater/dtu_ota/payload/dtu_ota_supervisor.sh", out / "backend/updater/dtu_ota/payload/dtu_ota_supervisor.sh"),
+        (root / "updater/dtu_ota/payload/dtu_ota_supervisor_v10.sh", out / "backend/updater/dtu_ota/payload/dtu_ota_supervisor_v10.sh"),
     ]
     pairs.extend(
         (path, out / "backend/updater/dtu_ota" / path.name)
@@ -54,11 +55,11 @@ def verify(root: Path, out: Path) -> None:
     for source, copied in pairs:
         require_equal(source, copied)
 
-    canonical = root / "updater/dtu_ota/payload/phnix_ota_runtime_hook"
-    require_normalized_hook(
-        canonical,
-        out / "backend/updater/dtu_ota/payload/phnix_ota_runtime_hook",
-    )
+    for name in ("phnix_ota_runtime_hook", "phnix_ota_runtime_hook_v10"):
+        require_normalized_hook(
+            root / "updater/dtu_ota/payload" / name,
+            out / "backend/updater/dtu_ota/payload" / name,
+        )
 
 
 def main() -> int:
