@@ -19,6 +19,7 @@ from updater.common.adb_transport import AdbClient, TransportError
 from updater.common.firmware_manifest import ManifestError
 from updater.dtu_ota.client import DtuOtaClient, RunnerClientError
 from updater.dtu_ota.package import PackageError
+from updater.dtu_ota.build_profiles import DtuBuildIdentificationError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,7 +104,7 @@ def main() -> int:
             raise RunnerClientError("unsupported command")
         print(json.dumps(value, indent=2, ensure_ascii=False))
         return 0
-    except (RunnerClientError, PackageError, ManifestError, TransportError, OSError) as error:
+    except (RunnerClientError, PackageError, ManifestError, TransportError, DtuBuildIdentificationError, OSError) as error:
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1
 
