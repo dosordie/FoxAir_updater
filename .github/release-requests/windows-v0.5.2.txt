@@ -1,0 +1,5 @@
+FoxAir Updater Windows v0.5.2
+Release channel: stable
+Source: main, PR #67
+Included: PHNIX DTU V1.0 and V1.2 build-specific OTA hooks, tested simulator OTA and resume paths
+This explicit main-only marker triggers release-windows.yml once on push.
