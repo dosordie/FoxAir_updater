@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional remote ADB server, for example tcp:192.168.10.70:5038",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("identify", help="read-only DTU-Build-Erkennung; V1.0-OTA bleibt gesperrt")
+    commands.add_parser("identify", help="read-only DTU-Build-Erkennung; V1.0 ist in diesem Branch experimentell freigeschaltet")
 
     prepare = commands.add_parser("prepare", aliases=["dry-run"], help="upload and verify only; never starts OTA")
     prepare.add_argument("--manifest", type=Path, required=True)
