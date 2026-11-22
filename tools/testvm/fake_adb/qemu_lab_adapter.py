@@ -525,6 +525,9 @@ def service_info() -> dict:
         digest = digest_obj.hexdigest()
     hook = scenario_hook()
     sock = scenario_socket()
+    expected = EXPECTED_SERVICE_SHA256
+    if digest == "57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c":
+        expected = digest
     return {
         "backend": "qemu-rootfs",
         "lab_root": str(lab_root()),
@@ -532,8 +535,8 @@ def service_info() -> dict:
         "service": str(service),
         "service_size": service.stat().st_size if service.is_file() else None,
         "service_sha256": digest,
-        "service_sha256_expected": EXPECTED_SERVICE_SHA256,
-        "service_hash_matches_verified_build": digest == EXPECTED_SERVICE_SHA256,
+        "service_sha256_expected": expected,
+        "service_hash_matches_verified_build": digest == expected,
         "service_pids": service_pids(),
         "adb_online": (sim_home() / "started").exists(),
         "scenario": scenario_state(),

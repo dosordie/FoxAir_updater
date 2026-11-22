@@ -21,8 +21,10 @@ def patch_script(text: str) -> tuple[str, bool]:
     # persistent hardware breakpoint from inside its own command list.  Make
     # the yield stop a one-shot hardware breakpoint instead; GDB removes it as
     # part of the stop event before the parser hand-off continues.
-    patched = text.replace("break *0x1fe40", "thbreak *0x1fe40", 1)
-    patched = patched.replace("break *0x1ba04", "hbreak *0x1ba04", 1)
+    patched = text
+    for yield_site, receive_site in (("0x1fe40", "0x1ba04"), ("0x1f44c", "0x1b434")):
+        patched = patched.replace(f"break *{yield_site}", f"thbreak *{yield_site}", 1)
+        patched = patched.replace(f"break *{receive_site}", f"hbreak *{receive_site}", 1)
     patched = patched.replace("  disable 1\n  set $return_pc = $pc", "  set $return_pc = $pc", 1)
     # The proven Work-QEMU script deliberately operates on absolute
     # addresses without loading the ARM ELF into host GDB.  Loading it is not

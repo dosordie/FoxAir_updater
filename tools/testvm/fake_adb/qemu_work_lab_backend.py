@@ -478,6 +478,9 @@ def _start_runner_impl(
         )
     env = os.environ.copy()
     env.update(extra_env)
+    digest = hashlib.sha256(root_path("/data/phnixIot4G").read_bytes()).hexdigest()
+    if digest == "57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c":
+        env["DTU_V10_AT_PROFILE"] = "1"
     if reuse_netns_pid is not None:
         env["REUSE_NETNS_PID"] = str(reuse_netns_pid)
     env["LAB_ROOT"] = str(lab_root())
@@ -490,7 +493,7 @@ def _start_runner_impl(
     log_handle = log_path.open("wb", buffering=0)
     try:
         proc = subprocess.Popen(
-            [str(runner), str(duration), label],
+            ["prlimit", "--nofile=16384:16384", "--", str(runner), str(duration), label],
             stdin=subprocess.DEVNULL,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -1284,6 +1287,49 @@ def _print_status() -> None:
     print(json.dumps(service_info(), indent=2, ensure_ascii=False))
 
 
+def select_dtu_version(version: str) -> tuple[bool, str]:
+    """Replace only the VM service fixture after stopping its scenario."""
+    fixtures = base.state_root() / "fixtures"
+    fixtures.mkdir(parents=True, exist_ok=True)
+    hashes = {
+        "V1.0": "57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c",
+        "V1.2": "7c573431f0a67620d473419644a83a4f4dc04b8a91bde5923c74a63ba1eaedb7",
+    }
+    service = root_path("/data/phnixIot4G")
+    current = hashlib.sha256(service.read_bytes()).hexdigest()
+    for known_version, expected in hashes.items():
+        if current == expected:
+            backup = fixtures / ("phnixIot4G-" + known_version.lower())
+            if not backup.exists():
+                shutil.copy2(service, backup)
+    source = fixtures / ("phnixIot4G-" + version.lower())
+    if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != hashes[version]:
+        raise RuntimeError(f"Originalfixture fehlt oder hat einen falschen SHA256: {source}")
+    lock = root_path("/data/foxair_ota_runner/active.lock")
+    if lock.is_dir():
+        run_id = (lock / "run_id").read_text().strip()
+        status = json.loads((lock.parent / "runs" / run_id / "status.json").read_text())
+        if not status.get("terminal"):
+            raise RuntimeError(f"Aktiver OTA-Lauf blockiert DTU-Wechsel: {run_id}")
+    _stop_runner()
+    staged = service.with_suffix(".switch")
+    shutil.copy2(source, staged)
+    staged.chmod(0o755)
+    os.replace(staged, service)
+    statistics = root_path("/data/phnixIot_device_statisic")
+    stats_backup = fixtures / "v12-statistics.bin"
+    if version == "V1.0" and statistics.exists():
+        shutil.copy2(statistics, stats_backup)
+        statistics.unlink()
+    elif version == "V1.2" and not statistics.exists() and stats_backup.exists():
+        shutil.copy2(stats_backup, statistics)
+    (base.state_root() / "dtu-v1.0-identity").unlink(missing_ok=True)
+    (base.state_root() / "dtu-service-version").write_text(version + "\n")
+    reset_ota_runtime()
+    reset_autonomous_runner_state()
+    return _start_runner("scenario", scenario_state().get("scenario", "success"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="FoxAir Work-QEMU fake-ADB backend")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1291,6 +1337,8 @@ def main() -> int:
     sub.add_parser("online")
     sub.add_parser("offline")
     sub.add_parser("runner-stop")
+    dtu = sub.add_parser("dtu-version")
+    dtu.add_argument("value", choices=("V1.0", "V1.2"))
     crash = sub.add_parser("service-crash", help="SIGKILL only the simulated QEMU PHNIX process; preserve OTA files")
     mqtt = sub.add_parser("mqtt-send")
     mqtt.add_argument("kind", choices=MQTT_INJECTION_KINDS)
@@ -1309,6 +1357,10 @@ def main() -> int:
         if args.command == "status":
             _print_status()
             return 0
+        if args.command == "dtu-version":
+            ok, message = select_dtu_version(args.value)
+            print(message)
+            return 0 if ok else 3
         if args.command == "online":
             marker = sim_home() / "started"
             marker.parent.mkdir(parents=True, exist_ok=True)

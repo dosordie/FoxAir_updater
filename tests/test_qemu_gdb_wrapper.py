@@ -50,6 +50,22 @@ printf "PHNIX first-c36e pc=0x%x ssid=0x%x status=%u\\n", $pc, *(unsigned char *
         self.assertFalse(changed)
         self.assertEqual(patched, source)
 
+    def test_v10_handoff_uses_v10_breakpoints(self):
+        source = (
+            "file /data/phnixIot4G\n"
+            "target remote 127.0.0.1:12345\n"
+            "break *0x1f44c\nbreak *0x1b434\n"
+            'printf "PHNIX yield pc=%x", $pc\n'
+            "  disable 1\n  set $return_pc = $pc\n"
+            "break *0x1c164\n"
+        )
+        patched, changed = patch_script(source)
+        self.assertTrue(changed)
+        self.assertIn("thbreak *0x1f44c", patched)
+        self.assertIn("hbreak *0x1b434", patched)
+        self.assertIn("break *0x1c164", patched)
+        self.assertNotIn("disable 1", patched)
+
     def test_wrapper_overlay_is_after_root_bind_and_before_command(self):
         # Source-level guard: a file overlay inserted before `--bind / /`
         # would be hidden again by that later root mount.

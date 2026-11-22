@@ -206,14 +206,20 @@ sudo foxair-fake-adbctl modem-log status
 
 ## Terminaloberfläche
 
-Mit `sudo foxair-fake-adbctl dtu-version V1.0` lässt sich der ADB-Endpunkt
-auf einen reinen Identifikationstest umstellen. Dazu muss die geprüfte
+Mit `sudo foxair-fake-adbctl dtu-version V1.0` wechselt der ADB-Simulator
+auf den V1.0-Originaldienst. Dazu muss die geprüfte
 Originaldatei privat unter `/var/lib/foxair-fake-adb/fixtures/phnixIot4G-v1.0`
-liegen. Der Endpunkt ermittelt ihren SHA-256 aus den tatsächlichen Bytes.
-In diesem Modus sind OTA und ADB-Dateitransfers gesperrt. Mit
-`sudo foxair-fake-adbctl dtu-version V1.2` kehrt der Endpunkt zum normalen
-QEMU-Simulator zurück. Die Mainboard-Version bleibt separat einstellbar.
+liegen. Der Simulator prüft den SHA-256 der Fixture, stoppt die alte
+QEMU-Instanz und startet das gewählte Szenario mit dem neuen Dienst.
+V1.2 wird beim ersten Wechsel als private Fixture gesichert und lässt sich
+mit `sudo foxair-fake-adbctl dtu-version V1.2` wieder auswählen.
+Aktive OTA-Läufe blockieren den Wechsel. Ein Versionswechsel setzt den
+OTA-Testzustand zurück. Die Mainboard-Version bleibt separat einstellbar.
 In der Terminaloberfläche öffnet `D` dieselbe DTU-Profilwahl.
+Die vier vom Supervisor vor dem Hook gelesenen Bereitschaftswerte werden
+für den anfangs angehaltenen QEMU-Prozess profilspezifisch initialisiert.
+Anschließend prüft der Hook am echten Yield-Breakpoint den vom Originaldienst
+erreichten Zustand. Der Debuggeradapter unterstützt beide Build-Adressen.
 
 Für den vollständigen Test über MQTT und HTTP öffnet `U` die Auswahl
 zwischen den beiden Originaldiensten. Beide Varianten laufen in eigenen

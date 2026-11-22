@@ -313,8 +313,10 @@ def draw(stdscr, state: dict, message: str) -> None:
     add(stdscr, 0, 55, f"Auto 2s | {state['refreshed']}")
     add(stdscr, 2, 0, f"Szenario:       {scenario.get('scenario', '-')}")
     add(stdscr, 9, 0, "[U] Lokalen Cloud-OTA-Test starten (V1.0 / V1.2)", curses.A_BOLD)
-    v10 = (STATE_DIR / "dtu-v1.0-identity").exists()
-    dtu_label = "V1.0 (nur Erkennung)" if v10 else "V1.2"
+    try:
+        dtu_label = (STATE_DIR / "dtu-service-version").read_text().strip()
+    except OSError:
+        dtu_label = "V1.2"
     add(stdscr, 3, 0, f"Board-Version:  {scenario.get('board_version', '-')}   DTU: {dtu_label}")
     add(stdscr, 4, 0, f"PHNIX-PID(s):   {', '.join(map(str, state['pids'])) or '-'}")
     add(stdscr, 5, 0, f"Szenario-PID:   {state['runner_pid'] or '-'}")
@@ -383,7 +385,7 @@ def main(stdscr) -> None:
         elif key in (ord("d"), ord("D")):
             value = choose(stdscr, "DTU-Profil auswaehlen", [
                 ("V1.2", "Regulaerer OTA-Simulator"),
-                ("V1.0", "Build-Erkennung, OTA gesperrt"),
+                ("V1.0", "Originaldienst V1.0 im QEMU-Simulator"),
             ])
             if value and confirm(stdscr, f"ADB-Endpunkt auf DTU {value} umstellen?"):
                 code, output = run("dtu-version", value)

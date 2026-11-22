@@ -605,10 +605,15 @@ def _seed_paused_qemu_service_readiness(command: str) -> None:
     mem_path = Path(f"/proc/{pids[0]}/mem")
     fd = os.open(mem_path, os.O_RDWR)
     try:
-        for address, value in _SUPERVISOR_IDLE_STATE.items():
+        idle_state = _SUPERVISOR_IDLE_STATE
+        digest = hashlib.sha256(root_path("/data/phnixIot4G").read_bytes()).hexdigest()
+        if digest == "57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c":
+            idle_state = {0x129189: b"\x0b", 0x12918a: b"\x04",
+                          0x1292fc: b"\x0c", 0xa0728: b"\0"}
+        for address, value in idle_state.items():
             if os.pwrite(fd, value, address) != len(value):
                 raise RuntimeError(f"short VM readiness write at {address}")
-        for address, value in _SUPERVISOR_IDLE_STATE.items():
+        for address, value in idle_state.items():
             if os.pread(fd, len(value), address) != value:
                 raise RuntimeError(f"VM readiness verification failed at {address}")
     finally:
