@@ -1,8 +1,9 @@
 """Exact, read-only identification of known PHNIX LTE-DTU service builds.
 
 The manufacturer-visible V1.0/V1.2 string is NOT an integrity identifier.
-Only a full SHA256 of /data/phnixIot4G selects a build.  V1.0 is deliberately
-detect-only until its runtime hook, recovery paths, and real hardware tests pass.
+Only a full SHA256 of /data/phnixIot4G selects a build. The separate V1.0
+runtime hook is enabled in this DEVELOPMENT BRANCH for VM testing only;
+this does not constitute validation on real hardware or a stable release.
 
 This module never attaches GDB, writes device files, or performs OTA.
 """
@@ -55,7 +56,7 @@ V10 = DtuBuildProfile(
     service_sha256="57b415b0143f598e81bccb9d5d5c4ee848df817b79dc1493c3cfdb6d8c96409c",
     elf_build_id="d25ea21f8c4edc95c820c570da4a3399d8bd1cbc",
     service_size=745772,
-    ota_enabled=False,  # HARD BLOCK: no validated live runtime hook yet.
+    ota_enabled=True,  # DEVELOPMENT BRANCH ONLY: experimental VM transfer testing.
     hook_filename="phnix_ota_runtime_hook_v10",
     dtu_run_step=0x129189,
     dtu_sta=0x12918A,
@@ -106,9 +107,9 @@ def describe_build(profile: DtuBuildProfile) -> dict:
         "elf_build_id": profile.elf_build_id,
         "service_size": profile.service_size,
         "ota_enabled": profile.ota_enabled,
-        "ota_status": "supported" if profile.ota_enabled else "experimental-blocked",
-        "reason": "" if profile.ota_enabled else (
-            "V1.0 erkannt: noch kein live validierter Runtime-Hook/Resume. "
-            "OTA aus Sicherheitsgründen gesperrt."
-        ),
+        "ota_status": ("experimental-vm-test" if profile == V10
+                       else "supported" if profile.ota_enabled else "blocked"),
+        "reason": ("EXPERIMENTELLER ENTWICKLUNGSBRANCH: V1.0 OTA aktiv nur für VM-Tests; "
+                   "GDB-Injektion und Resume nicht auf realer Hardware validiert."
+                   if profile == V10 else ""),
     }
