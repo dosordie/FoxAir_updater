@@ -93,6 +93,22 @@ for device in ttyGS0 smd8 ttyHSL2; do
     fail "$ROOTFS/dev/$device already exists"
 done
 cp "$TOOLS/at_rules.json" "$RUN_DIR/at_rules.json"
+if [[ "${DTU_V10_AT_PROFILE:-0}" == 1 ]]; then
+  python3 - "$RUN_DIR/at_rules.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+profile = json.loads(path.read_text())
+profile["rules"].insert(0, {
+    "name": "disable-echo",
+    "match": "ATE0",
+    "reply": "\r\nOK\r\n",
+})
+path.write_text(json.dumps(profile) + "\n")
+PY
+fi
 
 set +e
 if [[ -n "${REUSE_NETNS_PID:-}" ]]; then
@@ -291,7 +307,7 @@ fi
   cat "$run_dir/ttyGS0.peer" > "$run_dir/ttyGS0-from-app.bin" &
   cat_gs0=$!
   python3 "$tools/at_emulator.py" \
-    --peer "$run_dir/smd8.peer" --rules "$tools/at_rules.json" \
+    --peer "$run_dir/smd8.peer" --rules "$run_dir/at_rules.json" \
     --from-app "$run_dir/smd8-from-app.bin" --to-app "$run_dir/smd8-to-app.bin" \
     --transcript "$run_dir/smd8-transcript.txt" --unknown "$run_dir/unknown-at.txt" &
   emu_pid=$!
