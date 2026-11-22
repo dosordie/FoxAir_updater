@@ -98,6 +98,15 @@ class DtuOtaPackage:
         expected_service_build_id: str = EXPECTED_SERVICE_BUILD_ID,
     ) -> "DtuOtaPackage":
         manifest.validate_file(firmware)
+        # A V1.0 package must never accidentally contain the V1.2 GDB hook.
+        # This is a source-selection guard in addition to the independent
+        # exact-build checks performed by the target-side supervisor.
+        if expected_service_sha256.upper() == (
+            "57B415B0143F598E81BCCB9D5D5C4EE848DF817B79DC1493C3CFDB6D8C96409C"
+        ):
+            if (hook.name != "phnix_ota_runtime_hook_v10"
+                    or supervisor.name != "dtu_ota_supervisor_v10.sh"):
+                raise PackageError("V1.0 requires its dedicated hook and supervisor payload")
         value: dict[str, Any] = {
             "schema": PACKAGE_SCHEMA,
             "run_id": run_id,
