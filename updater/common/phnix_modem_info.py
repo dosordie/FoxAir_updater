@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from updater.dtu_ota.build_profiles import V12, identify_adb
+
 
 PHNIX_PROCESS = "phnixIot4G"
 
@@ -496,6 +498,19 @@ def _read_network_info(client: AdbLike, info: PhnixModemInfo) -> None:
 
 def read_phnix_modem_info(client: AdbLike) -> PhnixModemInfo:
     info = PhnixModemInfo()
+    # Most of the RAM layout below was verified only for the exact V1.2 ELF.
+    # Do not display invented IMEI/firmware/MQTT values from V1.0 addresses.
+    try:
+        profile = identify_adb(client)
+    except Exception as exc:
+        info.read_errors.append("DTU-Build unbekannt/nicht lesbar; RAM-Diagnose gesperrt: " + str(exc))
+        return info
+    if profile != V12:
+        info.read_errors.append(
+            f"DTU {profile.software_version} erkannt: RAM-Diagnose für diesen Build "
+            "noch nicht validiert. Keine V1.2-Speicheradressen ausgelesen."
+        )
+        return info
     try:
         info.pid = _pid(client)
     except Exception as exc:
