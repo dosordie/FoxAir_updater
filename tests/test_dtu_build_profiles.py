@@ -39,7 +39,7 @@ class DtuBuildProfileTests(unittest.TestCase):
         self.assertIs(lookup_build(V12.service_sha256.upper()), V12)
         self.assertIs(lookup_build(V10.service_sha256.upper()), V10)
         self.assertTrue(V12.ota_enabled)
-        self.assertTrue(V10.ota_enabled)  # experimental feature-branch only
+        self.assertTrue(V10.ota_enabled)
         self.assertEqual(V10.hook_filename, "phnix_ota_runtime_hook_v10")
         self.assertTrue(V12.has_statistics_file)
         self.assertFalse(V10.has_statistics_file)
@@ -56,7 +56,7 @@ class DtuBuildProfileTests(unittest.TestCase):
         info = DtuOtaClient(adb).identify_build()
         self.assertEqual(info["dtu_software_version"], "V1.0")
         self.assertTrue(info["ota_enabled"])
-        self.assertEqual(info["ota_status"], "experimental-vm-test")
+        self.assertEqual(info["ota_status"], "supported")
         self.assertEqual(len(adb.commands), 2)
         self.assertFalse(adb.pushed)
         self.assertTrue(all("sha256sum" in cmd for cmd in adb.commands))
@@ -81,7 +81,7 @@ class DtuBuildProfileTests(unittest.TestCase):
         path.write_text(json.dumps(asdict(manifest)), encoding="utf-8")
         return firmware, path, manifest
 
-    def test_v10_prepare_stages_experimental_hook_and_supervisor(self):
+    def test_v10_prepare_stages_version_specific_hook_and_supervisor(self):
         class FakePreparedAdb(FakeBuildAdb):
             def __init__(self):
                 super().__init__(V10.service_sha256)
@@ -144,7 +144,7 @@ class DtuBuildProfileTests(unittest.TestCase):
             self.assertFalse(adb.pushed)
             self.assertEqual(len(adb.commands), 2)
 
-    def test_package_is_restricted_to_v12_build_profile(self):
+    def test_package_is_restricted_to_known_build_profiles(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             firmware, _, manifest = self.manifest(root)
@@ -160,13 +160,13 @@ class DtuBuildProfileTests(unittest.TestCase):
             self.assertEqual(package.value["expected_service_build_id"], V12.elf_build_id)
             # V1.0 uses its own explicitly selected hook/supervisor.
             source = Path(__file__).resolve().parents[1] / "updater/dtu_ota/payload"
-            experimental = DtuOtaPackage.build(
+            v10_package = DtuOtaPackage.build(
                 **{**common, "hook": source / V10.hook_filename,
                    "supervisor": source / "dtu_ota_supervisor_v10.sh"},
                 expected_service_sha256=V10.service_sha256,
                 expected_service_build_id=V10.elf_build_id,
             )
-            self.assertEqual(experimental.value["expected_service_build_id"], V10.elf_build_id)
+            self.assertEqual(v10_package.value["expected_service_build_id"], V10.elf_build_id)
             with self.assertRaises(PackageError):
                 DtuOtaPackage.build(
                     **common,
