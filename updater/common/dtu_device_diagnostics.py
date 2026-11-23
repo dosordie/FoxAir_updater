@@ -53,7 +53,9 @@ def read_dtu_identity(adb) -> dict[str, Any]:
     }
     try:
         raw = adb.read_file(OTA_INFO_PATH)
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError, KeyError):
+        # The file may genuinely be absent on a new DTU. It must not make
+        # unrelated diagnostics or the safe build-hash check fail.
         result["stored_status"] = "not_available"
     else:
         if len(raw) != OTA_INFO_LENGTH:
