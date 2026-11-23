@@ -1285,8 +1285,15 @@ class MainWindow(desktop.MainWindow):
         self._last_modem_info = value
         self.modem_info_text.setText(self._modem_info_html(value))
         if value.pid is None:
-            self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.RED};}}")
-            self.modem_read_status.setText("phnixIot4G nicht lesbar – Werte nicht verfügbar.")
+            if value.dtu_time_network:
+                self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.YELLOW};}}")
+                self.modem_read_status.setText(
+                    "Linux-Uhrzeit und Netzwerk gelesen; PHNIX-RAM-Diagnose "
+                    "für diesen Dienst-Build nicht verfügbar."
+                )
+            else:
+                self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.RED};}}")
+                self.modem_read_status.setText("phnixIot4G nicht lesbar – Werte nicht verfügbar.")
         elif value.read_errors:
             self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.YELLOW};}}")
             self.modem_read_status.setText(
