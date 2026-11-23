@@ -34,6 +34,7 @@ jobs:
           updater/windows/release_check.py
           updater/common/adb_transport.py
           updater/common/phnix_modem_info.py
+          updater/common/dtu_device_diagnostics.py
           updater/common/network_operators.py
           updater/common/phnix_statistics_maintenance.py
           updater/common/phnix_statistics_counters.py
@@ -54,6 +55,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: sh -n updater/dtu_ota/payload/phnix_ota_runtime_hook
       - run: sh -n updater/dtu_ota/payload/dtu_ota_supervisor.sh
+      - run: sh -n updater/dtu_ota/payload/phnix_ota_runtime_hook_v10
+      - run: sh -n updater/dtu_ota/payload/dtu_ota_supervisor_v10.sh
       - run: bash -n foxair-updater
       - run: bash -n updater/linux/install.sh
       - run: bash -n updater/linux/remote_access.sh
