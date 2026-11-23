@@ -281,11 +281,11 @@ jobs:
             FoxAir Updater Windows v0.5.3 – Stable Release für DTU V1.0 und V1.2.
 
             ### Neu in v0.5.3
-            - **DTU-Build im Klartext bei der Vorprüfung:** V1.0 und V1.2 werden anhand der SHA256 der tatsächlich installierten \`phnixIot4G\`-Binärdatei erkannt und als „unterstützt“ angezeigt. Unbekannte Builds werden weiterhin vor dem OTA sicher abgelehnt, einschließlich verständlicher Begründung.
-            - **Neuer Button „DTU-Version auslesen“:** Zeigt die im originalen \`/data/phnixIot_device_OTA_INFO\` gespeicherte Version (Offset 0x1C) und den unabhängig geprüften Dienst-Build an; Unterschiede werden kenntlich gemacht. Keine Veränderungen auf der DTU.
-            - **Erweiterte LTE-Diagnose:** DTU-Systemzeit (UTC), Uptime, geschätzte Zeitbasis, \`time_daemon\`, vorhandene RTC-Schnittstellen sowie getrennte Linux-Netzwerk-/MQTT-Indikatoren.
+            - **DTU-Build im Klartext bei der Vorprüfung:** V1.0 und V1.2 werden anhand der SHA256 der tatsächlich installierten `phnixIot4G`-Binärdatei erkannt und als „unterstützt“ angezeigt. Unbekannte Builds werden weiterhin vor dem OTA sicher abgelehnt, einschließlich verständlicher Begründung.
+            - **Neuer Button „DTU-Version auslesen“:** Zeigt die im originalen `/data/phnixIot_device_OTA_INFO` gespeicherte Version (Offset 0x1C) und den unabhängig geprüften Dienst-Build an; Unterschiede werden kenntlich gemacht. Keine Veränderungen auf der DTU.
+            - **Erweiterte LTE-Diagnose:** DTU-Systemzeit (UTC), Uptime, geschätzte Zeitbasis, `time_daemon`, vorhandene RTC-Schnittstellen sowie getrennte Linux-Netzwerk-/MQTT-Indikatoren.
             - **Diagnose-ZIP erweitert:** Versionsquellen, eindeutig als Host-/DTU-Zeit bezeichnete Zeitangaben und C36E-Ereignisprotokoll.
-            - **DTU V1.0 Supervisor:** Kontrollierter Neustart toleriert länger dauernde Watchdog-Übergänge (bis 120 Sekunden); zusätzliche PID-/Watchdog-Diagnose bei weiterhin zwingend stabiler, eindeutig einzelner und ungetracter Dienstinstanz.
+            - **DTU V1.0 Supervisor:** Kontrollierter Neustart toleriert länger dauernde Watchdog-Übergänge (bis 120 Sekunden); zusätzliche PID-/Watchdog-Diagnose bei weiterhin zwingend stabiler, eindeutig einzelner und nicht getracten Dienstinstanz.
             - **DTU V1.0 C36E-Diagnose:** Anfangs- und Letztstatus sowie Anzahl/Duplikate aus vorhandenen GDB-Meldungen. Bestätigter Mainboard-Status 5 und Board-Step 12 bleiben unverändert die Erfolgskriterien.
             - Beide DTU-Builds V1.0 und V1.2 bleiben durch SHA256/ELF-Build-ID exakt gepinnt. Der bestehende V1.2-OTA-Hook/Supervisor bleibt unverändert.
 
