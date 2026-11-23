@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 import foxair_updater_desktop as desktop
 from updater.common.adb_transport import AdbClient
+from updater.common.dtu_device_diagnostics import read_dtu_identity
 from updater.common.phnix_modem_info import PhnixModemInfo, format_seconds, read_phnix_modem_info
 from updater.common.phnix_service_restart import (
     restart_phnix_iot_service,
@@ -53,6 +54,11 @@ class DebugSignals(QObject):
 
 class PreUpdateRestartSignals(QObject):
     done = Signal(bool, str)
+
+
+class DtuVersionSignals(QObject):
+    result = Signal(object)
+    error = Signal(str)
 
 
 class QtSerialDebugSource:
@@ -141,6 +147,10 @@ class MainWindow(desktop.MainWindow):
 
     def __init__(self):
         self._last_modem_info: PhnixModemInfo | None = None
+        self._dtu_version_running = False
+        self._dtu_version_signals = DtuVersionSignals()
+        self._dtu_version_signals.result.connect(self._dtu_version_result)
+        self._dtu_version_signals.error.connect(self._dtu_version_error)
         self._debug_signals = DebugSignals()
         self._debug_signals.line.connect(self._debug_line)
         self._debug_signals.update_line.connect(self._update_debug_line_for_run)
@@ -195,10 +205,22 @@ class MainWindow(desktop.MainWindow):
         self.modem_refresh_btn = desktop.QPushButton("Modem-Informationen neu lesen")
         self.modem_refresh_btn.clicked.connect(self._refresh_modem_info)
         row.addWidget(self.modem_refresh_btn)
+        self.dtu_version_btn = desktop.QPushButton("DTU-Version auslesen")
+        self.dtu_version_btn.clicked.connect(self._read_dtu_version)
+        self.dtu_version_btn.setToolTip(
+            "Liest nur die gespeicherte Versionskennung aus OTA_INFO und vergleicht "
+            "sie mit dem SHA256-geprüften phnixIot4G-Build. Kein OTA, kein Neustart."
+        )
+        row.addWidget(self.dtu_version_btn)
         self.modem_read_status = QLabel("Noch nicht gelesen.")
         self.modem_read_status.setWordWrap(True)
         row.addWidget(self.modem_read_status, 1)
         outer.addLayout(row)
+
+        self.dtu_version_result = QLabel("DTU-Version: noch nicht ausgelesen.")
+        self.dtu_version_result.setWordWrap(True)
+        self.dtu_version_result.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        outer.addWidget(self.dtu_version_result)
 
         debug_row = QHBoxLayout()
         self.debug_monitor_btn = desktop.QPushButton("PHNIX Debugmonitor öffnen")
@@ -921,6 +943,86 @@ class MainWindow(desktop.MainWindow):
                 self._automatic_log = None
                 super()._log(f"[Warnung] Automatisches Controller-Log konnte nicht weitergeschrieben werden: {error}")
 
+    def _buttons(self):
+        super()._buttons()
+        if hasattr(self, "dtu_version_btn"):
+            self.dtu_version_btn.setEnabled(
+                not self.busy and not self._dtu_version_running and self._adb_ready()
+            )
+
+    def _read_dtu_version(self):
+        if self.busy or self._dtu_version_running:
+            return
+        adb = self._require_adb()
+        if not adb:
+            return
+        self._dtu_version_running = True
+        self.dtu_version_result.setText("Lese DTU-Versionsdatei und Dienst-SHA256 …")
+        self._buttons()
+
+        def work():
+            try:
+                value = read_dtu_identity(AdbClient(adb, env=self._process_env()))
+            except Exception as error:
+                self._dtu_version_signals.error.emit(str(error))
+            else:
+                self._dtu_version_signals.result.emit(value)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _dtu_version_result(self, value: object):
+        self._dtu_version_running = False
+        if not isinstance(value, dict):
+            self._dtu_version_error("Ungültige DTU-Versionsantwort.")
+            return
+        stored = value.get("stored_version")
+        build = value.get("service_version")
+        sha = str(value.get("service_sha256") or "")
+        status = str(value.get("stored_status") or "not_available")
+        if stored:
+            stored_text = escape(str(stored))
+        else:
+            explanation = {
+                "not_available": "Datei nicht vorhanden oder nicht lesbar",
+                "invalid_length": "Versionsdatei hat eine unerwartete Länge",
+                "invalid_version": "Version in der Datei ist ungültig",
+            }.get(status, "nicht verfügbar")
+            stored_text = escape(explanation)
+        if build:
+            verified_text = escape(str(build)) + " – SHA256-geprüft"
+        elif value.get("build_status") == "unknown":
+            verified_text = "Unbekannter / nicht unterstützter Dienst-Build"
+        else:
+            verified_text = "Dienst-Build nicht lesbar"
+        mismatch = value.get("version_match") is False
+        warning = (
+            '<br><span style="color:#b42318;"><b>Warnung:</b> '
+            "OTA_INFO und installierter Dienst stimmen nicht überein.</span>"
+            if mismatch else ""
+        )
+        self.dtu_version_result.setText(
+            "<b>DTU-Software (gespeichert in OTA_INFO):</b> " + stored_text
+            + "<br><b>Installierter DTU-Dienst:</b> " + verified_text
+            + (f"<br><small>SHA256: {escape(sha[:16])}…</small>" if sha else "")
+            + warning
+            + "<br><small>Die Mainboard-Firmwareversion wird getrennt angezeigt.</small>"
+        )
+        self._log(
+            "[DTU-Version] OTA_INFO=" + (str(stored) if stored else status)
+            + "; installierter Build=" + (str(build) if build else str(value.get("build_status")))
+            + ("; Widerspruch zwischen Datei und Dienst" if mismatch else "")
+        )
+        self._buttons()
+
+    def _dtu_version_error(self, message: str):
+        self._dtu_version_running = False
+        self.dtu_version_result.setText(
+            '<span style="color:#b42318;">DTU-Version konnte nicht gelesen werden: '
+            + escape(message) + "</span>"
+        )
+        self._log("[DTU-Version] Lesevorgang fehlgeschlagen: " + message)
+        self._buttons()
+
     def _refresh_modem_info(self):
         if self.busy or self._modem_info_running:
             return
@@ -1068,7 +1170,39 @@ class MainWindow(desktop.MainWindow):
             else "keine bekannten Fehlerbits gesetzt"
         )
 
+        times = info.dtu_time_network or {}
+        clock = times.get("clock") or {}
+        clock_label = {
+            "plausible": "Zeit plausibel (Synchronisierungsquelle unbekannt)",
+            "unsynchronized": "DTU-Uhr nicht synchronisiert / unplausibel",
+            "unavailable": "Zeit nicht verfügbar",
+        }.get(clock.get("state"), "nicht verfügbar")
+        time_daemon = (
+            "Läuft" if times.get("time_daemon_running") else "nicht nachgewiesen"
+        )
+        rtc = ", ".join(times.get("rtc_devices") or []) or "Keine RTC-Schnittstelle gefunden"
+        mqtt_tcp = (
+            "TCP-Verbindung auf MQTT-Port erkannt"
+            if times.get("mqtt_tcp_established")
+            else "Keine bestehende MQTT-TCP-Verbindung im Snapshot nachgewiesen"
+        )
         rows = [
+            "<h3>LTE-DTU / Uhrzeit</h3>",
+            f"DTU-Systemzeit (UTC): <b>{self._fmt(times.get('dtu_clock_utc'))}</b><br>",
+            f"Host-Abfragezeit (UTC): <b>{self._fmt(times.get('host_capture_utc'))}</b><br>",
+            f"Uptime (Sekunden): <b>{self._fmt(times.get('uptime_seconds'))}</b><br>",
+            f"Zeitbewertung: <b>{escape(clock_label)}</b><br>",
+            f"Rechnerischer Zeitnullpunkt: <b>{self._fmt(clock.get('approximate_boot_utc'))}</b><br>",
+            f"time_daemon: <b>{escape(time_daemon)}</b><br>",
+            f"RTC-Geräte: <b>{escape(rtc)}</b><br>",
+            f"RTC-Auslesung: <b>{escape(', '.join(times.get('rtc_readout') or []) or 'nicht verfügbar')}</b><br>",
+            "Modemuhr / NITZ: <b>nicht abgefragt (AT-Port nicht exklusiv verfügbar)</b><br>",
+            "<h3>Verbindung – getrennte Nachweise</h3>",
+            f"Mobilfunkroute: <b>{'vorhanden' if times.get('mobile_route_present') else 'nicht nachgewiesen'}</b><br>",
+            f"MQTT TCP: <b>{escape(mqtt_tcp)}</b><br>",
+            "PHNIX-API-Authentifizierung: <b>nicht aktiv geprüft</b><br>",
+            "Geräte-/Benutzerkonto-Verknüpfung: <b>nicht nachgewiesen</b><br>",
+            "<small>Eine erreichbare Cloud beweist weder korrekte Uhrzeit noch Kontozuordnung.</small>",
             "<h3>Mainboard</h3>",
             f"Firmware: <b>{self._fmt(info.firmware_version)}</b><br>",
             f"Softwarecode: <b>{self._fmt(info.software_code)}</b><br>",
@@ -1151,8 +1285,15 @@ class MainWindow(desktop.MainWindow):
         self._last_modem_info = value
         self.modem_info_text.setText(self._modem_info_html(value))
         if value.pid is None:
-            self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.RED};}}")
-            self.modem_read_status.setText("phnixIot4G nicht lesbar – Werte nicht verfügbar.")
+            if value.dtu_time_network:
+                self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.YELLOW};}}")
+                self.modem_read_status.setText(
+                    "Linux-Uhrzeit und Netzwerk gelesen; PHNIX-RAM-Diagnose "
+                    "für diesen Dienst-Build nicht verfügbar."
+                )
+            else:
+                self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.RED};}}")
+                self.modem_read_status.setText("phnixIot4G nicht lesbar – Werte nicht verfügbar.")
         elif value.read_errors:
             self.modem_read_status.setStyleSheet(f"QLabel{{color:{desktop.app.YELLOW};}}")
             self.modem_read_status.setText(

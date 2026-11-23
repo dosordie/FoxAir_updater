@@ -518,6 +518,27 @@ class MainWindow(legacy.MainWindow):
             return
 
         status = self._runner_json(output)
+        if op == "runner-prepare" and isinstance(status, dict):
+            identity = status.get("dtu_identity")
+            if isinstance(identity, dict):
+                version = identity.get("dtu_software_version") or identity.get("service_version")
+                supported = identity.get("ota_enabled") is True or identity.get("supported") is True
+                sha = identity.get("sha256") or identity.get("service_sha256") or ""
+                if supported and version:
+                    message = f"LTE-DTU: {version} – unterstützt (SHA256-geprüft)."
+                    level = "ok"
+                else:
+                    stored = identity.get("stored_version")
+                    message = "LTE-DTU: unbekannte bzw. nicht unterstützte Dienstversion – kein OTA gestartet."
+                    if stored:
+                        message += f" Gespeicherte Angabe: {stored} (nicht verifiziert)."
+                    level = "error"
+                if sha:
+                    message += f" SHA256: {sha[:12]}…"
+                else:
+                    message += " Dienst-SHA256 nicht lesbar."
+                self._set_step("runner-dtu-build", level, message)
+                self._log("[DTU-Vorprüfung] " + message)
         if code != 0 or status is None or status.get("ok") is False:
             if op in {"runner-status", "runner-current"} and self._runner_active:
                 self.progress_text.setText(

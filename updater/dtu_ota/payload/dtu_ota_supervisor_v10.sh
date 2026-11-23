@@ -13,6 +13,7 @@ HOOK_RUNTIME=/tmp/phnix_ota_hook
 EXPECTED_BUILD_FIXED=d25ea21f8c4edc95c820c570da4a3399d8bd1cbc
 EXPECTED_SERVICE_FIXED=57B415B0143F598E81BCCB9D5D5C4EE848DF817B79DC1493C3CFDB6D8C96409C
 SERVICE_READY_TIMEOUT=120
+SERVICE_RESTART_TIMEOUT=120
 SERVICE_READY_CONFIRM_DELAY=3
 RECOVERY_RESUME_TIMEOUT=1200
 C5A8_STALL_TIMEOUT=1200
@@ -39,6 +40,7 @@ PID_FILE=$RUN_DIR/runner.pid
 HOOK=$PAYLOAD/runtime_hook
 HOOK_STATUS=$RUN_DIR/hook-status.json
 HOOK_LOG=$RUN_DIR/hook.log
+C36E_EVENTS_FILE=$RUN_DIR/c36e-events.log
 COMMAND=$PAYLOAD/ota-command.json
 FIRMWARE=$PAYLOAD/firmware.bin
 ABORT=$RUN_DIR/abort.request
@@ -80,6 +82,10 @@ FIRMWARE_SHA=
 RECOVERY=not-required
 BOARD_STEP=0
 C36E_STATUS=0
+C36E_INITIAL_STATUS=0
+C36E_LAST_STATUS=0
+C36E_EVENT_COUNT=0
+C36E_DUPLICATE_COUNT=0
 C36E_SEEN=false
 C350_SENT=false
 C357_SENT=false
@@ -121,6 +127,10 @@ load_status_state() {
     v=$(status_number recovery_deadline_at); test -n "$v" && RECOVERY_DEADLINE_AT=$v
     v=$(sed -n 's/.*"c36e_status":\([0-9][0-9]*\).*/\1/p' "$STATUS" 2>/dev/null | head -n 1)
     test -n "$v" && C36E_STATUS=$v
+    v=$(status_number c36e_initial_status); test -n "$v" && C36E_INITIAL_STATUS=$v
+    v=$(status_number c36e_last_status); test -n "$v" && C36E_LAST_STATUS=$v
+    v=$(status_number c36e_event_count); test -n "$v" && C36E_EVENT_COUNT=$v
+    v=$(status_number c36e_duplicate_count); test -n "$v" && C36E_DUPLICATE_COUNT=$v
 }
 
 write_status() {
@@ -129,12 +139,12 @@ write_status() {
     test "$STARTED_AT" != 0 || STARTED_AT=$now
     tmp=$STATUS.tmp.$$
     case "$SERVICE_PID" in ''|*[!0-9]*) SERVICE_PID=0 ;; esac
-    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","recovery_attempts":%s,"resume_baseline_offset":%s,"recovery_deadline_at":%s,"reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s,"service_restart_requested":%s,"service_restart_verified":%s,"mqtt_isolation_requested":%s,"mqtt_isolated":%s,"boot_id":"%s"}\n' \
+    printf '{"schema":"%s","run_id":"%s","state":"%s","phase":"%s","terminal":%s,"progress":%s,"offset":%s,"length":%s,"transfer_started":%s,"original_service_authoritative":%s,"abort_allowed":%s,"recovery":"%s","recovery_attempts":%s,"resume_baseline_offset":%s,"recovery_deadline_at":%s,"reason":"%s","detail":"%s","result_type":"%s","runner_pid":%s,"hook_pid":%s,"service_pid":%s,"started_at":%s,"last_activity_at":%s,"updated_at":%s,"package_sha256":"%s","firmware_sha256":"%s","board_ota_step":%s,"c36e_seen":%s,"c36e_status":%s,"c36e_initial_status":%s,"c36e_last_status":%s,"c36e_event_count":%s,"c36e_duplicate_count":%s,"c350_sent":%s,"c357_sent":%s,"c5a8_sent":%s,"state_restored":%s,"service_restart_requested":%s,"service_restart_verified":%s,"mqtt_isolation_requested":%s,"mqtt_isolated":%s,"boot_id":"%s"}\n' \
         "$SCHEMA" "$RUN_ID" "$state" "$phase" "$terminal" "$PROGRESS" "$OFFSET" "$LENGTH" \
         "$TRANSFER_STARTED" "$ORIGINAL_AUTH" "$ABORT_ALLOWED" "$RECOVERY" "$RECOVERY_ATTEMPTS" "$RESUME_BASELINE_OFFSET" "$RECOVERY_DEADLINE_AT" \
         "$(json_escape "$reason")" "$(json_escape "$detail")" "$RESULT_TYPE" "$$" "$HOOK_PID" "$SERVICE_PID" \
         "$STARTED_AT" "$now" "$now" "$PACKAGE_SHA" "$FIRMWARE_SHA" "$BOARD_STEP" "$C36E_SEEN" "$C36E_STATUS" \
-        "$C350_SENT" "$C357_SENT" "$C5A8_SENT" "$STATE_RESTORED" \
+        "$C36E_INITIAL_STATUS" "$C36E_LAST_STATUS" "$C36E_EVENT_COUNT" "$C36E_DUPLICATE_COUNT" "$C350_SENT" "$C357_SENT" "$C5A8_SENT" "$STATE_RESTORED" \
         "$SERVICE_RESTART_REQUESTED" "$SERVICE_RESTART_VERIFIED" "$MQTT_ISOLATION_REQUESTED" "$MQTT_ISOLATED" \
         "$(json_escape "$BOOT_ID")" > "$tmp" || return 1
     mv "$tmp" "$STATUS" || return 1
@@ -400,7 +410,8 @@ preflight_action() {
 
 restart_service() {
     old_pids=$(service_pids)
-    test -n "$old_pids" || return 1
+    log_event "controlled restart begin old_pids=$old_pids watchdog_pids=$(ps | awk '$4 == "{helloworld}" {print $1}' | tr '\n' ' ')"
+    test -n "$old_pids" || { log_event "controlled restart: no original process"; return 1; }
     for old in $old_pids; do
         exe=$(readlink "/proc/$old/exe" 2>/dev/null || true)
         cmd=$(tr '\000' ' ' < "/proc/$old/cmdline" 2>/dev/null || true)
@@ -410,12 +421,18 @@ restart_service() {
     count=0
     stable_pid=
     stable_count=0
-    while test "$count" -lt 60; do
+    last_snapshot=
+    while test "$count" -lt "$SERVICE_RESTART_TIMEOUT"; do
         sleep 1
         current=$(service_pids)
         current_count=$(printf '%s\n' "$current" | awk '{print NF}')
         old_alive=false
         for old in $old_pids; do test -d "/proc/$old" && old_alive=true; done
+        snapshot="pids=$current old_alive=$old_alive"
+        if test "$snapshot" != "$last_snapshot"; then
+            log_event "controlled restart observation $count sec $snapshot"
+            last_snapshot=$snapshot
+        fi
 
         # On real DTUs the watchdog can start the replacement process before
         # the old PID has fully disappeared.  Multiple PIDs are therefore a
@@ -433,6 +450,7 @@ restart_service() {
                         case "$dbg" in *gdbserver*|*'/gdb '*|*' gdb '*) return 4 ;; esac
                     done
                     SERVICE_PID=$new
+                    log_event "controlled restart verified new_pid=$SERVICE_PID stable_count=$stable_count"
                     return 0
                 fi
             else
@@ -445,6 +463,7 @@ restart_service() {
         fi
         count=$((count + 1))
     done
+    log_event "controlled restart timeout at $count sec last=$last_snapshot"
     return 1
 }
 
@@ -655,6 +674,54 @@ stop_http() {
     done
 }
 
+# Parse only GDB's already-existing read-only C36E diagnostic lines.
+# The original PHNIX state machine and terminal success checks are untouched.
+refresh_c36e_events() {
+    observed=
+    for logfile in "$HOOK_RUNTIME/gdb.log" "$HOOK_RUNTIME/gdb-resume.log"; do
+        # Ignore a stale global resume log from a different OTA run.
+        case "$logfile" in
+            */gdb-resume.log) test "$RECOVERY_ATTEMPTS" -gt 0 || continue ;;
+        esac
+        test -r "$logfile" || continue
+        values=$(sed -n \
+          -e 's/.*PHNIX first-c36e .*status=\([0-9][0-9]*\).*/\1/p' \
+          -e 's/.*PHNIX later-c36e status=\([0-9][0-9]*\).*/\1/p' \
+          "$logfile" 2>/dev/null || true)
+        test -n "$values" && observed="$observed $values"
+    done
+    total=0
+    previous=
+    first=0
+    latest=0
+    duplicates=0
+    for value in $observed; do
+        case "$value" in 0|1|2|3|4|5|6) ;; *) continue ;; esac
+        total=$((total + 1))
+        test "$total" = 1 && first=$value
+        if test -n "$previous" && test "$previous" = "$value"; then
+            duplicates=$((duplicates + 1))
+        fi
+        previous=$value
+        latest=$value
+        if test "$total" -gt "$C36E_EVENT_COUNT"; then
+            # Observation timestamp is the DTU time, which may be 1980.
+            # Uptime gives an independent monotonic reference.
+            printf 'index=%s status=%s observed_dtu_epoch=%s observed_uptime=%s\n' \
+                "$total" "$value" "$(date +%s)" \
+                "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" >> "$C36E_EVENTS_FILE"
+        fi
+    done
+    if test "$total" -gt 0; then
+        C36E_SEEN=true
+        C36E_INITIAL_STATUS=$first
+        C36E_LAST_STATUS=$latest
+        C36E_EVENT_COUNT=$total
+        C36E_DUPLICATE_COUNT=$duplicates
+        C36E_STATUS=$latest
+    fi
+}
+
 refresh_progress() {
     if test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220; then
         next_offset=$(od -An -tu4 -j212 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
@@ -696,6 +763,7 @@ run_action() {
     BOOT_ID=$(boot_fingerprint)
     must_write_status running local-preparation false "" "DTU supervisor owns the prepared run."
     cp -p /data/phnixIot_device_OTA_INFO "$RUN_DIR/state/OTA_INFO" || terminal_result failed failed backup 80 backup_failed "Could not persist OTA_INFO backup."
+    rm -f "$C36E_EVENTS_FILE"
     sha256sum "$RUN_DIR/state/OTA_INFO" > "$RUN_DIR/state/SHA256SUMS"
     if test "$RESTART_SERVICE" = true; then
         must_write_status running service-restart-wait false "" "Controlled service restart requested; waiting for exactly one new stable, untraced process."
@@ -756,6 +824,10 @@ run_action() {
             c357) C357_SENT=true ;;
             c5a8) C5A8_SENT=true; TRANSFER_STARTED=true; ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
             success-report|failure-report) ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
+        esac
+        case "$phase" in
+            accepted|c357|c5a8|success-report|failure-report|success|failed|same-version|c350-same-version)
+                refresh_c36e_events ;;
         esac
         step=$(hook_number board_ota_step); test -n "$step" && BOARD_STEP=$step
         restored=$(hook_bool state_restored); test -n "$restored" && STATE_RESTORED=$restored

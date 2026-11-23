@@ -105,7 +105,19 @@ def main() -> int:
         print(json.dumps(value, indent=2, ensure_ascii=False))
         return 0
     except (RunnerClientError, PackageError, ManifestError, TransportError, DtuBuildIdentificationError, OSError) as error:
-        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        failure = {"ok": False, "error": str(error)}
+        # An unsupported DTU build must be recognizable in the GUI even when
+        # the preparation failed before any payload upload.
+        if args.command in {"prepare", "dry-run"} and (
+            "phnixIot4G-Build" in str(error)
+            or "DTU-Service-SHA256" in str(error)
+        ):
+            try:
+                from updater.common.dtu_device_diagnostics import read_dtu_identity
+                failure["dtu_identity"] = read_dtu_identity(client.adb)
+            except (OSError, ValueError, RuntimeError):
+                pass
+        print(json.dumps(failure, ensure_ascii=False), file=sys.stderr)
         return 1
 
 
