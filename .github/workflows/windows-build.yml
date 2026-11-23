@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feature/dtu-v1-build-profiles
+      - work/issue-68-dtu-diagnostics
 
 permissions:
   contents: read
@@ -26,6 +27,25 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Stamp development build version (without touching main or tagging)
+        if: github.ref_name == 'work/issue-68-dtu-diagnostics'
+        shell: pwsh
+        run: |
+          $version = '0.5.3-dev.1'
+          $files = @(
+            @{ path='updater/windows/foxair_updater_app.py'; pattern='(?m)^APP_VERSION\s*=\s*"[^"]+"'; replace="APP_VERSION = `"$version`"" },
+            @{ path='updater/windows/foxair_updater_gui.py'; pattern='(?m)^APP_VERSION\s*=\s*"[^"]+"'; replace="APP_VERSION = `"$version`"" },
+            @{ path='updater/windows/build_windows_portable.bat'; pattern='(?m)^set "APP_VERSION=[^"]+"'; replace="set `"APP_VERSION=$version`"" },
+            @{ path='updater/windows/installer/FoxAir_Updater.iss'; pattern='(?m)^#define MyAppVersion "[^"]+"'; replace="#define MyAppVersion `"$version`"" }
+          )
+          foreach ($item in $files) {
+            $old = Get-Content $item.path -Raw
+            $new = $old -replace $item.pattern, $item.replace
+            if ($new -eq $old) { throw "Build version could not be stamped: $($item.path)" }
+            Set-Content -Path $item.path -Value $new -NoNewline -Encoding utf8
+          }
+          Write-Host "Dev artifact $version – build only, no GitHub Release."
+
       - name: Read Windows app version
         id: version
         shell: powershell
@@ -44,6 +64,8 @@ jobs:
           python -m py_compile updater/windows/foxair_updater_app.py
           python -m py_compile updater/windows/foxair_updater_runner_product.py
           python -m py_compile updater/windows/foxair_updater_runner_enduser.py
+          python -m py_compile updater/windows/foxair_updater_lte_diagnostics.py
+          python -m py_compile updater/common/dtu_device_diagnostics.py
           python -m py_compile updater/windows/release_check.py
           python -m py_compile updater/dtu_ota/cli.py
           python -m py_compile updater/dtu_ota/client.py
@@ -59,6 +81,8 @@ jobs:
           python -m unittest discover -s tests -p "test_dtu_v10_static_checker.py"
           python -m unittest discover -s tests -p "test_dtu_ota_runner.py"
           python -m unittest discover -s tests -p "test_phnix_modem_info.py"
+          python -m unittest discover -s tests -p "test_dtu_device_diagnostics.py"
+          python -m unittest discover -s tests -p "test_dtu_v10_event_status.py"
 
       - name: Build portable package
         shell: cmd
