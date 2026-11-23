@@ -60,6 +60,7 @@ TEXT_FILES = (
     "runner.log",
     "hook.log",
     "hook-status.json",
+    "c36e-events.log",
     "launcher.log",
     "package.json",
     "package.sha256",
