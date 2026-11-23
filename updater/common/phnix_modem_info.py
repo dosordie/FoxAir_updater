@@ -213,6 +213,7 @@ class PhnixModemInfo:
     error_status: int | None = None
     statistics: PhnixStatistics = field(default_factory=PhnixStatistics)
     read_errors: list[str] = field(default_factory=list)
+    dtu_time_network: dict = field(default_factory=dict)
 
     @property
     def modem_model(self) -> str | None:
@@ -498,6 +499,13 @@ def _read_network_info(client: AdbLike, info: PhnixModemInfo) -> None:
 
 def read_phnix_modem_info(client: AdbLike) -> PhnixModemInfo:
     info = PhnixModemInfo()
+    # System clock, RTC, route and MQTT TCP are Linux read-only observations
+    # valid for both V1.0 and V1.2, unlike the build-specific RAM addresses.
+    try:
+        from updater.common.dtu_device_diagnostics import read_time_network
+        info.dtu_time_network = read_time_network(client)
+    except (OSError, RuntimeError, ValueError):
+        info.dtu_time_network = {}
     # Most of the RAM layout below was verified only for the exact V1.2 ELF.
     # Do not display invented IMEI/firmware/MQTT values from V1.0 addresses.
     try:
