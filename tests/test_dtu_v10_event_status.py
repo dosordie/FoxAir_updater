@@ -34,10 +34,16 @@ class V10SupervisorDiagnosticsTests(unittest.TestCase):
                 "PHNIX later-c36e status=5\n",
                 encoding="utf-8",
             )
+            # An old resume log is shared under /tmp and must be ignored
+            # unless this run really entered recovery.
+            (root / "gdb-resume.log").write_text(
+                "PHNIX later-c36e status=6\n", encoding="utf-8"
+            )
             events = root / "events.log"
             script = (
                 f"HOOK_RUNTIME={shlex.quote(str(root))}\n"
                 f"C36E_EVENTS_FILE={shlex.quote(str(events))}\n"
+                "RECOVERY_ATTEMPTS=0\n"
                 "C36E_EVENT_COUNT=0\n"
                 "C36E_INITIAL_STATUS=0\n"
                 "C36E_LAST_STATUS=0\n"
