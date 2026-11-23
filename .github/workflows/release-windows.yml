@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/release-requests/windows-v0.5.2.txt"
+      - ".github/release-requests/windows-v0.5.3.txt"
   workflow_dispatch:
     inputs:
       version:
@@ -36,7 +36,7 @@ jobs:
     name: Build and publish Windows release
     runs-on: windows-latest
     env:
-      RELEASE_VERSION: ${{ github.event_name == 'push' && '0.5.2' || inputs.version }}
+      RELEASE_VERSION: ${{ github.event_name == 'push' && '0.5.3' || inputs.version }}
 
     steps:
       - name: Checkout selected ref
@@ -278,24 +278,25 @@ jobs:
           name: FoxAir Updater Windows v${{ env.RELEASE_VERSION }}
           prerelease: ${{ github.event_name != 'push' && inputs.prerelease }}
           body: |
-            FoxAir Updater Windows v0.5.2 – Portable ZIP und Setup EXE.
+            FoxAir Updater Windows v0.5.3 – Stable Release für DTU V1.0 und V1.2.
 
-            ### Neu in v0.5.2
-            - **DTU V1.0 unterstützt:** Automatische Erkennung des geprüften `phnixIot4G`-Builds anhand SHA256/ELF-Build-ID und separater V1.0-Runtime-Hook sowie Supervisor.
-            - **DTU V1.2 weiterhin unterstützt:** Bestehender Runtime-Hook und Supervisor bleiben unverändert.
-            - Vollständiger V1.0-OTA wurde im QEMU-Mainboard-Simulator mit dem autonomen Windows-Runner bis zum terminalen Boardstatus 5 erfolgreich getestet.
-            - V1.2-OTA-Start, Firmware-Download und Blocktransfer wurden ebenfalls im Simulator bestätigt; die bisherigen produktiven V1.2-Funktionen bleiben erhalten.
-            - Crash-/Resume-Abläufe sind im Simulator getestet.
-            - Der Updater lehnt unbekannte oder nicht exakt unterstützte DTU-Dienst-Builds weiterhin vor dem OTA ab.
+            ### Neu in v0.5.3
+            - **DTU-Build im Klartext bei der Vorprüfung:** V1.0 und V1.2 werden anhand der SHA256 der tatsächlich installierten \`phnixIot4G\`-Binärdatei erkannt und als „unterstützt“ angezeigt. Unbekannte Builds werden weiterhin vor dem OTA sicher abgelehnt, einschließlich verständlicher Begründung.
+            - **Neuer Button „DTU-Version auslesen“:** Zeigt die im originalen \`/data/phnixIot_device_OTA_INFO\` gespeicherte Version (Offset 0x1C) und den unabhängig geprüften Dienst-Build an; Unterschiede werden kenntlich gemacht. Keine Veränderungen auf der DTU.
+            - **Erweiterte LTE-Diagnose:** DTU-Systemzeit (UTC), Uptime, geschätzte Zeitbasis, \`time_daemon\`, vorhandene RTC-Schnittstellen sowie getrennte Linux-Netzwerk-/MQTT-Indikatoren.
+            - **Diagnose-ZIP erweitert:** Versionsquellen, eindeutig als Host-/DTU-Zeit bezeichnete Zeitangaben und C36E-Ereignisprotokoll.
+            - **DTU V1.0 Supervisor:** Kontrollierter Neustart toleriert länger dauernde Watchdog-Übergänge (bis 120 Sekunden); zusätzliche PID-/Watchdog-Diagnose bei weiterhin zwingend stabiler, eindeutig einzelner und ungetracter Dienstinstanz.
+            - **DTU V1.0 C36E-Diagnose:** Anfangs- und Letztstatus sowie Anzahl/Duplikate aus vorhandenen GDB-Meldungen. Bestätigter Mainboard-Status 5 und Board-Step 12 bleiben unverändert die Erfolgskriterien.
+            - Beide DTU-Builds V1.0 und V1.2 bleiben durch SHA256/ELF-Build-ID exakt gepinnt. Der bestehende V1.2-OTA-Hook/Supervisor bleibt unverändert.
 
             ### Hinweise
             - DTU-Software V1.0/V1.2 ist **nicht** gleich Mainboard-Firmware V3.4/V3.5.
-            - 100 % übertragene Bytes sind noch kein terminaler Erfolg: Entscheidend ist die bestätigte Boardmeldung (Status 5).
-            - Für den normalen Updatevorgang bleibt MQTT verbunden; nach Beginn arbeitet der autonome DTU-Runner unabhängig von der Windows-/ADB-Verbindung.
+            - Eine Linux-Systemzeit aus dem Jahr 1980 bedeutet nicht automatisch fehlende SIM-/Cloudverbindung. Die Modemuhr und NITZ werden **nicht** aktiv per AT abgefragt, solange kein sicherer exklusiver Modemzugriff geprüft ist.
+            - Netzwerkrouten und MQTT-TCP-Sitzungen sind Diagnosehinweise, **kein Nachweis** einer Kontozuordnung. Die offenen Modem-/NITZ-/Cloud-Forschungsfragen bleiben in Issue #68 dokumentiert.
+            - Der bislang produktive V1.0-Supervisor wurde auf echter DTU-Hardware mehrfach erfolgreich getestet. Die zusätzlichen Diagnose- und Neustartänderungen aus v0.5.3 wurden im automatisierten Test und Windows-Testbuild geprüft.
             - Portable ZIP und Setup EXE sind nicht kommerziell code-signiert und können Windows SmartScreen auslösen.
-            - ADB/Android Platform Tools sind separat erforderlich; lokaler ADB- und Remote-ADB-Modus werden unterstützt.
+            - ADB/Android Platform Tools sind separat erforderlich; lokaler ADB- und Remote-ADB-Modus bleiben unterstützt.
 
-            Weitere Hinweise und die dokumentierten, fest gepinnten DTU-Builds stehen in README.md und docs/DTU_BUILD_PROFILES_V10.md.
           files: |
             dist/FoxAir_Updater_Portable_v${{ env.RELEASE_VERSION }}.zip
             updater/windows/installer/Output/FoxAir_Updater_Setup_v${{ env.RELEASE_VERSION }}.exe
