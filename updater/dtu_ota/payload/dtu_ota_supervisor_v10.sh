@@ -674,6 +674,50 @@ stop_http() {
     done
 }
 
+# Parse only GDB's already-existing read-only C36E diagnostic lines.
+# The original PHNIX state machine and terminal success checks are untouched.
+refresh_c36e_events() {
+    observed=
+    for logfile in "$HOOK_RUNTIME/gdb.log" "$HOOK_RUNTIME/gdb-resume.log"; do
+        test -r "$logfile" || continue
+        values=$(sed -n \
+          -e 's/.*PHNIX first-c36e .*status=\([0-9][0-9]*\).*/\1/p' \
+          -e 's/.*PHNIX later-c36e status=\([0-9][0-9]*\).*/\1/p' \
+          "$logfile" 2>/dev/null || true)
+        test -n "$values" && observed="$observed $values"
+    done
+    total=0
+    previous=
+    first=0
+    latest=0
+    duplicates=0
+    for value in $observed; do
+        case "$value" in 0|1|2|3|4|5|6) ;; *) continue ;; esac
+        total=$((total + 1))
+        test "$total" = 1 && first=$value
+        if test -n "$previous" && test "$previous" = "$value"; then
+            duplicates=$((duplicates + 1))
+        fi
+        previous=$value
+        latest=$value
+        if test "$total" -gt "$C36E_EVENT_COUNT"; then
+            # Observation timestamp is the DTU time, which may be 1980.
+            # Uptime gives an independent monotonic reference.
+            printf 'index=%s status=%s observed_dtu_epoch=%s observed_uptime=%s\n' \
+                "$total" "$value" "$(date +%s)" \
+                "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" >> "$C36E_EVENTS_FILE"
+        fi
+    done
+    if test "$total" -gt 0; then
+        C36E_SEEN=true
+        C36E_INITIAL_STATUS=$first
+        C36E_LAST_STATUS=$latest
+        C36E_EVENT_COUNT=$total
+        C36E_DUPLICATE_COUNT=$duplicates
+        C36E_STATUS=$latest
+    fi
+}
+
 refresh_progress() {
     if test -r /data/phnixIot_device_OTA_INFO && test "$(wc -c < /data/phnixIot_device_OTA_INFO 2>/dev/null)" = 220; then
         next_offset=$(od -An -tu4 -j212 -N4 /data/phnixIot_device_OTA_INFO 2>/dev/null | tr -d ' ')
@@ -715,6 +759,7 @@ run_action() {
     BOOT_ID=$(boot_fingerprint)
     must_write_status running local-preparation false "" "DTU supervisor owns the prepared run."
     cp -p /data/phnixIot_device_OTA_INFO "$RUN_DIR/state/OTA_INFO" || terminal_result failed failed backup 80 backup_failed "Could not persist OTA_INFO backup."
+    rm -f "$C36E_EVENTS_FILE"
     sha256sum "$RUN_DIR/state/OTA_INFO" > "$RUN_DIR/state/SHA256SUMS"
     if test "$RESTART_SERVICE" = true; then
         must_write_status running service-restart-wait false "" "Controlled service restart requested; waiting for exactly one new stable, untraced process."
@@ -775,6 +820,10 @@ run_action() {
             c357) C357_SENT=true ;;
             c5a8) C5A8_SENT=true; TRANSFER_STARTED=true; ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
             success-report|failure-report) ORIGINAL_AUTH=true; ABORT_ALLOWED=false ;;
+        esac
+        case "$phase" in
+            accepted|c357|c5a8|success-report|failure-report|success|failed|same-version|c350-same-version)
+                refresh_c36e_events ;;
         esac
         step=$(hook_number board_ota_step); test -n "$step" && BOARD_STEP=$step
         restored=$(hook_bool state_restored); test -n "$restored" && STATE_RESTORED=$restored
