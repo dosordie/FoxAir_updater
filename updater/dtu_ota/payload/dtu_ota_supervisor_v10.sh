@@ -679,6 +679,10 @@ stop_http() {
 refresh_c36e_events() {
     observed=
     for logfile in "$HOOK_RUNTIME/gdb.log" "$HOOK_RUNTIME/gdb-resume.log"; do
+        # Ignore a stale global resume log from a different OTA run.
+        case "$logfile" in
+            */gdb-resume.log) test "$RECOVERY_ATTEMPTS" -gt 0 || continue ;;
+        esac
         test -r "$logfile" || continue
         values=$(sed -n \
           -e 's/.*PHNIX first-c36e .*status=\([0-9][0-9]*\).*/\1/p' \
