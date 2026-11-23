@@ -157,7 +157,11 @@ class DtuOtaClient:
             reason = rejected.get("reason") or rejected.get("phase") or "preflight_failed"
             detail = rejected.get("detail") or str(error)
             raise RunnerClientError(f"DTU preflight rejected ({reason}): {detail}") from error
-        return self.status(run_id, reconcile=False)
+        result = self.status(run_id, reconcile=False)
+        # Human-readable identity accompanies the successful preflight result.
+        # The on-device supervisor still validates the independently pinned SHA256.
+        result["dtu_identity"] = describe_build(profile)
+        return result
 
     def start(self, run_id: str) -> dict[str, Any]:
         run_dir = self._run_dir(run_id)
