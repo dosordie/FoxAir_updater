@@ -38,6 +38,7 @@ for candidate in (Path(__file__).resolve().parents[2], Path.cwd()):
         break
 
 from updater.common.adb_transport import AdbClient, TransportError
+from updater.common.dtu_device_diagnostics import parse_ota_info_version, read_dtu_diagnostics
 from updater.dtu_ota.client import REMOTE_BASE, RUN_ID_RE
 
 
@@ -45,6 +46,7 @@ REMOTE_OTA_INFO = "/data/phnixIot_device_OTA_INFO"
 OTA_INFO_ARCHIVE_PATH = "dtu-state/phnixIot_device_OTA_INFO"
 OTA_INFO_SUMMARY_PATH = "dtu-state/phnixIot_device_OTA_INFO.json"
 RUNTIME_SNAPSHOT_PATH = "dtu-state/runtime_snapshot.txt"
+DTU_DIAGNOSTICS_PATH = "dtu-state/dtu_diagnostics.json"
 MAX_RUNTIME_LOG_BYTES = 512 * 1024
 
 LIVE_RUNTIME_TEXT_FILES = {
@@ -99,6 +101,8 @@ def ota_info_summary(data: bytes) -> dict[str, object]:
         "valid_220_bytes": len(data) == 220,
     }
     if len(data) == 220:
+        summary["stored_dtu_version"] = parse_ota_info_version(data)
+        summary["version_source"] = "OTA_INFO offset 0x1C (persisted, not authenticated)"
         summary["board_offset"] = int.from_bytes(data[212:216], "little")
         summary["board_down_cnt"] = int.from_bytes(data[216:220], "little")
     return summary
@@ -160,6 +164,7 @@ def system_snapshot(adb: AdbClient) -> str:
     command = r'''
 SERVICE_PID=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
 echo "boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+echo "dtu_system_time_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
 echo "uptime=$(cat /proc/uptime 2>/dev/null || true)"
 echo "loadavg=$(cat /proc/loadavg 2>/dev/null || true)"
 echo "mem_total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
@@ -187,8 +192,8 @@ def runtime_snapshot(adb: AdbClient) -> str:
     """Collect one passive support snapshot; no polling, tracing or process signals."""
     command = r'''
 SERVICE_PID=$(pidof phnixIot4G 2>/dev/null | awk '{print $1}')
-echo "=== capture ==="
-date 2>/dev/null || true
+echo "=== capture: DTU-SYSTEMZEIT (nicht Hostzeit) ==="
+date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true
 echo "service_pid=$SERVICE_PID"
 echo "=== /proc/uptime ==="
 cat /proc/uptime 2>/dev/null || true
@@ -425,6 +430,18 @@ def create_bundle(
                 text = redact_text(_bounded_runtime_text(data))
                 archive.writestr(archive_name, text)
                 included.append(archive_name)
+
+            # Time and connection evidence keep host/DTU timestamps separate.
+            # Never probe an in-use modem AT port.
+            try:
+                dtu_report = read_dtu_diagnostics(adb)
+                archive.writestr(
+                    DTU_DIAGNOSTICS_PATH,
+                    json.dumps(dtu_report, indent=2, ensure_ascii=False) + "\n",
+                )
+                included.append(DTU_DIAGNOSTICS_PATH)
+            except (OSError, ValueError, RuntimeError) as error:
+                missing[DTU_DIAGNOSTICS_PATH] = type(error).__name__
 
             snapshot = system_snapshot(adb) + "\n"
             archive.writestr("dtu-run/system_snapshot.txt", snapshot)
