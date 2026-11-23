@@ -1,0 +1,7 @@
+FoxAir Updater Windows Stable v0.5.3
+
+This marker explicitly triggers the Release Windows workflow on main.
+PR: https://github.com/dosordie/FoxAir_updater/pull/69
+Tracked improvements: https://github.com/dosordie/FoxAir_updater/issues/68
+Release: windows-v0.5.3
+Only implemented features are released; unsolved SIM/NITZ/cloud timing research remains open.
